@@ -218,7 +218,7 @@ fn mmap_array_data_optimized(file: &File, header: &ArrayMeta, reuse_mmap: Option
     Ok(array)
 }
 
-// 优化的内��映射写入函数
+// 优化的内存映射写入函数
 fn mmap_write_array_data_optimized(file: &File, array: &Py<PyArray2<f32>>, offset: u64) -> NnpResult<()> {
     Python::with_gil(|py| {
         let array = unsafe { array.as_ref(py).as_array() };
@@ -416,103 +416,68 @@ pub fn save_arrays(path: &Path, arrays: &HashMap<String, Py<PyArray2<f32>>>) -> 
     })
 }
 
-// 从内存映射中读取指定行的数据
-fn mmap_getitem(file: &File, header: &ArrayMeta, indexes: &[usize]) -> NnpResult<Array2<f32>> {
+// 优化的切片访问实现
+fn mmap_getitem_optimized(file: &File, header: &ArrayMeta, indexes: &[usize]) -> NnpResult<Array2<f32>> {
     let cols = header.cols as usize;
-    let data_offset = header.data_offset as usize;
-    let total_bytes = indexes.len() * cols * 4;
     
-    unsafe {
-        let mmap = MmapOptions::new()
-            .offset(header.data_offset)
-            .len((header.rows * header.cols * 4) as usize)
-            .map(file)
-            .map_err(|e| NnpError::IoError(format!("Failed to create memory map: {}", e)))?;
-            
-        let mut result = Vec::with_capacity(indexes.len() * cols);
-        
-        for &idx in indexes {
-            if idx >= header.rows as usize {
-                return Err(NnpError::InvalidArrayData(format!("Index {} out of bounds", idx)));
-            }
-            
-            let start = idx * cols * 4;
-            let end = start + cols * 4;
-            let row_slice = &mmap[start..end];
-            
-            // 转换字节为f32
-            for chunk in row_slice.chunks_exact(4) {
-                let value = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                result.push(value);
-            }
+    // 计算连续区间，减少内存映射次数
+    let mut ranges = Vec::new();
+    let mut current_start = indexes[0];
+    let mut current_end = indexes[0];
+    
+    for &idx in &indexes[1..] {
+        if idx == current_end + 1 {
+            current_end = idx;
+        } else {
+            ranges.push((current_start, current_end));
+            current_start = idx;
+            current_end = idx;
         }
-        
-        Array2::from_shape_vec((indexes.len(), cols), result)
-            .map_err(|e| NnpError::InvalidArrayData(format!("Failed to create array: {}", e)))
     }
+    ranges.push((current_start, current_end));
+    
+    // 预分配结果向量
+    let mut result = Vec::with_capacity(indexes.len() * cols);
+    
+    // 为每个连续区间创建一次内存映射
+    for (start, end) in ranges {
+        let range_size = end - start + 1;
+        let offset = header.data_offset + (start * cols * 4) as u64;
+        let map_size = range_size * cols * 4;
+        
+        unsafe {
+            let mmap = MmapOptions::new()
+                .offset(offset)
+                .len(map_size)
+                .map(file)
+                .map_err(|e| NnpError::IoError(format!("Failed to create memory map: {}", e)))?;
+            
+            // 直接将整个区间的数据转换为f32切片
+            let data = std::slice::from_raw_parts(
+                mmap.as_ptr() as *const f32,
+                range_size * cols
+            );
+            
+            // 将数据添加到结果向量
+            result.extend_from_slice(data);
+        }
+    }
+    
+    Array2::from_shape_vec((indexes.len(), cols), result)
+        .map_err(|e| NnpError::InvalidArrayData(format!("Failed to create array: {}", e)))
 }
 
-// 处理切片索引
-fn process_slice(slice: &std::ops::Range<usize>, total_rows: usize) -> Vec<usize> {
-    let start = slice.start.min(total_rows);
-    let end = slice.end.min(total_rows);
-    (start..end).collect()
-}
-
-// 随机访问数组数据
+// 优化的随机访问函数
 pub fn getitem(path: &Path, indexes: &[usize], array_names: Option<&[String]>) -> NnpResult<HashMap<String, Array2<f32>>> {
     let file = OpenOptions::new()
         .read(true)
         .open(path)?;
-        
-    let mut locked_file = FileLock::new_shared(file)?;
-    let file = locked_file.as_file();
+    
     let mut reader = BufReader::with_capacity(BUFFER_SIZE, file);
+    
+    // 读取文件头部信息
+    let header = FileHeader::read(&mut reader)?;
     let mut arrays = HashMap::new();
-    
-    // 读取文件头
-    let mut magic = [0u8; 4];
-    reader.read_exact(&mut magic)?;
-    if magic != *MAGIC_NUMBER {
-        return Err(NnpError::InvalidArrayData("Invalid file format".to_string()));
-    }
-    
-    let mut version_bytes = [0u8; 4];
-    reader.read_exact(&mut version_bytes)?;
-    let version = u32::from_le_bytes(version_bytes);
-    if version != VERSION {
-        return Err(NnpError::InvalidArrayData(format!("Unsupported version: {}", version)));
-    }
-    
-    let mut count_bytes = [0u8; 4];
-    reader.read_exact(&mut count_bytes)?;
-    let array_count = u32::from_le_bytes(count_bytes);
-    
-    // 读取头部信息
-    let mut headers = Vec::with_capacity(array_count as usize);
-    for _ in 0..array_count {
-        let mut name_len_bytes = [0u8; 4];
-        reader.read_exact(&mut name_len_bytes)?;
-        let name_len = u32::from_le_bytes(name_len_bytes) as usize;
-        
-        let mut name_bytes = vec![0u8; name_len];
-        reader.read_exact(&mut name_bytes)?;
-        let name = String::from_utf8(name_bytes)?;
-        
-        let mut rows_bytes = [0u8; 8];
-        let mut cols_bytes = [0u8; 8];
-        let mut offset_bytes = [0u8; 8];
-        reader.read_exact(&mut rows_bytes)?;
-        reader.read_exact(&mut cols_bytes)?;
-        reader.read_exact(&mut offset_bytes)?;
-        
-        headers.push(ArrayMeta {
-            name,
-            rows: u64::from_le_bytes(rows_bytes),
-            cols: u64::from_le_bytes(cols_bytes),
-            data_offset: u64::from_le_bytes(offset_bytes),
-        });
-    }
     
     // 重新打开文件以获取新的文件句柄用于内存映射
     let mmap_file = OpenOptions::new()
@@ -520,15 +485,15 @@ pub fn getitem(path: &Path, indexes: &[usize], array_names: Option<&[String]>) -
         .open(path)?;
         
     // 读取指定数组的数据
-    for header in headers {
+    for meta in header.headers {
         if let Some(names) = array_names {
-            if !names.contains(&header.name) {
+            if !names.contains(&meta.name) {
                 continue;
             }
         }
         
-        let array = mmap_getitem(&mmap_file, &header, indexes)?;
-        arrays.insert(header.name, array);
+        let array = mmap_getitem_optimized(&mmap_file, &meta, indexes)?;
+        arrays.insert(meta.name, array);
     }
     
     Ok(arrays)

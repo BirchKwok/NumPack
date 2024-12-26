@@ -292,13 +292,10 @@ def test_random_access():
         np.save('test_random_access_array1.npy', arrays['array1'])
         np.save('test_random_access_array2.npy', arrays['array2'])
         
-        # 生成随机索引
-        random_indices = np.random.randint(0, size, 10000)  # 随机访问1万行
-        sequential_indices = np.arange(10000)  # 顺序访问1万行
-        slice_indices = slice(size//4, size//2)  # 切片访问25万行
-        
-        # 测试随机索引访问
-        logger.info("测试随机索引访问性能...")
+        # 测试场景：
+        # 1. 完全随机访问（随机抽取10000行）
+        random_indices = np.random.randint(0, size, 10000)
+        logger.info("\n测试完全随机访问性能...")
         
         # NumPack 随机访问
         start_time = time.time()
@@ -327,8 +324,45 @@ def test_random_access():
         logger.info(f"NumPy npy 随机访问耗时: {npy_random_time:.2f}秒")
         logger.info(f"随机访问性能对比 (npy): NumPack/NumPy = {numpack_random_time/npy_random_time:.2f}x")
         
-        # 测试顺序索引访问
-        logger.info("\n测试顺序索引访问性能...")
+        # 2. 局部连续访问（连续的1000个区间，每个区间10行）
+        logger.info("\n测试局部连续访问性能...")
+        interval_size = 10
+        num_intervals = 1000
+        interval_indices = []
+        for i in range(num_intervals):
+            start = np.random.randint(0, size - interval_size)
+            interval_indices.extend(range(start, start + interval_size))
+        interval_indices = np.array(interval_indices)
+        
+        # NumPack 局部连续访问
+        start_time = time.time()
+        numpack_interval = getitem('test_random_access.nnp', interval_indices)
+        numpack_interval_time = time.time() - start_time
+        logger.info(f"NumPack 局部连续访问耗时: {numpack_interval_time:.2f}秒")
+        
+        # NumPy npz 局部连续访问
+        start_time = time.time()
+        npz_interval = {
+            'array1': npz_data['array1'][interval_indices],
+            'array2': npz_data['array2'][interval_indices]
+        }
+        npz_interval_time = time.time() - start_time
+        logger.info(f"NumPy npz 局部连续访问耗时: {npz_interval_time:.2f}秒")
+        logger.info(f"局部连续访问性能对比 (npz): NumPack/NumPy = {numpack_interval_time/npz_interval_time:.2f}x")
+        
+        # NumPy npy 局部连续访问
+        start_time = time.time()
+        npy_interval = {
+            'array1': np.load('test_random_access_array1.npy')[interval_indices],
+            'array2': np.load('test_random_access_array2.npy')[interval_indices]
+        }
+        npy_interval_time = time.time() - start_time
+        logger.info(f"NumPy npy 局部连续访问耗时: {npy_interval_time:.2f}秒")
+        logger.info(f"局部连续访问性能对比 (npy): NumPack/NumPy = {numpack_interval_time/npy_interval_time:.2f}x")
+        
+        # 3. 顺序访问（前10000行）
+        logger.info("\n测试顺序访问性能...")
+        sequential_indices = np.arange(10000)
         
         # NumPack 顺序访问
         start_time = time.time()
@@ -356,35 +390,6 @@ def test_random_access():
         logger.info(f"NumPy npy 顺序访问耗时: {npy_seq_time:.2f}秒")
         logger.info(f"顺序访问性能对比 (npy): NumPack/NumPy = {numpack_seq_time/npy_seq_time:.2f}x")
         
-        # 测试切片访问
-        logger.info("\n测试切片访问性能...")
-        
-        # NumPack 切片访问
-        start_time = time.time()
-        numpack_slice = getitem('test_random_access.nnp', slice_indices)
-        numpack_slice_time = time.time() - start_time
-        logger.info(f"NumPack 切片访问耗时: {numpack_slice_time:.2f}秒")
-        
-        # NumPy npz 切片访问
-        start_time = time.time()
-        npz_slice = {
-            'array1': npz_data['array1'][slice_indices],
-            'array2': npz_data['array2'][slice_indices]
-        }
-        npz_slice_time = time.time() - start_time
-        logger.info(f"NumPy npz 切片访问耗时: {npz_slice_time:.2f}秒")
-        logger.info(f"切片访问性能对比 (npz): NumPack/NumPy = {numpack_slice_time/npz_slice_time:.2f}x")
-        
-        # NumPy npy 切片访问
-        start_time = time.time()
-        npy_slice = {
-            'array1': np.load('test_random_access_array1.npy')[slice_indices],
-            'array2': np.load('test_random_access_array2.npy')[slice_indices]
-        }
-        npy_slice_time = time.time() - start_time
-        logger.info(f"NumPy npy 切片访问耗时: {npy_slice_time:.2f}秒")
-        logger.info(f"切片访问性能对比 (npy): NumPack/NumPy = {numpack_slice_time/npy_slice_time:.2f}x")
-        
         # 验证数据正确性
         for name in arrays:
             # 验证随机访问结果
@@ -392,15 +397,15 @@ def test_random_access():
             assert np.allclose(numpack_random[name], npy_random[name])
             logger.info(f"随机访问数组 '{name}' 验证通过")
             
+            # 验证局部连续访问结果
+            assert np.allclose(numpack_interval[name], npz_interval[name])
+            assert np.allclose(numpack_interval[name], npy_interval[name])
+            logger.info(f"局部连续访问数组 '{name}' 验证通过")
+            
             # 验证顺序访问结果
             assert np.allclose(numpack_seq[name], npz_seq[name])
             assert np.allclose(numpack_seq[name], npy_seq[name])
             logger.info(f"顺序访问数组 '{name}' 验证通过")
-            
-            # 验证切片访问结果
-            assert np.allclose(numpack_slice[name], npz_slice[name])
-            assert np.allclose(numpack_slice[name], npy_slice[name])
-            logger.info(f"切片访问数组 '{name}' 验证通过")
         
         logger.info("随机访问性能测试完成")
         
