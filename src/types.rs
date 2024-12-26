@@ -1,4 +1,3 @@
-use numpy::PyArray2;
 use std::result;
 
 pub type NnpResult<T> = result::Result<T, crate::error::NnpError>;

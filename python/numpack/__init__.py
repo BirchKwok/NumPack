@@ -10,7 +10,8 @@ from numpack._lib_numpack import (
     load_nnp as _load_nnp,
     replace_arrays as _replace_arrays,
     append_arrays as _append_arrays,
-    drop_arrays as _drop_arrays
+    drop_arrays as _drop_arrays,
+    getitem as _getitem
 )
 
 def save_nnp(filename: Union[str, Path], arrays: Dict[str, np.ndarray], array_name: Optional[str] = None) -> None:
@@ -76,7 +77,7 @@ def drop_arrays(filename: Union[str, Path], indexes: Union[List[int], int, slice
     _drop_arrays(str(filename), indexes, array_names)
 
 def append_arrays(filename: Union[str, Path], arrays: Dict[str, np.ndarray], array_names: Optional[Union[List[str], str]] = None) -> None:
-    """追加数组到 .nnp 文件
+    """追加数组�� .nnp 文件
     
     Args:
         filename: 文件路径
@@ -91,6 +92,23 @@ def append_arrays(filename: Union[str, Path], arrays: Dict[str, np.ndarray], arr
             array_names = [array_names]
             
     _append_arrays(str(filename), arrays, array_names)
+
+def getitem(filename: Union[str, Path], indexes: Union[List[int], int, slice, np.ndarray], array_names: Optional[Union[List[str], str]] = None) -> Dict[str, np.ndarray]:
+    """从 .nnp 文件中随机访问指定行的数据
+    
+    Args:
+        filename: 文件路径
+        indexes: 要访问的行索引，可以是整数、列表、切片或numpy数组
+        array_names: 要访问的数组名称，如果为 None，则访问所有数组
+    
+    Returns:
+        包含指定行数据的字典
+    """
+    if array_names is not None:
+        if isinstance(array_names, str):
+            array_names = [array_names]
+            
+    return _getitem(str(filename), indexes, array_names)
 
 __version__ = "0.1.0"
 

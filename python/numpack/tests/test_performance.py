@@ -4,7 +4,7 @@ import time
 import logging
 import numpy as np
 from functools import wraps
-from numpack import save_nnp, load_nnp, replace_arrays, append_arrays, drop_arrays
+from numpack import save_nnp, load_nnp, replace_arrays, append_arrays, drop_arrays, getitem
 
 # 配置日志
 logging.basicConfig(
@@ -273,11 +273,147 @@ def test_append_operations():
         logger.error(f"测试追加操作失败: {str(e)}")
         raise
 
+@clean_file_when_finished('test_random_access.nnp', 'test_random_access.npz', 'test_random_access_array1.npy', 'test_random_access_array2.npy')
+def test_random_access():
+    """测试随机访问性能"""
+    logger.info("=== 测试随机访问性能 ===")
+    
+    try:
+        # 创建测试数据
+        size = 1000000  # 100万行
+        arrays = {
+            'array1': np.random.rand(size, 10).astype(np.float32),
+            'array2': np.random.rand(size, 5).astype(np.float32)
+        }
+        
+        # 保存数据
+        save_nnp('test_random_access.nnp', arrays)
+        np.savez('test_random_access.npz', **arrays)
+        np.save('test_random_access_array1.npy', arrays['array1'])
+        np.save('test_random_access_array2.npy', arrays['array2'])
+        
+        # 生成随机索引
+        random_indices = np.random.randint(0, size, 10000)  # 随机访问1万行
+        sequential_indices = np.arange(10000)  # 顺序访问1万行
+        slice_indices = slice(size//4, size//2)  # 切片访问25万行
+        
+        # 测试随机索引访问
+        logger.info("测试随机索引访问性能...")
+        
+        # NumPack 随机访问
+        start_time = time.time()
+        numpack_random = getitem('test_random_access.nnp', random_indices)
+        numpack_random_time = time.time() - start_time
+        logger.info(f"NumPack 随机访问耗时: {numpack_random_time:.2f}秒")
+        
+        # NumPy npz 随机访问
+        start_time = time.time()
+        npz_data = np.load('test_random_access.npz')
+        npz_random = {
+            'array1': npz_data['array1'][random_indices],
+            'array2': npz_data['array2'][random_indices]
+        }
+        npz_random_time = time.time() - start_time
+        logger.info(f"NumPy npz 随机访问耗时: {npz_random_time:.2f}秒")
+        logger.info(f"随机访问性能对比 (npz): NumPack/NumPy = {numpack_random_time/npz_random_time:.2f}x")
+        
+        # NumPy npy 随机访问
+        start_time = time.time()
+        npy_random = {
+            'array1': np.load('test_random_access_array1.npy')[random_indices],
+            'array2': np.load('test_random_access_array2.npy')[random_indices]
+        }
+        npy_random_time = time.time() - start_time
+        logger.info(f"NumPy npy 随机访问耗时: {npy_random_time:.2f}秒")
+        logger.info(f"随机访问性能对比 (npy): NumPack/NumPy = {numpack_random_time/npy_random_time:.2f}x")
+        
+        # 测试顺序索引访问
+        logger.info("\n测试顺序索引访问性能...")
+        
+        # NumPack 顺序访问
+        start_time = time.time()
+        numpack_seq = getitem('test_random_access.nnp', sequential_indices)
+        numpack_seq_time = time.time() - start_time
+        logger.info(f"NumPack 顺序访问耗时: {numpack_seq_time:.2f}秒")
+        
+        # NumPy npz 顺序访问
+        start_time = time.time()
+        npz_seq = {
+            'array1': npz_data['array1'][sequential_indices],
+            'array2': npz_data['array2'][sequential_indices]
+        }
+        npz_seq_time = time.time() - start_time
+        logger.info(f"NumPy npz 顺序访问耗时: {npz_seq_time:.2f}秒")
+        logger.info(f"顺序访问性能对比 (npz): NumPack/NumPy = {numpack_seq_time/npz_seq_time:.2f}x")
+        
+        # NumPy npy 顺序访问
+        start_time = time.time()
+        npy_seq = {
+            'array1': np.load('test_random_access_array1.npy')[sequential_indices],
+            'array2': np.load('test_random_access_array2.npy')[sequential_indices]
+        }
+        npy_seq_time = time.time() - start_time
+        logger.info(f"NumPy npy 顺序访问耗时: {npy_seq_time:.2f}秒")
+        logger.info(f"顺序访问性能对比 (npy): NumPack/NumPy = {numpack_seq_time/npy_seq_time:.2f}x")
+        
+        # 测试切片访问
+        logger.info("\n测试切片访问性能...")
+        
+        # NumPack 切片访问
+        start_time = time.time()
+        numpack_slice = getitem('test_random_access.nnp', slice_indices)
+        numpack_slice_time = time.time() - start_time
+        logger.info(f"NumPack 切片访问耗时: {numpack_slice_time:.2f}秒")
+        
+        # NumPy npz 切片访问
+        start_time = time.time()
+        npz_slice = {
+            'array1': npz_data['array1'][slice_indices],
+            'array2': npz_data['array2'][slice_indices]
+        }
+        npz_slice_time = time.time() - start_time
+        logger.info(f"NumPy npz 切片访问耗时: {npz_slice_time:.2f}秒")
+        logger.info(f"切片访问性能对比 (npz): NumPack/NumPy = {numpack_slice_time/npz_slice_time:.2f}x")
+        
+        # NumPy npy 切片访问
+        start_time = time.time()
+        npy_slice = {
+            'array1': np.load('test_random_access_array1.npy')[slice_indices],
+            'array2': np.load('test_random_access_array2.npy')[slice_indices]
+        }
+        npy_slice_time = time.time() - start_time
+        logger.info(f"NumPy npy 切片访问耗时: {npy_slice_time:.2f}秒")
+        logger.info(f"切片访问性能对比 (npy): NumPack/NumPy = {numpack_slice_time/npy_slice_time:.2f}x")
+        
+        # 验证数据正确性
+        for name in arrays:
+            # 验证随机访问结果
+            assert np.allclose(numpack_random[name], npz_random[name])
+            assert np.allclose(numpack_random[name], npy_random[name])
+            logger.info(f"随机访问数组 '{name}' 验证通过")
+            
+            # 验证顺序访问结果
+            assert np.allclose(numpack_seq[name], npz_seq[name])
+            assert np.allclose(numpack_seq[name], npy_seq[name])
+            logger.info(f"顺序访问数组 '{name}' 验证通过")
+            
+            # 验证切片访问结果
+            assert np.allclose(numpack_slice[name], npz_slice[name])
+            assert np.allclose(numpack_slice[name], npy_slice[name])
+            logger.info(f"切片访问数组 '{name}' 验证通过")
+        
+        logger.info("随机访问性能测试完成")
+        
+    except Exception as e:
+        logger.error(f"随机访问性能测试失败: {str(e)}")
+        raise
+
 if __name__ == '__main__':
     try:
         logger.info("开始运行性能测试...")
         test_large_data()
         test_append_operations()
+        test_random_access()
         logger.info("所有测试完成！")
     except Exception as e:
         logger.error(f"测试过程中发生错误: {str(e)}")
