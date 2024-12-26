@@ -6,7 +6,7 @@ use numpy::{PyArray2};
 use ndarray::{Array2, ArrayView2};
 use pyo3::{Py, Python};
 use fs2::FileExt;
-use memmap2::{MmapOptions, MmapMut};
+use memmap2::{MmapOptions, MmapMut, Mmap};
 use crate::error::{NnpResult, NnpError};
 use crate::types::ArrayMeta;
 
@@ -79,28 +79,147 @@ impl Drop for FileLock {
     }
 }
 
-// 使用内存映射读取数组
-fn mmap_array_data(file: &File, header: &ArrayMeta) -> NnpResult<Array2<f32>> {
-    let total_size = (header.rows * header.cols) as usize;
-    let total_bytes = total_size * 4;
-    
-    unsafe {
-        let mmap = MmapOptions::new()
-            .offset(header.data_offset)
-            .len(total_bytes)
-            .map(file)
-            .map_err(|e| NnpError::IoError(format!("Failed to create memory map: {}", e)))?;
-            
-        let data = std::slice::from_raw_parts(mmap.as_ptr() as *const f32, total_size);
-        let array = Array2::from_shape_vec((header.rows as usize, header.cols as usize), data.to_vec())
-            .map_err(|e| NnpError::InvalidArrayData(format!("Failed to create array: {}", e)))?;
-            
-        Ok(array)
+// 缓存文件头部信息的结构体
+#[derive(Debug, Clone)]
+struct FileHeader {
+    version: u32,
+    array_count: u32,
+    headers: Vec<ArrayMeta>,
+}
+
+impl FileHeader {
+    fn read(reader: &mut impl Read) -> NnpResult<Self> {
+        let mut magic = [0u8; 4];
+        reader.read_exact(&mut magic)?;
+        if magic != *MAGIC_NUMBER {
+            return Err(NnpError::InvalidArrayData("Invalid file format".to_string()));
+        }
+
+        let mut version_bytes = [0u8; 4];
+        reader.read_exact(&mut version_bytes)?;
+        let version = u32::from_le_bytes(version_bytes);
+        if version != VERSION {
+            return Err(NnpError::InvalidArrayData(format!("Unsupported version: {}", version)));
+        }
+
+        let mut count_bytes = [0u8; 4];
+        reader.read_exact(&mut count_bytes)?;
+        let array_count = u32::from_le_bytes(count_bytes);
+
+        let mut headers = Vec::with_capacity(array_count as usize);
+        for _ in 0..array_count {
+            let mut name_len_bytes = [0u8; 4];
+            reader.read_exact(&mut name_len_bytes)?;
+            let name_len = u32::from_le_bytes(name_len_bytes) as usize;
+
+            let mut name_bytes = vec![0u8; name_len];
+            reader.read_exact(&mut name_bytes)?;
+            let name = String::from_utf8(name_bytes)?;
+
+            let mut rows_bytes = [0u8; 8];
+            let mut cols_bytes = [0u8; 8];
+            let mut offset_bytes = [0u8; 8];
+            reader.read_exact(&mut rows_bytes)?;
+            reader.read_exact(&mut cols_bytes)?;
+            reader.read_exact(&mut offset_bytes)?;
+
+            headers.push(ArrayMeta {
+                name,
+                rows: u64::from_le_bytes(rows_bytes),
+                cols: u64::from_le_bytes(cols_bytes),
+                data_offset: u64::from_le_bytes(offset_bytes),
+            });
+        }
+
+        Ok(FileHeader {
+            version,
+            array_count,
+            headers,
+        })
     }
 }
 
-// 使用内存映射写入数组
-fn mmap_write_array_data(file: &File, array: &Py<PyArray2<f32>>, offset: u64) -> NnpResult<()> {
+// 优化的数组读取函数
+fn read_array_data_optimized(reader: &mut (impl Read + Seek), header: &ArrayMeta) -> NnpResult<Array2<f32>> {
+    reader.seek(SeekFrom::Start(header.data_offset))?;
+    
+    let total_size = (header.rows * header.cols) as usize;
+    let total_bytes = total_size * 4;
+    
+    // 使用预分配的缓冲区
+    let mut buffer = vec![0u8; total_bytes];
+    reader.read_exact(&mut buffer)?;
+    
+    // 直接将字节切片转换为f32切片，避免逐个转换
+    let data = unsafe {
+        std::slice::from_raw_parts(buffer.as_ptr() as *const f32, total_size)
+    }.to_vec();
+    
+    Array2::from_shape_vec((header.rows as usize, header.cols as usize), data)
+        .map_err(|e| NnpError::InvalidArrayData(format!("Failed to create array: {}", e)))
+}
+
+// 优化的数组写入函数
+fn write_array_data_optimized(writer: &mut impl Write, array: &Py<PyArray2<f32>>) -> NnpResult<usize> {
+    Python::with_gil(|py| {
+        let array = unsafe { array.as_ref(py).as_array() };
+        if !array.is_standard_layout() {
+            return Err(NnpError::InvalidArrayData("Array must be C-contiguous".to_string()));
+        }
+        
+        let data = array.as_slice().unwrap();
+        
+        // 直接将f32切片转换为字节切片
+        let bytes = unsafe {
+            std::slice::from_raw_parts(
+                data.as_ptr() as *const u8,
+                data.len() * 4
+            )
+        };
+        
+        // 分块写入
+        for chunk in bytes.chunks(BUFFER_SIZE) {
+            writer.write_all(chunk)?;
+        }
+        
+        Ok(bytes.len())
+    })
+}
+
+// 优化的内存映射读取函数
+fn mmap_array_data_optimized(file: &File, header: &ArrayMeta, reuse_mmap: Option<&Mmap>) -> NnpResult<Array2<f32>> {
+    let total_size = (header.rows * header.cols) as usize;
+    let total_bytes = total_size * 4;
+    
+    let data = if let Some(mmap) = reuse_mmap {
+        // 重用现有的内存映射
+        unsafe {
+            std::slice::from_raw_parts(
+                mmap[header.data_offset as usize..].as_ptr() as *const f32,
+                total_size
+            )
+        }
+    } else {
+        // 创建新的内存映射
+        unsafe {
+            let mmap = MmapOptions::new()
+                .offset(header.data_offset)
+                .len(total_bytes)
+                .map(file)
+                .map_err(|e| NnpError::IoError(format!("Failed to create memory map: {}", e)))?;
+                
+            std::slice::from_raw_parts(mmap.as_ptr() as *const f32, total_size)
+        }
+    };
+    
+    let array = Array2::from_shape_vec((header.rows as usize, header.cols as usize), data.to_vec())
+        .map_err(|e| NnpError::InvalidArrayData(format!("Failed to create array: {}", e)))?;
+        
+    Ok(array)
+}
+
+// 优化的内��映射写入函数
+fn mmap_write_array_data_optimized(file: &File, array: &Py<PyArray2<f32>>, offset: u64) -> NnpResult<()> {
     Python::with_gil(|py| {
         let array = unsafe { array.as_ref(py).as_array() };
         if !array.is_standard_layout() {
@@ -117,7 +236,10 @@ fn mmap_write_array_data(file: &File, array: &Py<PyArray2<f32>>, offset: u64) ->
                 .map_mut(file)
                 .map_err(|e| NnpError::IoError(format!("Failed to create memory map: {}", e)))?;
                 
-            let bytes = bytemuck::cast_slice(data);
+            let bytes = std::slice::from_raw_parts(
+                data.as_ptr() as *const u8,
+                total_bytes
+            );
             mmap.copy_from_slice(bytes);
             mmap.flush()
                 .map_err(|e| NnpError::IoError(format!("Failed to flush memory map: {}", e)))?;
@@ -127,145 +249,45 @@ fn mmap_write_array_data(file: &File, array: &Py<PyArray2<f32>>, offset: u64) ->
     })
 }
 
-// 重命名原来的函数为 load_arrays_legacy
-fn load_arrays_legacy(reader: &mut BufReader<&mut File>) -> NnpResult<HashMap<String, Array2<f32>>> {
-    let mut arrays = HashMap::new();
-
-    // 读取文件头
-    let mut magic = [0u8; 4];
-    reader.read_exact(&mut magic)?;
-    if magic != *MAGIC_NUMBER {
-        return Err(NnpError::InvalidArrayData("Invalid file format".to_string()));
-    }
-
-    let mut version_bytes = [0u8; 4];
-    reader.read_exact(&mut version_bytes)?;
-    let version = u32::from_le_bytes(version_bytes);
-    if version != VERSION {
-        return Err(NnpError::InvalidArrayData(format!("Unsupported version: {}", version)));
-    }
-
-    let mut count_bytes = [0u8; 4];
-    reader.read_exact(&mut count_bytes)?;
-    let array_count = u32::from_le_bytes(count_bytes);
-
-    // 读取头部信息
-    let mut headers = Vec::with_capacity(array_count as usize);
-    for _ in 0..array_count {
-        let mut name_len_bytes = [0u8; 4];
-        reader.read_exact(&mut name_len_bytes)?;
-        let name_len = u32::from_le_bytes(name_len_bytes) as usize;
-
-        let mut name_bytes = vec![0u8; name_len];
-        reader.read_exact(&mut name_bytes)?;
-        let name = String::from_utf8(name_bytes)?;
-
-        let mut rows_bytes = [0u8; 8];
-        let mut cols_bytes = [0u8; 8];
-        let mut offset_bytes = [0u8; 8];
-        reader.read_exact(&mut rows_bytes)?;
-        reader.read_exact(&mut cols_bytes)?;
-        reader.read_exact(&mut offset_bytes)?;
-
-        headers.push(ArrayMeta {
-            name,
-            rows: u64::from_le_bytes(rows_bytes),
-            cols: u64::from_le_bytes(cols_bytes),
-            data_offset: u64::from_le_bytes(offset_bytes),
-        });
-    }
-
-    // 读取数组数据
-    for header in headers {
-        let array = read_array_data(reader, &header)?;
-        arrays.insert(header.name, array);
-    }
-
-    Ok(arrays)
-}
-
-// 使用内存映射加载数组
-fn load_arrays_mmap(path: &Path, _mmap_mode: bool) -> NnpResult<HashMap<String, Array2<f32>>> {
+// 优化的加载函数
+pub fn load_arrays(path: &Path, mmap_mode: bool) -> NnpResult<HashMap<String, Array2<f32>>> {
     let file = OpenOptions::new()
         .read(true)
         .open(path)?;
     
-    let mut locked_file = FileLock::new_shared(file)?;
-    let file = locked_file.as_file();
     let mut reader = BufReader::with_capacity(BUFFER_SIZE, file);
+    
+    // 读取文件头部信息
+    let header = FileHeader::read(&mut reader)?;
+    
     let mut arrays = HashMap::new();
-
-    // 读取文件头
-    let mut magic = [0u8; 4];
-    reader.read_exact(&mut magic)?;
-    if magic != *MAGIC_NUMBER {
-        return Err(NnpError::InvalidArrayData("Invalid file format".to_string()));
-    }
-
-    let mut version_bytes = [0u8; 4];
-    reader.read_exact(&mut version_bytes)?;
-    let version = u32::from_le_bytes(version_bytes);
-    if version != VERSION {
-        return Err(NnpError::InvalidArrayData(format!("Unsupported version: {}", version)));
-    }
-
-    let mut count_bytes = [0u8; 4];
-    reader.read_exact(&mut count_bytes)?;
-    let array_count = u32::from_le_bytes(count_bytes);
-
-    // 读取头部信息
-    let mut headers = Vec::with_capacity(array_count as usize);
-    for _ in 0..array_count {
-        let mut name_len_bytes = [0u8; 4];
-        reader.read_exact(&mut name_len_bytes)?;
-        let name_len = u32::from_le_bytes(name_len_bytes) as usize;
-
-        let mut name_bytes = vec![0u8; name_len];
-        reader.read_exact(&mut name_bytes)?;
-        let name = String::from_utf8(name_bytes)?;
-
-        let mut rows_bytes = [0u8; 8];
-        let mut cols_bytes = [0u8; 8];
-        let mut offset_bytes = [0u8; 8];
-        reader.read_exact(&mut rows_bytes)?;
-        reader.read_exact(&mut cols_bytes)?;
-        reader.read_exact(&mut offset_bytes)?;
-
-        headers.push(ArrayMeta {
-            name,
-            rows: u64::from_le_bytes(rows_bytes),
-            cols: u64::from_le_bytes(cols_bytes),
-            data_offset: u64::from_le_bytes(offset_bytes),
-        });
-    }
-
-    // 读取数组数据
-    for header in headers {
-        // 重新打开文件以获取��的文件句柄用于内存映射
-        let mmap_file = OpenOptions::new()
-            .read(true)
-            .open(path)?;
-        let array = mmap_array_data(&mmap_file, &header)?;
-        arrays.insert(header.name, array);
-    }
-
-    Ok(arrays)
-}
-
-// 新的统一入口函数
-pub fn load_arrays(path: &Path, mmap_mode: bool) -> NnpResult<HashMap<String, Array2<f32>>> {
+    
     if mmap_mode {
-        load_arrays_mmap(path, true)
-    } else {
+        // 对于内存映射模式，创建一个共享的内存映射
         let file = OpenOptions::new()
             .read(true)
             .open(path)?;
+            
+        let mmap = unsafe {
+            MmapOptions::new()
+                .map(&file)
+                .map_err(|e| NnpError::IoError(format!("Failed to create memory map: {}", e)))?
+        };
         
-        let mut locked_file = FileLock::new_shared(file)?;
-        let file = locked_file.as_file();
-        let mut reader = BufReader::with_capacity(BUFFER_SIZE, file);
-        load_arrays_legacy(&mut reader)
+        // 使用共享的内存映射读取所有数组
+        for meta in header.headers {
+            let array = mmap_array_data_optimized(&file, &meta, Some(&mmap))?;
+            arrays.insert(meta.name, array);
+        }
+    } else {
+        // 对于普通模式，使用优化的读取函数
+        for meta in header.headers {
+            let array = read_array_data_optimized(&mut reader, &meta)?;
+            arrays.insert(meta.name, array);
+        }
     }
+    
+    Ok(arrays)
 }
 
 // 写入单个数组数据
@@ -329,9 +351,6 @@ pub fn save_arrays(path: &Path, arrays: &HashMap<String, Py<PyArray2<f32>>>) -> 
         .truncate(true)
         .open(path)?;
     
-    let mut locked_file = FileLock::new_exclusive(file)?;
-    let file = locked_file.as_file();
-    
     // 计算文件总大小
     let mut total_size = 12u64; // 魔数(4) + 版本(4) + 数组数量(4)
     let mut headers = Vec::new();
@@ -362,7 +381,7 @@ pub fn save_arrays(path: &Path, arrays: &HashMap<String, Py<PyArray2<f32>>>) -> 
         // 设置文件大小
         file.set_len(current_offset)?;
         
-        // 写入文件头和头部��息
+        // 写入文件头和头部信息
         {
             let mut writer = BufWriter::with_capacity(BUFFER_SIZE, file);
             writer.write_all(MAGIC_NUMBER)?;
@@ -389,7 +408,7 @@ pub fn save_arrays(path: &Path, arrays: &HashMap<String, Py<PyArray2<f32>>>) -> 
                     .read(true)
                     .write(true)
                     .open(path)?;
-                mmap_write_array_data(&mmap_file, array, header.data_offset)?;
+                mmap_write_array_data_optimized(&mmap_file, array, header.data_offset)?;
             }
         }
         
