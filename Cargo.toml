@@ -8,7 +8,7 @@ name = "numpack"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.20.0", features = ["extension-module"] }
+pyo3 = { version = "0.20.3", features = ["extension-module"] }
 numpy = "0.20.0"
 byteorder = "1.5.0"
 memmap2 = "0.9.0"
@@ -16,6 +16,7 @@ filelock = "0.3.0"
 sys-info = "0.9.1"
 bytemuck = "1.14.0"
 ndarray = { version = "0.15.6", features = ["serde"] }
+fs2 = "0.4.3"
 
 [build-dependencies]
 pyo3-build-config = "0.20.0"
