@@ -38,7 +38,7 @@ class NumPack:
         
         return self._npk.load_arrays(array_names, mmap_mode)
 
-    def replace_arrays(self, arrays: Dict[str, np.ndarray], indexes: Union[List[int], int, slice, np.ndarray], array_names: Optional[Union[List[str], str]] = None) -> None:
+    def replace_arrays(self, arrays: Dict[str, np.ndarray], indexes: Union[List[int], int, np.ndarray], array_names: Optional[Union[List[str], str]] = None) -> None:
         """替换 .npk 文件中的数组
     
         Args:
@@ -69,19 +69,20 @@ class NumPack:
             
         self._npk.append_arrays(arrays, array_names)
 
-    def drop_arrays(self, array_names: Optional[Union[List[str], str]] = None) -> None:
+    def drop_arrays(self, array_names: Optional[Union[List[str], str]] = None, indexes: Optional[Union[List[int], int, np.ndarray]] = None) -> None:
         """从 .npk 文件中删除指定数组
     
         Args:
             array_names: 要删除的数组名称，如果为 None，则删除所有数组
+            indexes: 要删除的行索引，如果为 None，则删除所有行
         """
         if array_names is not None and isinstance(array_names, str):
             array_names = [array_names]
             
-        self._npk.drop_arrays(array_names)
+        self._npk.drop_arrays(array_names, indexes)
 
 
-    def getitem(self, indexes: Union[List[int], int, slice, np.ndarray], array_names: Optional[Union[List[str], str]] = None) -> Dict[str, np.ndarray]:
+    def getitem(self, indexes: Union[List[int], int, np.ndarray], array_names: Optional[Union[List[str], str]] = None) -> Dict[str, np.ndarray]:
         """从 .npk 文件中随机访问指定行的数据
     
         Args:

@@ -46,7 +46,6 @@ impl ArrayView {
             DataType::Int16 => "int16",
             DataType::Int32 => "int32",
             DataType::Int64 => "int64",
-            DataType::Float16 => "float16",
             DataType::Float32 => "float32",
             DataType::Float64 => "float64",
         };
@@ -96,6 +95,7 @@ impl ArrayView {
     }
 }
 
+#[allow(dead_code)]
 pub struct ParallelIO {
     base_dir: PathBuf,
     metadata: Arc<CachedMetadataStore>,
@@ -105,7 +105,8 @@ pub struct ParallelIO {
 impl ParallelIO {
     pub fn new(base_dir: PathBuf) -> NpkResult<Self> {
         let metadata_path = base_dir.join("metadata.npkm");
-        let metadata = CachedMetadataStore::new(&metadata_path)?;
+        let wal_path = Some(base_dir.join("metadata.wal"));
+        let metadata = CachedMetadataStore::new(&metadata_path, wal_path)?;
         
         Ok(Self {
             base_dir,
@@ -271,5 +272,40 @@ impl ParallelIO {
             }
         }
         Ok(())
+    }
+
+    pub fn batch_mark_deleted(&self, names: &[String]) -> NpkResult<usize> {
+        let deleted_count = self.metadata.batch_mark_deleted(names)?;
+        
+        // 如果删除的数组数量达到阈值，执行增量压缩
+        if deleted_count > 0 && self.metadata.should_compact(4 * 1024 * 1024 * 1024) { // 4GB阈值
+            // 每次处理100个数组
+            let compacted = self.metadata.incremental_compact(100)?;
+            if !compacted.is_empty() {
+                // 删除已压缩的数组文件
+                for name in compacted {
+                    if let Some(meta) = self.metadata.get_array(&name) {
+                        let file_path = self.base_dir.join(&meta.data_file);
+                        if let Err(e) = std::fs::remove_file(file_path) {
+                            eprintln!("Warning: Failed to remove file for array {}: {}", name, e);
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(deleted_count)
+    }
+
+    pub fn should_compact(&self, threshold: u64) -> bool {
+        self.metadata.should_compact(threshold)
+    }
+
+    pub fn incremental_compact(&self, batch_size: usize) -> NpkResult<Vec<String>> {
+        self.metadata.incremental_compact(batch_size)
+    }
+
+    pub fn update_array_metadata(&self, name: &str, meta: ArrayMetadata) -> NpkResult<()> {
+        self.metadata.update_array_metadata(name, meta)
     }
 } 

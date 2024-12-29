@@ -20,7 +20,6 @@ struct NumPack {
     base_dir: PathBuf,
 }
 
-
 fn get_array_dtype(array: &PyAny) -> PyResult<DataType> {
     let dtype_str = array.getattr("dtype")?.getattr("name")?.extract::<String>()?;
     match dtype_str.as_str() {
@@ -33,7 +32,6 @@ fn get_array_dtype(array: &PyAny) -> PyResult<DataType> {
         "int16" => Ok(DataType::Int16),
         "int32" => Ok(DataType::Int32),
         "int64" => Ok(DataType::Int64),
-        "float16" => Ok(DataType::Float16),
         "float32" => Ok(DataType::Float32),
         "float64" => Ok(DataType::Float64),
         _ => Err(pyo3::exceptions::PyValueError::new_err(
@@ -41,22 +39,6 @@ fn get_array_dtype(array: &PyAny) -> PyResult<DataType> {
         )),
     }
 }
-
-fn convert_to_float16(py: Python, array: &PyArray2<f32>) -> PyResult<PyObject> {
-    let np = py.import("numpy")?;
-    let args = (array, "float16");
-    let result = np.getattr("asarray")?.call1(args)?;
-    Ok(result.into())
-}
-
-fn convert_from_float16(py: Python, array: &PyAny) -> PyResult<Array2<f32>> {
-    let np = py.import("numpy")?;
-    let args = (array, "float32");
-    let result = np.getattr("asarray")?.call1(args)?;
-    let array = result.extract::<&PyArray2<f32>>()?;
-    Ok(unsafe { array.as_array().to_owned() })
-}
-
 
 #[pymethods]
 impl NumPack {
@@ -133,10 +115,6 @@ impl NumPack {
                 DataType::Int64 => {
                     let array = value.extract::<&PyArray2<i64>>()?;
                     i64_arrays.push((name, unsafe { array.as_array().to_owned() }, dtype));
-                }
-                DataType::Float16 => {
-                    let array = Python::with_gil(|py| convert_from_float16(py, value))?;
-                    f32_arrays.push((name, array, dtype));
                 }
                 DataType::Float32 => {
                     let array = value.extract::<&PyArray2<f32>>()?;
@@ -242,11 +220,6 @@ impl NumPack {
                     DataType::Int64 => {
                         let array = view.into_array::<i64>()?;
                         array.into_pyarray(py).into()
-                    }
-                    DataType::Float16 => {
-                        let array = view.into_array::<f32>()?;
-                        let py_array = array.into_pyarray(py);
-                        convert_to_float16(py, py_array)?
                     }
                     DataType::Float32 => {
                         let array = view.into_array::<f32>()?;
@@ -556,33 +529,6 @@ impl NumPack {
                     };
                     i64_arrays.push((name, final_array, dtype));
                 }
-                DataType::Float16 => {
-                    let array = Python::with_gil(|py| convert_from_float16(py, value))?;
-                    let final_array = if let Some(existing) = existing_array {
-                        let mut existing = Python::with_gil(|py| convert_from_float16(py, existing))?;
-                        if let Ok(slice) = indexes.extract::<&PySlice>() {
-                            let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
-                            let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(existing.shape()[0] as i64);
-                            let step = slice.getattr("step")?.extract::<Option<i64>>()?.unwrap_or(1);
-                            
-                            let start = if start < 0 { (existing.shape()[0] as i64 + start) as usize } else { start as usize };
-                            let stop = if stop < 0 { (existing.shape()[0] as i64 + stop) as usize } else { stop as usize };
-                            
-                            if step == 1 {
-                                existing.slice_mut(s![start..stop, ..]).assign(&array);
-                            }
-                        } else if let Ok(indices) = indexes.extract::<Vec<i64>>() {
-                            for (i, &idx) in indices.iter().enumerate() {
-                                let idx = if idx < 0 { (existing.shape()[0] as i64 + idx) as usize } else { idx as usize };
-                                existing.slice_mut(s![idx, ..]).assign(&array.slice(s![i, ..]));
-                            }
-                        }
-                        existing
-                    } else {
-                        array
-                    };
-                    f32_arrays.push((name, final_array, dtype));
-                }
                 DataType::Float32 => {
                     let array = value.extract::<&PyArray2<f32>>()?;
                     let final_array = if let Some(existing) = existing_array {
@@ -681,13 +627,89 @@ impl NumPack {
         Ok(())
     }
 
-    fn drop_arrays(&self, array_names: &PyList) -> PyResult<()> {
-        let names = array_names.iter()
-            .map(|name| name.extract::<String>())
-            .collect::<PyResult<Vec<_>>>()?;
-        
-        self.io.mark_deleted(&names)?;
-        Ok(())
+    #[pyo3(signature = (array_names, indexes=None))]
+    fn drop_arrays(&self, array_names: &PyAny, indexes: Option<&PyAny>) -> PyResult<()> {
+        let names = if let Ok(list) = array_names.downcast::<PyList>() {
+            list.iter()
+                .map(|name| name.extract::<String>())
+                .collect::<PyResult<Vec<_>>>()?
+        } else if let Ok(name) = array_names.extract::<String>() {
+            vec![name]
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "array_names must be a list of strings or a single string"
+            ));
+        };
+
+        // 如果有indexes参数，说明是删除特定行
+        if let Some(indexes) = indexes {
+            let py = indexes.py();
+            
+            // 加载原始数组
+            let arrays = self.load_arrays(py, Some(&PyList::new(py, &names)), false)?;
+            let dict = arrays.downcast::<PyDict>(py)?;
+            
+            for name in &names {
+                if let Some(array) = dict.get_item(name) {
+                    let array = array.downcast::<PyAny>()?;
+                    let shape = array.getattr("shape")?.extract::<(usize, usize)>()?;
+                    
+                    // 获取要删除的行数
+                    let rows_to_delete = if let Ok(slice) = indexes.downcast::<PySlice>() {
+                        let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
+                        let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(shape.0 as i64);
+                        let step = slice.getattr("step")?.extract::<Option<i64>>()?.unwrap_or(1);
+                        
+                        let start = if start < 0 { (shape.0 as i64 + start) as usize } else { start as usize };
+                        let stop = if stop < 0 { (shape.0 as i64 + stop) as usize } else { stop as usize };
+                        
+                        if step == 1 {
+                            stop - start
+                        } else {
+                            0
+                        }
+                    } else if let Ok(indices) = indexes.extract::<Vec<i64>>() {
+                        indices.len()
+                    } else {
+                        return Err(pyo3::exceptions::PyTypeError::new_err(
+                            "indexes must be a slice or list of integers"
+                        ));
+                    };
+
+                    // 更新元数据中的行数
+                    if let Some(meta) = self.io.get_array_meta(name) {
+                        let mut new_meta = meta.clone();
+                        new_meta.rows = new_meta.rows.saturating_sub(rows_to_delete as u64);
+                        // 更新元数据
+                        self.io.update_array_metadata(name, new_meta)?;
+                    }
+                }
+            }
+            
+            Ok(())
+        } else {
+            // 批量标记删除
+            let deleted_count = self.io.batch_mark_deleted(&names)?;
+            
+            // 如果删除的数组数量达到阈值，执行增量压缩
+            if deleted_count > 0 && self.io.should_compact(4 * 1024 * 1024 * 1024) { // 4GB阈值
+                // 每次处理100个数组
+                let compacted = self.io.incremental_compact(100)?;
+                if !compacted.is_empty() {
+                    // 删除已压缩的数组文件
+                    for name in compacted {
+                        if let Some(meta) = self.io.get_array_meta(&name) {
+                            let file_path = self.base_dir.join(&meta.data_file);
+                            if let Err(e) = std::fs::remove_file(file_path) {
+                                eprintln!("Warning: Failed to remove file for array {}: {}", name, e);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            Ok(())
+        }
     }
 
     fn get_shape(&self, py: Python, array_name: &str) -> PyResult<Option<Py<PyTuple>>> {
