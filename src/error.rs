@@ -3,88 +3,90 @@ use std::io;
 use std::string::FromUtf8Error;
 use numpy::NotContiguousError;
 use pyo3::PyErr;
+use tempfile::PersistError;
+use ndarray::ShapeError;
 
 #[derive(Debug)]
-pub enum NnpError {
-    IoError(String),
-    InvalidArrayName(String),
-    InvalidDtype(String),
-    InvalidArrayData(String),
-    InvalidArrayHeader(String),
-    InvalidArrayCount(String),
-    InvalidArraySize(String),
-    InvalidArrayOffset(String),
-    InvalidArrayType(String),
-    InvalidArrayDtype(String),
-    InvalidArrayDataSize(String),
-    InvalidArrayDataOffset(String),
-    InvalidArrayDataType(String),
-    InvalidArrayDataDtype(String),
-    InvalidArrayDataShape(String),
-    InvalidArrayDataCount(String),
-    InvalidArrayDataHeader(String),
-    InvalidArrayDataFormat(String),
-    SystemError(String),
-    DuplicateArrayName(String),
-    Utf8Error(String),
-    NotContiguousError(String),
-    PyError(String),
+pub enum NpkError {
+    IoError(io::Error),
+    PyError(PyErr),
+    ShapeError(ShapeError),
+    Utf8Error(FromUtf8Error),
+    PersistError(PersistError),
+    InvalidMetadata(String),
+    NotContiguousError(NotContiguousError),
+    Other(String),
 }
 
-impl fmt::Display for NnpError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl fmt::Display for NpkError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            NnpError::IoError(msg) => write!(f, "IO error: {}", msg),
-            NnpError::InvalidArrayName(msg) => write!(f, "Invalid array name: {}", msg),
-            NnpError::InvalidDtype(msg) => write!(f, "Invalid dtype: {}", msg),
-            NnpError::InvalidArrayData(msg) => write!(f, "Invalid array data: {}", msg),
-            NnpError::InvalidArrayHeader(msg) => write!(f, "Invalid array header: {}", msg),
-            NnpError::InvalidArrayCount(msg) => write!(f, "Invalid array count: {}", msg),
-            NnpError::InvalidArraySize(msg) => write!(f, "Invalid array size: {}", msg),
-            NnpError::InvalidArrayOffset(msg) => write!(f, "Invalid array offset: {}", msg),
-            NnpError::InvalidArrayType(msg) => write!(f, "Invalid array type: {}", msg),
-            NnpError::InvalidArrayDtype(msg) => write!(f, "Invalid array dtype: {}", msg),
-            NnpError::InvalidArrayDataSize(msg) => write!(f, "Invalid array data size: {}", msg),
-            NnpError::InvalidArrayDataOffset(msg) => write!(f, "Invalid array data offset: {}", msg),
-            NnpError::InvalidArrayDataType(msg) => write!(f, "Invalid array data type: {}", msg),
-            NnpError::InvalidArrayDataDtype(msg) => write!(f, "Invalid array data dtype: {}", msg),
-            NnpError::InvalidArrayDataShape(msg) => write!(f, "Invalid array data shape: {}", msg),
-            NnpError::InvalidArrayDataCount(msg) => write!(f, "Invalid array data count: {}", msg),
-            NnpError::InvalidArrayDataHeader(msg) => write!(f, "Invalid array data header: {}", msg),
-            NnpError::InvalidArrayDataFormat(msg) => write!(f, "Invalid array data format: {}", msg),
-            NnpError::SystemError(msg) => write!(f, "System error: {}", msg),
-            NnpError::DuplicateArrayName(msg) => write!(f, "Duplicate array name: {}", msg),
-            NnpError::Utf8Error(msg) => write!(f, "UTF-8 error: {}", msg),
-            NnpError::NotContiguousError(msg) => write!(f, "Array not contiguous: {}", msg),
-            NnpError::PyError(msg) => write!(f, "Python error: {}", msg),
+            NpkError::IoError(err) => write!(f, "IO error: {}", err),
+            NpkError::PyError(err) => write!(f, "Python error: {}", err),
+            NpkError::ShapeError(err) => write!(f, "Shape error: {}", err),
+            NpkError::Utf8Error(err) => write!(f, "UTF-8 error: {}", err),
+            NpkError::PersistError(err) => write!(f, "File persist error: {}", err),
+            NpkError::InvalidMetadata(msg) => write!(f, "Invalid metadata: {}", msg),
+            NpkError::NotContiguousError(err) => write!(f, "Array not contiguous: {}", err),
+            NpkError::Other(msg) => write!(f, "Other error: {}", msg),
         }
     }
 }
 
-impl std::error::Error for NnpError {}
+impl std::error::Error for NpkError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            NpkError::IoError(err) => Some(err),
+            NpkError::PyError(err) => Some(err),
+            NpkError::ShapeError(err) => Some(err),
+            NpkError::Utf8Error(err) => Some(err),
+            NpkError::PersistError(err) => Some(err),
+            NpkError::NotContiguousError(err) => Some(err),
+            _ => None,
+        }
+    }
+}
 
-impl From<io::Error> for NnpError {
+impl From<io::Error> for NpkError {
     fn from(err: io::Error) -> Self {
-        NnpError::IoError(err.to_string())
+        NpkError::IoError(err)
     }
 }
 
-impl From<FromUtf8Error> for NnpError {
-    fn from(err: FromUtf8Error) -> Self {
-        NnpError::Utf8Error(err.to_string())
-    }
-}
-
-impl From<NotContiguousError> for NnpError {
-    fn from(err: NotContiguousError) -> Self {
-        NnpError::NotContiguousError(err.to_string())
-    }
-}
-
-impl From<PyErr> for NnpError {
+impl From<PyErr> for NpkError {
     fn from(err: PyErr) -> Self {
-        NnpError::PyError(err.to_string())
+        NpkError::PyError(err)
     }
 }
 
-pub type NnpResult<T> = Result<T, NnpError>; 
+impl From<ShapeError> for NpkError {
+    fn from(err: ShapeError) -> Self {
+        NpkError::ShapeError(err)
+    }
+}
+
+impl From<FromUtf8Error> for NpkError {
+    fn from(err: FromUtf8Error) -> Self {
+        NpkError::Utf8Error(err)
+    }
+}
+
+impl From<PersistError> for NpkError {
+    fn from(err: PersistError) -> Self {
+        NpkError::PersistError(err)
+    }
+}
+
+impl From<NotContiguousError> for NpkError {
+    fn from(err: NotContiguousError) -> Self {
+        NpkError::NotContiguousError(err)
+    }
+}
+
+impl From<NpkError> for PyErr {
+    fn from(err: NpkError) -> Self {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(err.to_string())
+    }
+}
+
+pub type NpkResult<T> = Result<T, NpkError>; 

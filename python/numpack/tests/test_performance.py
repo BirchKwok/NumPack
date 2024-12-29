@@ -4,7 +4,7 @@ import time
 import logging
 import numpy as np
 from functools import wraps
-from numpack import save_nnp, load_nnp, replace_arrays, append_arrays, drop_arrays, getitem
+from numpack import NumPack
 
 # 配置日志
 logging.basicConfig(
@@ -22,14 +22,19 @@ def clean_file_when_finished(*filenames):
             finally:
                 for filename in filenames:
                     try:
-                        os.remove(filename)
+                        if os.path.isdir(filename):
+                            for f in os.listdir(filename):
+                                os.remove(os.path.join(filename, f))
+                            os.rmdir(filename)
+                        else:
+                            os.remove(filename)
                         logger.info(f"清理测试文件: {filename}")
                     except FileNotFoundError:
                         pass
         return wrapper
     return decorator
 
-@clean_file_when_finished('test_large.nnp', 'test_large.npz', 'test_large_array1.npy', 'test_large_array2.npy')
+@clean_file_when_finished('test_large', 'test_large.npz', 'test_large_array1.npy', 'test_large_array2.npy')
 def test_large_data():
     """测试大数据处理"""
     logger.info("=== 测试大数据处理 ===")
@@ -42,10 +47,14 @@ def test_large_data():
             'array2': np.random.rand(size // 2, 5).astype(np.float32)
         }
         
+        # 创建目录
+        os.makedirs('test_large', exist_ok=True)
+        
         # 测试 NumPack 保存
         logger.info(f"测试 NumPack 保存大数组 (array1: {arrays['array1'].shape}, array2: {arrays['array2'].shape})...")
         start_time = time.time()
-        save_nnp('test_large.nnp', arrays)
+        npk = NumPack('test_large')
+        npk.save_arrays(arrays)
         save_time = time.time() - start_time
         logger.info(f"NumPack 保存耗时: {save_time:.2f}秒")
         
@@ -67,29 +76,39 @@ def test_large_data():
         logger.info(f"保存性能对比 (npy): NumPack/NumPy = {save_time/npy_save_time:.2f}x")
         
         # 测试 NumPack 完整加载
-        logger.info("测试 NumPack 完整加载...")
+        logger.info("\n\n测试 NumPack 完整加载...")
         start_time = time.time()
-        loaded = load_nnp('test_large.nnp', mmap_mode=False)
+        loaded = npk.load_arrays(mmap_mode=False)
         load_time = time.time() - start_time
         logger.info(f"NumPack 加载耗时: {load_time:.2f}秒")
         
         # 测试 NumPack 选择性加载
         logger.info("测试 NumPack 选择性加载...")
         start_time = time.time()
-        loaded_partial = load_nnp('test_large.nnp', array_names=['array1'])
+        loaded_partial = npk.load_arrays(['array1'], mmap_mode=False)
         load_partial_time = time.time() - start_time
         logger.info(f"NumPack 选择性加载耗时: {load_partial_time:.2f}秒")
         
         # 测试 NumPy npz 加载
         logger.info("测试 NumPy npz 加载...")
         start_time = time.time()
-        npz_loaded = dict(np.load('test_large.npz'))
+        npz_loaded = np.load('test_large.npz')
+        _, _ = npz_loaded['array1'], npz_loaded['array2']
         npz_load_time = time.time() - start_time
         logger.info(f"NumPy npz 加载耗时: {npz_load_time:.2f}秒")
         logger.info(f"加载性能对比 (npz): NumPack/NumPy = {load_time/npz_load_time:.2f}x")
         
+        # 测试 NumPy npz 按需加载
+        logger.info("测试 NumPy npz 按需加载...")
+        start_time = time.time()
+        npz_loaded = np.load('test_large.npz')
+        npz_array1 = npz_loaded['array1']
+        npz_array1_load_time = time.time() - start_time
+        logger.info(f"NumPy npz 按需加载单个数组耗时: {npz_array1_load_time:.2f}秒")
+        logger.info(f"按需加载性能对比 (npz): NumPack/NumPy = {load_partial_time/npz_array1_load_time:.2f}x")
+        
         # 测试 NumPy npy 加载
-        logger.info("测试 NumPy npy 加载...")
+        logger.info("\n\n测试 NumPy npy 加载...")
         start_time = time.time()
         npy_loaded = {
             'array1': np.load('test_large_array1.npy'),
@@ -98,6 +117,34 @@ def test_large_data():
         npy_load_time = time.time() - start_time
         logger.info(f"NumPy npy 加载耗时: {npy_load_time:.2f}秒")
         logger.info(f"加载性能对比 (npy): NumPack/NumPy = {load_time/npy_load_time:.2f}x")
+        
+        # 测试 NumPack 内存映射加载
+        logger.info("\n\n测试 NumPack 内存映射加载...")
+        start_time = time.time()
+        lazy_loaded = npk.load_arrays(mmap_mode=True)
+        lazy_load_time = time.time() - start_time
+        logger.info(f"NumPack 内存映射加载耗时: {lazy_load_time:.2f}秒")
+        logger.info(f"内存映射加载性能对比 (npy): NumPack/NumPy = {lazy_load_time/npy_load_time:.2f}x")
+        
+        # 测试 NumPy npz 内存映射加载
+        logger.info("测试 NumPy npz 内存映射加载...")
+        start_time = time.time()
+        npz_mmap = np.load('test_large.npz', mmap_mode='r')
+        _, _ = npz_mmap['array1'], npz_mmap['array2']
+        npz_mmap_time = time.time() - start_time
+        logger.info(f"NumPy npz 内存映射加载耗时: {npz_mmap_time:.2f}秒")
+        logger.info(f"内存映射加载性能对比 (npz): NumPack/NumPy = {lazy_load_time/npz_mmap_time:.2f}x")
+        
+        # 测试 NumPy npy 内存映射加载
+        logger.info("测试 NumPy npy 内存映射加载...")
+        start_time = time.time()
+        npy_mmap = {
+            'array1': np.load('test_large_array1.npy', mmap_mode='r'),
+            'array2': np.load('test_large_array2.npy', mmap_mode='r')
+        }
+        npy_mmap_time = time.time() - start_time
+        logger.info(f"NumPy npy 内存映射加载耗时: {npy_mmap_time:.2f}秒")
+        logger.info(f"内存映射加载性能对比 (npy): NumPack/NumPy = {lazy_load_time/npy_mmap_time:.2f}x")
         
         # 验证 NumPack 数据
         for name, array in arrays.items():
@@ -114,40 +161,13 @@ def test_large_data():
             assert np.allclose(array, npy_loaded[name])
             logger.info(f"NumPy npy 数组 '{name}' 验证通过")
         
-        # 测试 NumPack 内存映射加载
-        logger.info("测试 NumPack 内存映射加载...")
-        start_time = time.time()
-        mmap_loaded = load_nnp('test_large.nnp', mmap_mode=True)
-        mmap_time = time.time() - start_time
-        logger.info(f"NumPack 内存映射加载耗时: {mmap_time:.2f}秒")
-        
-        # 测试 NumPy npz 内存映射加载
-        logger.info("测试 NumPy npz 内存映射加载...")
-        start_time = time.time()
-        npz_mmap = np.load('test_large.npz', mmap_mode='r')
-        _, _ = npz_mmap['array1'], npz_mmap['array2']
-        npz_mmap_time = time.time() - start_time
-        logger.info(f"NumPy npz 内存映射加载耗时: {npz_mmap_time:.2f}秒")
-        logger.info(f"内存映射加载性能对比 (npz): NumPack/NumPy = {mmap_time/npz_mmap_time:.2f}x")
-        
-        # 测试 NumPy npy 内存映射加载
-        logger.info("测试 NumPy npy 内存映射加载...")
-        start_time = time.time()
-        npy_mmap = {
-            'array1': np.load('test_large_array1.npy', mmap_mode='r'),
-            'array2': np.load('test_large_array2.npy', mmap_mode='r')
-        }
-        npy_mmap_time = time.time() - start_time
-        logger.info(f"NumPy npy 内存映射加载耗时: {npy_mmap_time:.2f}秒")
-        logger.info(f"内存映射加载性能对比 (npy): NumPack/NumPy = {mmap_time/npy_mmap_time:.2f}x")
-        
         # 测试 NumPack 替换操作
         logger.info("测试 NumPack 大数据替换...")
         replace_data = {
             'array1': np.random.rand(size, 10).astype(np.float32)
         }
         start_time = time.time()
-        replace_arrays('test_large.nnp', replace_data, slice(None), 'array1')
+        npk.replace_arrays(replace_data, slice(None))
         replace_time = time.time() - start_time
         logger.info(f"NumPack 替换操作耗时: {replace_time:.2f}秒")
         
@@ -169,44 +189,17 @@ def test_large_data():
         logger.info(f"NumPy npy 替换操作耗时: {npy_replace_time:.2f}秒")
         logger.info(f"替换性能对比 (npy): NumPack/NumPy = {replace_time/npy_replace_time:.2f}x")
         
-        # 测试 NumPack 删除操作
-        logger.info("测试 NumPack 大数据删除...")
-        start_time = time.time()
-        drop_arrays('test_large.nnp', slice(size//2, None), 'array1')
-        drop_time = time.time() - start_time
-        logger.info(f"NumPack 删除操作耗时: {drop_time:.2f}秒")
-        
-        # NumPy npz 不支持原地删除，需要重新保存整个文件
-        logger.info("测试 NumPy npz 大数据删除...")
-        npz_data = dict(np.load('test_large.npz'))
-        npz_data['array1'] = npz_data['array1'][:size//2]
-        start_time = time.time()
-        np.savez('test_large.npz', **npz_data)
-        npz_drop_time = time.time() - start_time
-        logger.info(f"NumPy npz 删除操作耗时: {npz_drop_time:.2f}秒")
-        logger.info(f"删除性能对比 (npz): NumPack/NumPy = {drop_time/npz_drop_time:.2f}x")
-        
-        # NumPy npy 删除部分数据并重新保存
-        logger.info("测试 NumPy npy 大数据删除...")
-        start_time = time.time()
-        array1 = np.load('test_large_array1.npy')
-        array1 = array1[:size//2]
-        np.save('test_large_array1.npy', array1)
-        npy_drop_time = time.time() - start_time
-        logger.info(f"NumPy npy 删除操作耗时: {npy_drop_time:.2f}秒")
-        logger.info(f"删除性能对比 (npy): NumPack/NumPy = {drop_time/npy_drop_time:.2f}x")
-        
         # 比较文件大小
-        nnp_size = os.path.getsize('test_large.nnp') / (1024 * 1024)  # MB
+        npk_size = sum(os.path.getsize(os.path.join('test_large', f)) for f in os.listdir('test_large')) / (1024 * 1024)  # MB
         npz_size = os.path.getsize('test_large.npz') / (1024 * 1024)  # MB
         npy_size = sum(os.path.getsize(f'test_large_{name}.npy') / (1024 * 1024) 
                       for name in ['array1', 'array2'])  # MB
         logger.info(f"\n文件大小对比:")
-        logger.info(f"NumPack: {nnp_size:.2f} MB")
+        logger.info(f"NumPack: {npk_size:.2f} MB")
         logger.info(f"NumPy npz: {npz_size:.2f} MB")
         logger.info(f"NumPy npy: {npy_size:.2f} MB")
-        logger.info(f"大小比例 (vs npz): NumPack/NumPy = {nnp_size/npz_size:.2f}x")
-        logger.info(f"大小比例 (vs npy): NumPack/NumPy = {nnp_size/npy_size:.2f}x")
+        logger.info(f"大小比例 (vs npz): NumPack/NumPy = {npk_size/npz_size:.2f}x")
+        logger.info(f"大小比例 (vs npy): NumPack/NumPy = {npk_size/npy_size:.2f}x")
         
         logger.info("大数据测试完成")
         
@@ -214,7 +207,7 @@ def test_large_data():
         logger.error(f"大数据测试失败: {str(e)}")
         raise
 
-@clean_file_when_finished('test_append.nnp', 'test_append.npz')
+@clean_file_when_finished('test_append', 'test_append.npz')
 def test_append_operations():
     """测试追加操作"""
     logger.info("=== 测试追加操作 ===")
@@ -227,8 +220,12 @@ def test_append_operations():
             'array2': np.random.rand(size // 2, 5).astype(np.float32)
         }
         
+        # 创建目录
+        os.makedirs('test_append', exist_ok=True)
+        
         # 保存初始数据
-        save_nnp('test_append.nnp', arrays)
+        npk = NumPack('test_append')
+        npk.save_arrays(arrays)
         np.savez('test_append.npz', **arrays)
         
         # 创建要追加的数据
@@ -240,7 +237,7 @@ def test_append_operations():
         # 测试 NumPack 追加
         logger.info("测试 NumPack 追加数组...")
         start_time = time.time()
-        append_arrays('test_append.nnp', append_data)
+        npk.save_arrays(append_data)
         append_time = time.time() - start_time
         logger.info(f"NumPack 追加操作耗时: {append_time:.2f}秒")
         
@@ -255,7 +252,7 @@ def test_append_operations():
         logger.info(f"追加性能对比: NumPack/NumPy = {append_time/npz_append_time:.2f}x")
         
         # 加载并验证
-        loaded = load_nnp('test_append.nnp')
+        loaded = npk.load_arrays(mmap_mode=False)
         
         # 验证原有数据
         for name, array in arrays.items():
@@ -273,7 +270,7 @@ def test_append_operations():
         logger.error(f"测试追加操作失败: {str(e)}")
         raise
 
-@clean_file_when_finished('test_random_access.nnp', 'test_random_access.npz', 'test_random_access_array1.npy', 'test_random_access_array2.npy')
+@clean_file_when_finished('test_random_access', 'test_random_access.npz', 'test_random_access_array1.npy', 'test_random_access_array2.npy')
 def test_random_access():
     """测试随机访问性能"""
     logger.info("=== 测试随机访问性能 ===")
@@ -286,8 +283,12 @@ def test_random_access():
             'array2': np.random.rand(size, 5).astype(np.float32)
         }
         
-        # 保存数据
-        save_nnp('test_random_access.nnp', arrays)
+        # 创建目录
+        os.makedirs('test_random_access', exist_ok=True)
+        
+        # 保存数组
+        npk = NumPack('test_random_access')
+        npk.save_arrays(arrays)
         np.savez('test_random_access.npz', **arrays)
         np.save('test_random_access_array1.npy', arrays['array1'])
         np.save('test_random_access_array2.npy', arrays['array2'])
@@ -299,13 +300,19 @@ def test_random_access():
         
         # NumPack 随机访问
         start_time = time.time()
-        numpack_random = getitem('test_random_access.nnp', random_indices)
+        lazy_arrays = npk.load_arrays(mmap_mode=True)
+        array1 = lazy_arrays['array1']
+        array2 = lazy_arrays['array2']
+        numpack_random = {
+            'array1': array1[random_indices],
+            'array2': array2[random_indices]
+        }
         numpack_random_time = time.time() - start_time
         logger.info(f"NumPack 随机访问耗时: {numpack_random_time:.2f}秒")
         
         # NumPy npz 随机访问
         start_time = time.time()
-        npz_data = np.load('test_random_access.npz')
+        npz_data = np.load('test_random_access.npz', mmap_mode='r')
         npz_random = {
             'array1': npz_data['array1'][random_indices],
             'array2': npz_data['array2'][random_indices]
@@ -317,95 +324,18 @@ def test_random_access():
         # NumPy npy 随机访问
         start_time = time.time()
         npy_random = {
-            'array1': np.load('test_random_access_array1.npy')[random_indices],
-            'array2': np.load('test_random_access_array2.npy')[random_indices]
+            'array1': np.load('test_random_access_array1.npy', mmap_mode='r')[random_indices],
+            'array2': np.load('test_random_access_array2.npy', mmap_mode='r')[random_indices]
         }
         npy_random_time = time.time() - start_time
         logger.info(f"NumPy npy 随机访问耗时: {npy_random_time:.2f}秒")
         logger.info(f"随机访问性能对比 (npy): NumPack/NumPy = {numpack_random_time/npy_random_time:.2f}x")
         
-        # 2. 局部连续访问（连续的1000个区间，每个区间10行）
-        logger.info("\n测试局部连续访问性能...")
-        interval_size = 10
-        num_intervals = 1000
-        interval_indices = []
-        for i in range(num_intervals):
-            start = np.random.randint(0, size - interval_size)
-            interval_indices.extend(range(start, start + interval_size))
-        interval_indices = np.array(interval_indices)
-        
-        # NumPack 局部连续访问
-        start_time = time.time()
-        numpack_interval = getitem('test_random_access.nnp', interval_indices)
-        numpack_interval_time = time.time() - start_time
-        logger.info(f"NumPack 局部连续访问耗时: {numpack_interval_time:.2f}秒")
-        
-        # NumPy npz 局部连续访问
-        start_time = time.time()
-        npz_interval = {
-            'array1': npz_data['array1'][interval_indices],
-            'array2': npz_data['array2'][interval_indices]
-        }
-        npz_interval_time = time.time() - start_time
-        logger.info(f"NumPy npz 局部连续访问耗时: {npz_interval_time:.2f}秒")
-        logger.info(f"局部连续访问性能对比 (npz): NumPack/NumPy = {numpack_interval_time/npz_interval_time:.2f}x")
-        
-        # NumPy npy 局部连续访问
-        start_time = time.time()
-        npy_interval = {
-            'array1': np.load('test_random_access_array1.npy')[interval_indices],
-            'array2': np.load('test_random_access_array2.npy')[interval_indices]
-        }
-        npy_interval_time = time.time() - start_time
-        logger.info(f"NumPy npy 局部连续访问耗时: {npy_interval_time:.2f}秒")
-        logger.info(f"局部连续访问性能对比 (npy): NumPack/NumPy = {numpack_interval_time/npy_interval_time:.2f}x")
-        
-        # 3. 顺序访问（前10000行）
-        logger.info("\n测试顺序访问性能...")
-        sequential_indices = np.arange(10000)
-        
-        # NumPack 顺序访问
-        start_time = time.time()
-        numpack_seq = getitem('test_random_access.nnp', sequential_indices)
-        numpack_seq_time = time.time() - start_time
-        logger.info(f"NumPack 顺序访问耗时: {numpack_seq_time:.2f}秒")
-        
-        # NumPy npz 顺序访问
-        start_time = time.time()
-        npz_seq = {
-            'array1': npz_data['array1'][sequential_indices],
-            'array2': npz_data['array2'][sequential_indices]
-        }
-        npz_seq_time = time.time() - start_time
-        logger.info(f"NumPy npz 顺序访问耗时: {npz_seq_time:.2f}秒")
-        logger.info(f"顺序访问性能对比 (npz): NumPack/NumPy = {numpack_seq_time/npz_seq_time:.2f}x")
-        
-        # NumPy npy 顺序访问
-        start_time = time.time()
-        npy_seq = {
-            'array1': np.load('test_random_access_array1.npy')[sequential_indices],
-            'array2': np.load('test_random_access_array2.npy')[sequential_indices]
-        }
-        npy_seq_time = time.time() - start_time
-        logger.info(f"NumPy npy 顺序访问耗时: {npy_seq_time:.2f}秒")
-        logger.info(f"顺序访问性能对比 (npy): NumPack/NumPy = {numpack_seq_time/npy_seq_time:.2f}x")
-        
         # 验证数据正确性
         for name in arrays:
-            # 验证随机访问结果
             assert np.allclose(numpack_random[name], npz_random[name])
             assert np.allclose(numpack_random[name], npy_random[name])
             logger.info(f"随机访问数组 '{name}' 验证通过")
-            
-            # 验证局部连续访问结果
-            assert np.allclose(numpack_interval[name], npz_interval[name])
-            assert np.allclose(numpack_interval[name], npy_interval[name])
-            logger.info(f"局部连续访问数组 '{name}' 验证通过")
-            
-            # 验证顺序访问结果
-            assert np.allclose(numpack_seq[name], npz_seq[name])
-            assert np.allclose(numpack_seq[name], npy_seq[name])
-            logger.info(f"顺序访问数组 '{name}' 验证通过")
         
         logger.info("随机访问性能测试完成")
         

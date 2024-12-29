@@ -1,6 +1,6 @@
 use std::result;
 
-pub type NnpResult<T> = result::Result<T, crate::error::NnpError>;
+pub type NnpResult<T> = result::Result<T, crate::error::NpkError>;
 
 #[derive(Debug, Clone)]
 pub struct ArrayHeader {
