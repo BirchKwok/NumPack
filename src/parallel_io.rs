@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use rayon::prelude::*;
 use ndarray::{Array2, ArrayView2};
 use memmap2::MmapOptions;
@@ -9,7 +9,7 @@ use numpy::Element;
 use pyo3::{Python, PyResult, PyObject};
 
 use crate::error::NpkResult;
-use crate::metadata::{MetadataStore, ArrayMetadata, DataType};
+use crate::metadata::{CachedMetadataStore, ArrayMetadata, DataType};
 
 const BUFFER_SIZE: usize = 4 * 1024 * 1024;  // 4MB buffer
 
@@ -98,30 +98,23 @@ impl ArrayView {
 
 pub struct ParallelIO {
     base_dir: PathBuf,
-    metadata: Arc<Mutex<MetadataStore>>,
+    metadata: Arc<CachedMetadataStore>,
     metadata_path: PathBuf,
 }
 
 impl ParallelIO {
     pub fn new(base_dir: PathBuf) -> NpkResult<Self> {
         let metadata_path = base_dir.join("metadata.npkm");
-        let metadata = if metadata_path.exists() {
-            MetadataStore::load(&metadata_path)?
-        } else {
-            MetadataStore::new()
-        };
+        let metadata = CachedMetadataStore::new(&metadata_path)?;
         
         Ok(Self {
             base_dir,
-            metadata: Arc::new(Mutex::new(metadata)),
+            metadata: Arc::new(metadata),
             metadata_path,
         })
     }
 
     pub fn save_arrays<T: Element + Copy + Send + Sync>(&self, arrays: &[(String, Array2<T>, DataType)]) -> NpkResult<()> {
-        // 获取元数据锁
-        let mut metadata = self.metadata.lock().unwrap();
-        
         // 顺序保存数组
         for (name, array, dtype) in arrays {
             let data_file = format!("data_{}.npkd", name);
@@ -154,42 +147,37 @@ impl ParallelIO {
             file.flush()?;
 
             // 更新元数据
-            metadata.add_array(meta);
+            self.metadata.add_array(meta)?;
         }
-        
-        // 保存元数据
-        metadata.save(&self.metadata_path)?;
         
         Ok(())
     }
 
     pub fn get_array_views(&self, names: Option<&[String]>, mmap_mode: bool) -> NpkResult<Vec<(String, ArrayView)>> {
-        let metadata = self.metadata.lock().unwrap();
         let arrays_to_load: Vec<_> = if let Some(names) = names {
             names.iter()
                 .filter_map(|name| {
-                    let meta = metadata.get_array(name)?;
+                    let meta = self.metadata.get_array(name)?;
                     if !meta.is_deleted {
-                        Some((name.clone(), meta.clone()))
+                        Some((name.clone(), meta))
                     } else {
                         None
                     }
                 })
                 .collect()
         } else {
-            metadata.list_arrays()
+            self.metadata.list_arrays()
                 .into_iter()
                 .filter_map(|name| {
-                    let meta = metadata.get_array(&name)?;
+                    let meta = self.metadata.get_array(&name)?;
                     if !meta.is_deleted {
-                        Some((name.clone(), meta.clone()))
+                        Some((name.clone(), meta))
                     } else {
                         None
                     }
                 })
                 .collect()
         };
-        drop(metadata);
 
         // 并行创建视图
         arrays_to_load.into_par_iter()
@@ -203,21 +191,16 @@ impl ParallelIO {
     }
 
     pub fn mark_deleted(&self, names: &[String]) -> NpkResult<()> {
-        let mut metadata = self.metadata.lock().unwrap();
         let mut any_deleted = false;
         
         for name in names {
-            if metadata.mark_deleted(name) {
+            if self.metadata.mark_deleted(name)? {
                 any_deleted = true;
             }
         }
         
-        // 保存元数据
-        metadata.save(&self.metadata_path)?;
-        
         // 如果有删除操作且满足压缩条件，则进行压缩
-        if any_deleted && metadata.should_compact(4 * 1024 * 1024 * 1024) { // 4GB
-            drop(metadata); // 释放锁
+        if any_deleted && self.metadata.should_compact(4 * 1024 * 1024 * 1024) { // 4GB
             self.compact()?;
         }
         
@@ -225,18 +208,15 @@ impl ParallelIO {
     }
 
     pub fn get_array_meta(&self, name: &str) -> Option<ArrayMetadata> {
-        let metadata = self.metadata.lock().unwrap();
-        metadata.get_array(name).cloned()
+        self.metadata.get_array(name)
     }
 
     pub fn list_arrays(&self) -> Vec<String> {
-        let metadata = self.metadata.lock().unwrap();
-        metadata.list_arrays()
+        self.metadata.list_arrays()
     }
 
     fn compact(&self) -> NpkResult<()> {
-        let mut metadata = self.metadata.lock().unwrap();
-        let active_arrays: Vec<_> = metadata.list_arrays();
+        let active_arrays: Vec<_> = self.metadata.list_arrays();
         
         // 创建临时目录
         let temp_dir = self.base_dir.join(".temp_compact");
@@ -244,7 +224,7 @@ impl ParallelIO {
         
         // 复制未删除的数组到新文件
         for name in &active_arrays {
-            if let Some(meta) = metadata.get_array(name) {
+            if let Some(meta) = self.metadata.get_array(name) {
                 let old_path = self.base_dir.join(&meta.data_file);
                 let new_path = temp_dir.join(&meta.data_file);
                 
@@ -274,15 +254,14 @@ impl ParallelIO {
         std::fs::remove_dir(&temp_dir)?;
         
         // 更新元数据
-        metadata.reset_deleted_size();
-        metadata.save(&self.metadata_path)?;
+        self.metadata.reset_deleted_size()?;
+        self.metadata.force_sync()?;
         
         Ok(())
     }
 
     pub fn reset(&self) -> NpkResult<()> {
-        let mut metadata = self.metadata.lock().unwrap();
-        metadata.reset();
+        self.metadata.reset()?;
         // 删除数组文件
         for entry in std::fs::read_dir(&self.base_dir)? {
             let entry = entry?;

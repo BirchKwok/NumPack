@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::{BufReader, BufWriter};
 use std::path::Path;
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{NpkError, NpkResult};
@@ -46,7 +48,7 @@ pub struct ArrayMetadata {
     pub name: String,
     pub rows: u64,
     pub cols: u64,
-    pub data_file: String,     // 数��文件名
+    pub data_file: String,     // 数据文件名
     pub is_deleted: bool,      // 标记删除
     pub last_modified: u64,    // 最后修改时间
     pub size_bytes: u64,       // 数据大小
@@ -139,5 +141,106 @@ impl MetadataStore {
         self.arrays.clear();
         self.total_size = 0;
         self.deleted_size = 0;
+    }
+}
+
+#[derive(Debug)]
+pub struct CachedMetadataStore {
+    store: Arc<RwLock<MetadataStore>>,
+    path: Arc<Path>,
+    last_sync: Arc<Mutex<SystemTime>>,
+    sync_interval: std::time::Duration,
+}
+
+impl CachedMetadataStore {
+    pub fn new(path: &Path) -> NpkResult<Self> {
+        let store = if path.exists() {
+            MetadataStore::load(path)?
+        } else {
+            MetadataStore::new()
+        };
+        
+        Ok(Self {
+            store: Arc::new(RwLock::new(store)),
+            path: Arc::from(path),
+            last_sync: Arc::new(Mutex::new(SystemTime::now())),
+            sync_interval: std::time::Duration::from_secs(5), // 默认5秒同步一次
+        })
+    }
+
+    pub fn set_sync_interval(&mut self, interval: std::time::Duration) {
+        self.sync_interval = interval;
+    }
+
+    fn should_sync(&self) -> bool {
+        let last_sync = *self.last_sync.lock().unwrap();
+        SystemTime::now()
+            .duration_since(last_sync)
+            .map(|duration| duration >= self.sync_interval)
+            .unwrap_or(true)
+    }
+
+    fn sync_to_disk(&self) -> NpkResult<()> {
+        let store = self.store.read().unwrap();
+        store.save(&self.path)?;
+        *self.last_sync.lock().unwrap() = SystemTime::now();
+        Ok(())
+    }
+
+    pub fn add_array(&self, meta: ArrayMetadata) -> NpkResult<()> {
+        let mut store = self.store.write().unwrap();
+        store.add_array(meta);
+        if self.should_sync() {
+            drop(store);
+            self.sync_to_disk()?;
+        }
+        Ok(())
+    }
+
+    pub fn mark_deleted(&self, name: &str) -> NpkResult<bool> {
+        let mut store = self.store.write().unwrap();
+        let result = store.mark_deleted(name);
+        if result && self.should_sync() {
+            drop(store);
+            self.sync_to_disk()?;
+        }
+        Ok(result)
+    }
+
+    pub fn get_array(&self, name: &str) -> Option<ArrayMetadata> {
+        let store = self.store.read().unwrap();
+        store.get_array(name).cloned()
+    }
+
+    pub fn list_arrays(&self) -> Vec<String> {
+        let store = self.store.read().unwrap();
+        store.list_arrays()
+    }
+
+    pub fn should_compact(&self, threshold: u64) -> bool {
+        let store = self.store.read().unwrap();
+        store.should_compact(threshold)
+    }
+
+    pub fn reset_deleted_size(&self) -> NpkResult<()> {
+        let mut store = self.store.write().unwrap();
+        store.reset_deleted_size();
+        if self.should_sync() {
+            drop(store);
+            self.sync_to_disk()?;
+        }
+        Ok(())
+    }
+
+    pub fn reset(&self) -> NpkResult<()> {
+        let mut store = self.store.write().unwrap();
+        store.reset();
+        drop(store);
+        self.sync_to_disk()?;
+        Ok(())
+    }
+
+    pub fn force_sync(&self) -> NpkResult<()> {
+        self.sync_to_disk()
     }
 } 
