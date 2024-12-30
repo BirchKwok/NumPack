@@ -12,7 +12,7 @@ use std::collections::HashSet;
 use crate::error::NpkResult;
 use crate::metadata::{CachedMetadataStore, ArrayMetadata, DataType};
 
-const BUFFER_SIZE: usize = 4 * 1024 * 1024;  // 4MB buffer
+const BUFFER_SIZE: usize = 8 * 1024 * 1024;  // 8MB buffer
 
 #[allow(dead_code)]
 pub struct ArrayView {
