@@ -212,6 +212,26 @@ pub struct ArrayMetadata {
     pub last_modified: u64,    // 最后修改时间
     pub size_bytes: u64,       // 数据大小
     pub dtype: DataType,       // 数据类型
+    pub deleted_indices: Option<Vec<i64>>,
+}
+
+impl ArrayMetadata {
+    pub fn new(name: String, rows: u64, cols: u64, data_file: String, dtype: DataType) -> Self {
+        Self {
+            name,
+            rows,
+            cols,
+            data_file,
+            is_deleted: false,
+            last_modified: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            size_bytes: (rows * cols * dtype.size_bytes() as u64),
+            dtype,
+            deleted_indices: None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -429,13 +449,17 @@ impl MetadataStore {
         }
         
         if let Some(old_meta) = self.arrays.get(name) {
-            if !old_meta.is_deleted {
-                self.total_size -= old_meta.size_bytes;
+            if let Some(&index) = self.name_to_index.get(name) {
+                if self.bitmap[index] {
+                    self.total_size -= old_meta.size_bytes;
+                }
             }
         }
         self.arrays.insert(name.to_string(), meta.clone());
-        if !meta.is_deleted {
-            self.total_size += meta.size_bytes;
+        if let Some(&index) = self.name_to_index.get(name) {
+            if self.bitmap[index] {
+                self.total_size += meta.size_bytes;
+            }
         }
     }
 
@@ -472,22 +496,25 @@ impl MetadataStore {
         self.total_size > threshold && (self.deleted_size as f64 / self.total_size as f64) > 0.2
     }
 
-    pub fn get_array(&self, name: &str) -> Option<&ArrayMetadata> {
-        self.name_to_index.get(name)
-            .filter(|&&index| self.bitmap[index])
-            .and_then(|_| self.arrays.get(name))
+    pub fn get_array(&self, name: &str) -> Option<ArrayMetadata> {
+        if let Some(&index) = self.name_to_index.get(name) {
+            if self.bitmap[index] {
+                return self.arrays.get(name).map(|meta| meta.clone());
+            }
+        }
+        None
     }
 
     pub fn list_arrays(&self) -> Vec<String> {
-        self.arrays
-            .iter()
-            .filter(|(name, _)| {
-                self.name_to_index
-                    .get(*name)
-                    .map(|&index| self.bitmap[index])
-                    .unwrap_or(false)
+        self.arrays.keys()
+            .filter(|name| {
+                if let Some(&index) = self.name_to_index.get(*name) {
+                    self.bitmap[index]
+                } else {
+                    false
+                }
             })
-            .map(|(name, _)| name.clone())
+            .cloned()
             .collect()
     }
 
@@ -550,6 +577,13 @@ impl MetadataStore {
             wal.commit_transaction()?;
         }
         Ok(())
+    }
+
+    pub fn has_array(&self, name: &str) -> bool {
+        self.name_to_index
+            .get(name)
+            .map(|&index| self.bitmap[index])
+            .unwrap_or(false)
     }
 }
 
@@ -648,7 +682,7 @@ impl CachedMetadataStore {
 
     pub fn get_array(&self, name: &str) -> Option<ArrayMetadata> {
         let store = self.store.read().unwrap();
-        store.get_array(name).cloned()
+        store.get_array(name).map(|meta| meta.clone())
     }
 
     pub fn list_arrays(&self) -> Vec<String> {
@@ -686,5 +720,9 @@ impl CachedMetadataStore {
             self.sync_to_disk()?;
         }
         Ok(())
+    }
+
+    pub fn has_array(&self, name: &str) -> bool {
+        self.store.read().unwrap().has_array(name)
     }
 } 

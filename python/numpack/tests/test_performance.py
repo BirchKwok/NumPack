@@ -54,7 +54,7 @@ def test_large_data():
         logger.info(f"测试 NumPack 保存大数组 (array1: {arrays['array1'].shape}, array2: {arrays['array2'].shape})...")
         start_time = time.time()
         npk = NumPack('test_large')
-        npk.save_arrays(arrays)
+        npk.save(arrays)
         save_time = time.time() - start_time
         logger.info(f"NumPack 保存耗时: {save_time:.2f}秒")
         
@@ -78,14 +78,14 @@ def test_large_data():
         # 测试 NumPack 完整加载
         logger.info("\n\n测试 NumPack 完整加载...")
         start_time = time.time()
-        loaded = npk.load_arrays(mmap_mode=False)
+        loaded = npk.load(mmap_mode=False)
         load_time = time.time() - start_time
         logger.info(f"NumPack 加载耗时: {load_time:.2f}秒")
         
         # 测试 NumPack 选择性加载
         logger.info("测试 NumPack 选择性加载...")
         start_time = time.time()
-        loaded_partial = npk.load_arrays(['array1'], mmap_mode=False)
+        loaded_partial = npk.load(['array1'], mmap_mode=False)
         load_partial_time = time.time() - start_time
         logger.info(f"NumPack 选择性加载耗时: {load_partial_time:.2f}秒")
         
@@ -121,7 +121,7 @@ def test_large_data():
         # 测试 NumPack 内存映射加载
         logger.info("\n\n测试 NumPack 内存映射加载...")
         start_time = time.time()
-        lazy_loaded = npk.load_arrays(mmap_mode=True)
+        lazy_loaded = npk.load(mmap_mode=True)
         lazy_load_time = time.time() - start_time
         logger.info(f"NumPack 内存映射加载耗时: {lazy_load_time:.2f}秒")
         logger.info(f"内存映射加载性能对比 (npy): NumPack/NumPy = {lazy_load_time/npy_load_time:.2f}x")
@@ -167,7 +167,7 @@ def test_large_data():
             'array1': np.random.rand(size, 10).astype(np.float32)
         }
         start_time = time.time()
-        npk.replace_arrays(replace_data, slice(None))
+        npk.replace(replace_data, slice(None))
         replace_time = time.time() - start_time
         logger.info(f"NumPack 替换操作耗时: {replace_time:.2f}秒")
         
@@ -225,7 +225,7 @@ def test_append_operations():
         
         # 保存初始数据
         npk = NumPack('test_append')
-        npk.save_arrays(arrays)
+        npk.save(arrays)
         np.savez('test_append.npz', **arrays)
         
         # 创建要追加的数据
@@ -237,7 +237,7 @@ def test_append_operations():
         # 测试 NumPack 追加
         logger.info("测试 NumPack 追加数组...")
         start_time = time.time()
-        npk.save_arrays(append_data)
+        npk.save(append_data)
         append_time = time.time() - start_time
         logger.info(f"NumPack 追加操作耗时: {append_time:.2f}秒")
         
@@ -252,7 +252,7 @@ def test_append_operations():
         logger.info(f"追加性能对比: NumPack/NumPy = {append_time/npz_append_time:.2f}x")
         
         # 加载并验证
-        loaded = npk.load_arrays(mmap_mode=False)
+        loaded = npk.load(mmap_mode=False)
         
         # 验证原有数据
         for name, array in arrays.items():
@@ -288,7 +288,7 @@ def test_random_access():
         
         # 保存数组
         npk = NumPack('test_random_access')
-        npk.save_arrays(arrays)
+        npk.save(arrays)
         np.savez('test_random_access.npz', **arrays)
         np.save('test_random_access_array1.npy', arrays['array1'])
         np.save('test_random_access_array2.npy', arrays['array2'])
@@ -300,7 +300,7 @@ def test_random_access():
         
         # NumPack 随机访问
         start_time = time.time()
-        lazy_arrays = npk.load_arrays(mmap_mode=True)
+        lazy_arrays = npk.load(mmap_mode=True)
         array1 = lazy_arrays['array1']
         array2 = lazy_arrays['array2']
         numpack_random = {

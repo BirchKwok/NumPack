@@ -1,17 +1,39 @@
-"""
-NumPack - A simple package for saving and loading NumPy arrays
-"""
 from pathlib import Path
 from typing import Dict, List, Tuple, Union, Optional
 import numpy as np
 
 from numpack._lib_numpack import NumPack as _NumPack
 
+
+class _LazyArrayDict:
+    def __init__(self, npk: _NumPack, mmap_mode: bool):
+        self.npk = npk
+        self.mmap_mode = mmap_mode
+
+    def keys(self) -> List[str]:
+        return self.npk.get_member_list()
+    
+    def __getitem__(self, key: str) -> np.ndarray:
+        if key not in self.npk.get_member_list():
+            raise KeyError(f"Key {key} not found in NumPack")
+        
+        return self.npk.load([key], self.mmap_mode)[key]
+    
+    def __keys__(self) -> List[str]:
+        return self.npk.get_member_list()
+    
+    def __len__(self) -> int:
+        return len(self.npk.get_member_list())
+    
+    def __contains__(self, key: str) -> bool:
+        return key in self.npk.get_member_list()
+    
+
 class NumPack:
     def __init__(self, filename: Union[str, Path]):
         self._npk = _NumPack(filename)
 
-    def save_arrays(self, arrays: Dict[str, np.ndarray], array_names: Optional[Union[List[str], str]] = None) -> None:
+    def save(self, arrays: Dict[str, np.ndarray], array_names: Optional[Union[List[str], str]] = None) -> None:
         """保存数组到 .npk 文件
     
         Args:
@@ -21,55 +43,45 @@ class NumPack:
         if not isinstance(arrays, dict):
             raise ValueError("arrays must be a dictionary")
             
-        self._npk.save_arrays(arrays, array_names)
+        self._npk.save(arrays, array_names)
 
-    def load_arrays(self, array_names: Optional[Union[List[str], str]] = None, mmap_mode: bool = False) -> Dict[str, np.ndarray]:
+    def load(self, mmap_mode: bool = False) -> Dict[str, np.ndarray]:
         """从 .npk 文件加载数组
     
         Args:
-            array_names: 要加载的数组名称，如果为 None，则加载所有数组
             mmap_mode: 是否使用内存映射模式
     
         Returns:
-            包含加载的数组的字典
+            一个 LazyArrayDict 对象，可以按需加载数组
         """
-        if array_names is not None and isinstance(array_names, str):
-            array_names = [array_names]
-        
-        return self._npk.load_arrays(array_names, mmap_mode)
+        return _LazyArrayDict(self._npk, mmap_mode)
 
-    def replace_arrays(self, arrays: Dict[str, np.ndarray], indexes: Union[List[int], int, np.ndarray], array_names: Optional[Union[List[str], str]] = None) -> None:
+    def replace(self, arrays: Dict[str, np.ndarray], indexes: Union[List[int], int, np.ndarray]) -> None:
         """替换 .npk 文件中的数组
     
         Args:
             arrays: 要替换的数组字典
             indexes: 要替换的索引
-            array_names: 要替换的数组名称，如果为 None，则替换所有数组
         """
         if not isinstance(arrays, dict):
             raise ValueError("arrays must be a dictionary")
-        
-        if array_names is not None and isinstance(array_names, str):
-            array_names = [array_names]
             
-        self._npk.replace_arrays(arrays, indexes, array_names)
+        self._npk.replace(arrays, indexes)
 
-    def append_arrays(self, arrays: Dict[str, np.ndarray], array_names: Optional[Union[List[str], str]] = None) -> None:
+    def append(self, arrays: Dict[str, np.ndarray]) -> None:
         """追加数组到 .npk 文件
     
         Args:
             arrays: 要追加的数组字典
-            array_names: 要追加的数组名称，如果为 None，则追加所有数组
         """
         if not isinstance(arrays, dict):
             raise ValueError("arrays must be a dictionary")
         
-        if array_names is not None and isinstance(array_names, str):
-            array_names = [array_names]
-            
-        self._npk.append_arrays(arrays, array_names)
+        # 将字典转换为元组列表
+        array_tuples = [(name, array) for name, array in arrays.items()]
+        self._npk.append(array_tuples)
 
-    def drop_arrays(self, array_names: Optional[Union[List[str], str]] = None, indexes: Optional[Union[List[int], int, np.ndarray]] = None) -> None:
+    def drop(self, array_names: Optional[Union[List[str], str]] = None, indexes: Optional[Union[List[int], int, np.ndarray]] = None) -> None:
         """从 .npk 文件中删除指定数组
     
         Args:
@@ -79,7 +91,7 @@ class NumPack:
         if array_names is not None and isinstance(array_names, str):
             array_names = [array_names]
             
-        self._npk.drop_arrays(array_names, indexes)
+        self._npk.drop(array_names, indexes)
 
 
     def getitem(self, indexes: Union[List[int], int, np.ndarray], array_names: Optional[Union[List[str], str]] = None) -> Dict[str, np.ndarray]:
@@ -92,10 +104,7 @@ class NumPack:
         Returns:
             包含指定行数据的字典
         """
-        if array_names is not None and isinstance(array_names, str):
-            array_names = [array_names]
-            
-        return self._npk.getitem(indexes, array_names)
+        raise NotImplementedError("getitem is not implemented")
     
     def get_shape(self, array_names: Optional[Union[List[str], str]] = None) -> Dict[str, Tuple[int, int]]:
         """获取 .npk 文件中指定数组的形状

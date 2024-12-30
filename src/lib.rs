@@ -4,11 +4,13 @@ mod parallel_io;
 
 use std::path::{Path, PathBuf};
 use numpy::{PyArray2, IntoPyArray};
+use pyo3::exceptions::PyKeyError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
-use ndarray::Array2;
 use ndarray::prelude::*;
 use pyo3::types::PySlice;
+use std::fs::OpenOptions;
+use std::io::Write;
 
 use crate::parallel_io::ParallelIO;
 use crate::metadata::DataType;
@@ -40,6 +42,19 @@ fn get_array_dtype(array: &PyAny) -> PyResult<DataType> {
     }
 }
 
+fn get_array_shape(array: &PyAny) -> PyResult<(usize, usize)> {
+    let shape = array.getattr("shape")?;
+    let rows = shape.get_item(0)?.extract::<usize>()?;
+    let cols = shape.get_item(1)?.extract::<usize>()?;
+    Ok((rows, cols))
+}
+
+impl PartialEq for DataType {
+    fn eq(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+}
+
 #[pymethods]
 impl NumPack {
     #[new]
@@ -58,7 +73,7 @@ impl NumPack {
         })
     }
 
-    fn save_arrays(&self, arrays: &PyDict, array_name: Option<String>) -> PyResult<()> {
+    fn save(&self, arrays: &PyDict, array_name: Option<String>) -> PyResult<()> {
         let mut bool_arrays = Vec::new();
         let mut u8_arrays = Vec::new();
         let mut u16_arrays = Vec::new();
@@ -164,19 +179,50 @@ impl NumPack {
         Ok(())
     }
 
-    #[pyo3(signature = (array_names=None, mmap_mode=false))]
-    fn load_arrays(&self, py: Python, array_names: Option<&PyList>, mmap_mode: bool) -> PyResult<PyObject> {
+    #[pyo3(signature = (array_names=None, mmap_mode=false, excluded_indices=None))]
+    fn load(&self, py: Python, array_names: Option<&PyList>, mmap_mode: bool, excluded_indices: Option<&PyAny>) -> PyResult<PyObject> {
+        if let Some(names) = array_names {
+            for name in names.iter() {
+                if !self.io.has_array(name.extract::<String>()?.as_str()) {
+                    return Err(PyErr::new::<PyKeyError, _>("Array not found"));
+                }
+            }
+        }
+
         let views = self.io.get_array_views(array_names.map(|names| {
             names.iter()
                 .map(|name| name.extract::<String>())
                 .collect::<PyResult<Vec<_>>>()
         }).transpose()?.as_deref(), mmap_mode)?;
 
+        // 转换excluded_indices为Vec<i64>
+        let excluded = if let Some(indices) = excluded_indices {
+            if let Ok(slice) = indices.downcast::<PySlice>() {
+                let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
+                let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(-1);
+                let step = slice.getattr("step")?.extract::<Option<i64>>()?.unwrap_or(1);
+                
+                if step == 1 {
+                    Some((start..stop).collect::<Vec<i64>>())
+                } else {
+                    None
+                }
+            } else if let Ok(indices) = indices.extract::<Vec<i64>>() {
+                Some(indices)
+            } else {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "excluded_indices must be a slice or list of integers"
+                ));
+            }
+        } else {
+            None
+        };
+
         if mmap_mode {
             // 在mmap模式下，返回原始的内存映射视图
             let dict = PyDict::new(py);
             for (name, mut view) in views {
-                let array = view.get_mmap_array(py)?;
+                let array = view.get_mmap_array(py, excluded.as_deref())?;
                 dict.set_item(name, array)?;
             }
             Ok(dict.into_py(py))
@@ -184,49 +230,64 @@ impl NumPack {
             // 在非mmap模式下，加载到内存
             let dict = PyDict::new(py);
             for (name, mut view) in views {
+                // 合并excluded_indices和deleted_indices
+                let final_excluded = if let Some(excluded) = &excluded {
+                    if let Some(deleted) = &view.meta.deleted_indices {
+                        let mut combined = excluded.clone();
+                        combined.extend(deleted);
+                        combined.sort_unstable();
+                        combined.dedup();
+                        Some(combined)
+                    } else {
+                        Some(excluded.clone())
+                    }
+                } else {
+                    view.meta.deleted_indices.clone()
+                };
+
                 let array: PyObject = match view.meta.dtype {
                     DataType::Bool => {
-                        let array = view.into_array::<bool>()?;
+                        let array = view.into_array::<bool>(final_excluded.as_deref())?;
                         array.into_pyarray(py).into()
                     }
                     DataType::Uint8 => {
-                        let array = view.into_array::<u8>()?;
+                        let array = view.into_array::<u8>(final_excluded.as_deref())?;
                         array.into_pyarray(py).into()
                     }
                     DataType::Uint16 => {
-                        let array = view.into_array::<u16>()?;
+                        let array = view.into_array::<u16>(final_excluded.as_deref())?;
                         array.into_pyarray(py).into()
                     }
                     DataType::Uint32 => {
-                        let array = view.into_array::<u32>()?;
+                        let array = view.into_array::<u32>(final_excluded.as_deref())?;
                         array.into_pyarray(py).into()
                     }
                     DataType::Uint64 => {
-                        let array = view.into_array::<u64>()?;
+                        let array = view.into_array::<u64>(final_excluded.as_deref())?;
                         array.into_pyarray(py).into()
                     }
                     DataType::Int8 => {
-                        let array = view.into_array::<i8>()?;
+                        let array = view.into_array::<i8>(final_excluded.as_deref())?;
                         array.into_pyarray(py).into()
                     }
                     DataType::Int16 => {
-                        let array = view.into_array::<i16>()?;
+                        let array = view.into_array::<i16>(final_excluded.as_deref())?;
                         array.into_pyarray(py).into()
                     }
                     DataType::Int32 => {
-                        let array = view.into_array::<i32>()?;
+                        let array = view.into_array::<i32>(final_excluded.as_deref())?;
                         array.into_pyarray(py).into()
                     }
                     DataType::Int64 => {
-                        let array = view.into_array::<i64>()?;
+                        let array = view.into_array::<i64>(final_excluded.as_deref())?;
                         array.into_pyarray(py).into()
                     }
                     DataType::Float32 => {
-                        let array = view.into_array::<f32>()?;
+                        let array = view.into_array::<f32>(final_excluded.as_deref())?;
                         array.into_pyarray(py).into()
                     }
                     DataType::Float64 => {
-                        let array = view.into_array::<f64>()?;
+                        let array = view.into_array::<f64>(final_excluded.as_deref())?;
                         array.into_pyarray(py).into()
                     }
                 };
@@ -236,7 +297,7 @@ impl NumPack {
         }
     }
 
-    fn replace_arrays(&self, py: Python, arrays: &PyDict, indexes: &PyAny, array_names: Option<&PyList>) -> PyResult<()> {
+    fn replace(&self, py: Python, arrays: &PyDict, indexes: &PyAny) -> PyResult<()> {
         let mut bool_arrays = Vec::new();
         let mut u8_arrays = Vec::new();
         let mut u16_arrays = Vec::new();
@@ -252,20 +313,15 @@ impl NumPack {
         let mut all_names = Vec::new();
 
         // 首先加载现有数组
-        let existing_arrays = self.load_arrays(
+        let existing_arrays = self.load(
             py,
-            array_names,
-            false
+            None,
+            false,
+            None
         )?;
 
         for (key, value) in arrays.iter() {
             let name = key.extract::<String>()?;
-            if let Some(names) = array_names {
-                if !names.contains(&name)? {
-                    continue;
-                }
-            }
-            
             all_names.push(name.clone());
             let dtype = get_array_dtype(value)?;
 
@@ -628,7 +684,7 @@ impl NumPack {
     }
 
     #[pyo3(signature = (array_names, indexes=None))]
-    fn drop_arrays(&self, array_names: &PyAny, indexes: Option<&PyAny>) -> PyResult<()> {
+    fn drop(&self, array_names: &PyAny, indexes: Option<&PyAny>) -> PyResult<()> {
         let names = if let Ok(list) = array_names.downcast::<PyList>() {
             list.iter()
                 .map(|name| name.extract::<String>())
@@ -645,44 +701,52 @@ impl NumPack {
         if let Some(indexes) = indexes {
             let py = indexes.py();
             
-            // 加载原始数组
-            let arrays = self.load_arrays(py, Some(&PyList::new(py, &names)), false)?;
-            let dict = arrays.downcast::<PyDict>(py)?;
-            
             for name in &names {
-                if let Some(array) = dict.get_item(name) {
-                    let array = array.downcast::<PyAny>()?;
-                    let shape = array.getattr("shape")?.extract::<(usize, usize)>()?;
+                if let Some(meta) = self.io.get_array_meta(name) {
+                    let shape = (meta.rows as usize, meta.cols as usize);
                     
-                    // 获取要删除的行数
-                    let rows_to_delete = if let Ok(slice) = indexes.downcast::<PySlice>() {
+                    // 获取要删除的行的索引
+                    let deleted_indices = if let Ok(slice) = indexes.downcast::<PySlice>() {
                         let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
                         let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(shape.0 as i64);
                         let step = slice.getattr("step")?.extract::<Option<i64>>()?.unwrap_or(1);
                         
-                        let start = if start < 0 { (shape.0 as i64 + start) as usize } else { start as usize };
-                        let stop = if stop < 0 { (shape.0 as i64 + stop) as usize } else { stop as usize };
+                        let start = if start < 0 { shape.0 as i64 + start } else { start };
+                        let stop = if stop < 0 { shape.0 as i64 + stop } else { stop };
                         
                         if step == 1 {
-                            stop - start
+                            (start..stop).collect::<Vec<i64>>()
                         } else {
-                            0
+                            Vec::new()
                         }
                     } else if let Ok(indices) = indexes.extract::<Vec<i64>>() {
-                        indices.len()
+                        // 处理负索引
+                        indices.into_iter()
+                            .map(|idx| if idx < 0 { shape.0 as i64 + idx } else { idx })
+                            .collect()
                     } else {
                         return Err(pyo3::exceptions::PyTypeError::new_err(
                             "indexes must be a slice or list of integers"
                         ));
                     };
 
-                    // 更新元数据中的行数
-                    if let Some(meta) = self.io.get_array_meta(name) {
-                        let mut new_meta = meta.clone();
-                        new_meta.rows = new_meta.rows.saturating_sub(rows_to_delete as u64);
-                        // 更新元数据
-                        self.io.update_array_metadata(name, new_meta)?;
-                    }
+                    // 更新元数据中的删除的索引
+                    let mut new_meta = meta.clone();
+                    // 合并现有的deleted_indices和新的deleted_indices
+                    let mut all_deleted = if let Some(existing) = new_meta.deleted_indices {
+                        let mut combined = existing;
+                        combined.extend(deleted_indices);
+                        combined.sort_unstable();
+                        combined.dedup();
+                        combined
+                    } else {
+                        let mut sorted = deleted_indices;
+                        sorted.sort_unstable();
+                        sorted
+                    };
+                    new_meta.deleted_indices = Some(all_deleted);
+                    // 更新元数据
+                    self.io.update_array_metadata(name, new_meta)?;
                 }
             }
             
@@ -733,6 +797,121 @@ impl NumPack {
 
     fn reset(&self) -> PyResult<()> {
         self.io.reset()?;
+        Ok(())
+    }
+
+    pub fn append(&mut self, arrays: Vec<(&str, &PyAny)>) -> PyResult<()> {
+        // 检查数组是否存在并获取现有数组的信息
+        let mut existing_arrays: Vec<(String, DataType, (usize, usize))> = Vec::new();
+        
+        for (name, array) in &arrays {
+            if let Some(meta) = self.io.get_array_meta(name) {
+                let shape = get_array_shape(array)?;
+                if meta.cols != shape.1 as u64 {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        format!("Column count mismatch for array {}: expected {}, got {}", 
+                            name, meta.cols, shape.1)
+                    ));
+                }
+                existing_arrays.push((name.to_string(), meta.dtype.clone(), shape));
+            } else {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    format!("Array {} does not exist", name)
+                ));
+            }
+        }
+
+        // 开始追加数据
+        for (name, array) in arrays {
+            let meta = self.io.get_array_meta(name).unwrap();
+            let shape = get_array_shape(array)?;
+            
+            // 追加数据到文件
+            let array_path = self.base_dir.join(&meta.data_file);
+            let mut file = OpenOptions::new()
+                .append(true)
+                .open(array_path)?;
+                
+            match meta.dtype {
+                DataType::Bool => {
+                    let py_array = array.downcast::<PyArray2<bool>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    file.write_all(bytemuck::cast_slice(data))?;
+                }
+                DataType::Uint8 => {
+                    let py_array = array.downcast::<PyArray2<u8>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    file.write_all(bytemuck::cast_slice(data))?;
+                }
+                DataType::Uint16 => {
+                    let py_array = array.downcast::<PyArray2<u16>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    file.write_all(bytemuck::cast_slice(data))?;
+                }
+                DataType::Uint32 => {
+                    let py_array = array.downcast::<PyArray2<u32>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    file.write_all(bytemuck::cast_slice(data))?;
+                }
+                DataType::Uint64 => {
+                    let py_array = array.downcast::<PyArray2<u64>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    file.write_all(bytemuck::cast_slice(data))?;
+                }
+                DataType::Int8 => {
+                    let py_array = array.downcast::<PyArray2<i8>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    file.write_all(bytemuck::cast_slice(data))?;
+                }
+                DataType::Int16 => {
+                    let py_array = array.downcast::<PyArray2<i16>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    file.write_all(bytemuck::cast_slice(data))?;
+                }
+                DataType::Int32 => {
+                    let py_array = array.downcast::<PyArray2<i32>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    file.write_all(bytemuck::cast_slice(data))?;
+                }
+                DataType::Int64 => {
+                    let py_array = array.downcast::<PyArray2<i64>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    file.write_all(bytemuck::cast_slice(data))?;
+                }
+                DataType::Float32 => {
+                    let py_array = array.downcast::<PyArray2<f32>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    file.write_all(bytemuck::cast_slice(data))?;
+                }
+                DataType::Float64 => {
+                    let py_array = array.downcast::<PyArray2<f64>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    file.write_all(bytemuck::cast_slice(data))?;
+                }
+            }
+
+            // 更新元数据
+            let mut new_meta = meta.clone();
+            new_meta.rows += shape.0 as u64;
+            new_meta.size_bytes = new_meta.rows * new_meta.cols * new_meta.dtype.size_bytes() as u64;
+            new_meta.last_modified = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            self.io.update_array_metadata(name, new_meta)?;
+        }
+        
         Ok(())
     }
 }
