@@ -10,7 +10,7 @@ use serde_bytes::ByteBuf;
 
 use crate::error::{NpkError, NpkResult};
 
-// WAL 操作类型
+// WAL operation type
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WalOp {
     BeginTransaction,
@@ -21,7 +21,7 @@ pub enum WalOp {
     UpdateRows(String, u64),
 }
 
-// WAL 记录结构
+// WAL record structure
 #[derive(Debug, Serialize, Deserialize)]
 struct WalRecord {
     op: WalOp,
@@ -60,7 +60,7 @@ impl WalRecord {
     }
 }
 
-// WAL 写入器
+// WAL writer
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct WalWriter {
@@ -90,14 +90,14 @@ impl WalWriter {
     fn rotate_if_needed(&mut self) -> io::Result<()> {
         let metadata = self.file.metadata()?;
         if metadata.len() > Self::MAX_WAL_SIZE {
-            // 创建新的WAL文件
+            // Create new WAL file
             let new_path = self.path.with_extension("wal.new");
             let new_file = OpenOptions::new()
                 .create(true)
                 .write(true)
                 .open(&new_path)?;
                 
-            // 替换旧文件
+            // Replace old file
             std::fs::rename(&new_path, &self.path)?;
             self.file = new_file;
         }
@@ -111,12 +111,12 @@ impl WalWriter {
         let bytes = bincode::serialize(&record)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             
-        // 原子写入
+        // Atomic write
         let mut temp_buf = Vec::new();
         temp_buf.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
         temp_buf.extend_from_slice(&bytes);
         
-        // 一次性写入所有数据
+        // Write all data at once
         self.file.write_all(&temp_buf)?;
         self.file.sync_data()?;
         
@@ -138,7 +138,7 @@ impl WalWriter {
             temp_buf.extend_from_slice(&bytes);
         }
         
-        // 一次性写入所有数据
+        // Write all data at once
         self.file.write_all(&temp_buf)?;
         self.file.sync_data()?;
         
@@ -212,12 +212,12 @@ pub struct ArrayMetadata {
     pub name: String,
     pub rows: u64,
     pub cols: u64,
-    pub data_file: String,     // 数据文件名
-    pub last_modified: u64,    // 最后修改时间
-    pub size_bytes: u64,       // 数据大小
-    pub dtype: DataType,       // 数据类型
+    pub data_file: String,     // Data file name
+    pub last_modified: u64,    // Last modified time
+    pub size_bytes: u64,       // Data size
+    pub dtype: DataType,       // Data type
     #[serde(skip)]
-    raw_data: Option<ByteBuf>,  // 用于零拷贝序列化
+    raw_data: Option<ByteBuf>,  // For zero-copy serialization
 }
 
 impl ArrayMetadata {
@@ -285,7 +285,7 @@ impl MetadataStore {
             Self::new(None)
         };
 
-        // 重建位图和索引映射
+        // Rebuild bitmap and index mapping
         store.bitmap = BitVec::new();
         store.name_to_index = HashMap::new();
         store.next_index = 0;
@@ -296,7 +296,7 @@ impl MetadataStore {
             store.next_index += 1;
         }
 
-        // 如果有WAL，重放WAL
+        // If there is WAL, replay WAL
         if let Some(wal_path) = wal_path {
             if wal_path.exists() {
                 store.replay_wal(&wal_path)?;
@@ -317,7 +317,7 @@ impl MetadataStore {
         
         while let Ok(()) = file.read_exact(&mut len_bytes) {
             let len = u32::from_le_bytes(len_bytes);
-            if len > 1024 * 1024 * 10 { // 10MB 安全限制
+            if len > 1024 * 1024 * 10 { // 10MB safety limit
                 return Err(NpkError::InvalidMetadata("WAL record too large".to_string()));
             }
             
@@ -333,7 +333,7 @@ impl MetadataStore {
                                 }
                                 WalOp::CommitTransaction => {
                                     if in_transaction {
-                                        // 应用事务中的所有操作
+                                        // Apply all operations in the transaction
                                         for op in transaction_ops.drain(..) {
                                             self.apply_wal_op(op)?;
                                         }
@@ -359,7 +359,7 @@ impl MetadataStore {
             }
         }
         
-        // 如果还在事务中,说明事务未完成,丢弃未完成的事务
+        // If still in transaction, it means the transaction is not complete, discard the incomplete transaction
         if in_transaction {
             transaction_ops.clear();
         }
@@ -369,8 +369,8 @@ impl MetadataStore {
 
     fn apply_wal_op(&mut self, op: WalOp) -> NpkResult<()> {
         match op {
-            WalOp::BeginTransaction => Ok(()), // 事务开始标记,不需要具体操作
-            WalOp::CommitTransaction => Ok(()), // 事务结束标记,不需要具体操作
+            WalOp::BeginTransaction => Ok(()), // Transaction start mark, no specific operation
+            WalOp::CommitTransaction => Ok(()), // Transaction end mark, no specific operation
             WalOp::AddArray(meta) => {
                 self.add_array(meta);
                 Ok(())
@@ -404,7 +404,7 @@ impl MetadataStore {
         Ok(())
     }
 
-    // 修改现有方法以支持WAL
+    // Modify existing methods to support WAL
     pub fn add_array(&mut self, meta: ArrayMetadata) {
         if let Some(wal) = &mut self.wal {
             let _ = wal.append(WalOp::AddArray(meta.clone()));

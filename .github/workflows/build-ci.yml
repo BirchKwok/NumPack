@@ -50,26 +50,26 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           
-      # 安装Python依赖
+      # Install Python dependencies
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install pandas>=2.1.0 pyarrow>=17.0.0 maturin>=1.0,<2.0 numpy>=1.26.0 
           
-      # 安装系统依赖（针对Linux）
+      # Install system dependencies (Linux)
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libssl-dev
 
-      # 安装Rust工具链
+      # Install Rust toolchain
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
           
-      # 缓存Cargo依赖
+      # Cache Cargo dependencies
       - name: Cache Cargo dependencies
         uses: actions/cache@v4
         with:
@@ -80,8 +80,12 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
-
-      # 构建wheels
+        
+      # Run tests
+      - name: Run tests
+        run: python -m pytest
+        
+      # Build wheels
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:

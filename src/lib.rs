@@ -194,7 +194,7 @@ impl NumPack {
                 .collect::<PyResult<Vec<_>>>()
         }).transpose()?.as_deref(), mmap_mode)?;
 
-        // 转换excluded_indices为Vec<i64>
+        // Convert excluded_indices to Vec<i64>
         let excluded = if let Some(indices) = excluded_indices {
             if let Ok(slice) = indices.downcast::<PySlice>() {
                 let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
@@ -218,7 +218,7 @@ impl NumPack {
         };
 
         if mmap_mode {
-            // 在mmap模式下，返回原始的内存映射视图
+            // Return the original memory mapping view in mmap mode
             let dict = PyDict::new(py);
             for (name, mut view) in views {
                 let array = view.get_mmap_array(py, excluded.as_deref())?;
@@ -226,7 +226,7 @@ impl NumPack {
             }
             Ok(dict.into_py(py))
         } else {
-            // 在非mmap模式下，加载到内存
+            // Load to memory in non-mmap mode
             let dict = PyDict::new(py);
             for (name, mut view) in views {
                 let final_excluded = excluded.clone();
@@ -284,7 +284,7 @@ impl NumPack {
     }
 
     fn replace(&self, _py: Python, arrays: &PyDict, indexes: &PyAny) -> PyResult<()> {
-        // 获取索引列表
+        // Get index list
         let indices = if let Ok(slice) = indexes.extract::<&PySlice>() {
             let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
             let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(-1);
@@ -305,7 +305,7 @@ impl NumPack {
             ));
         };
 
-        // 处理每个数组
+        // Process each array
         for (key, value) in arrays.iter() {
             let name = key.extract::<String>()?;
             let dtype = self.io.get_array_meta(&name)
@@ -390,7 +390,7 @@ impl NumPack {
             ));
         };
 
-        // 如果有indexes参数，说明是删除特定行
+        // If indexes parameter is provided, it means deleting specific rows
         if let Some(indexes) = indexes {
             // let py = indexes.py();
             
@@ -398,7 +398,7 @@ impl NumPack {
                 if let Some(meta) = self.io.get_array_meta(name) {
                     let shape = (meta.rows as usize, meta.cols as usize);
                     
-                    // 获取要删除的行的索引
+                    // Get the indices of the rows to delete
                     let deleted_indices = if let Ok(slice) = indexes.downcast::<PySlice>() {
                         let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
                         let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(shape.0 as i64);
@@ -413,7 +413,7 @@ impl NumPack {
                             Vec::new()
                         }
                     } else if let Ok(indices) = indexes.extract::<Vec<i64>>() {
-                        // 处理负索引
+                        // Process negative indices
                         indices.into_iter()
                             .map(|idx| if idx < 0 { shape.0 as i64 + idx } else { idx })
                             .collect()
@@ -458,7 +458,7 @@ impl NumPack {
     }
 
     pub fn append(&mut self, arrays: Vec<(&str, &PyAny)>) -> PyResult<()> {
-        // 检查数组是否存在并获取现有数组的信息
+        // Check if the array exists and get the existing array information
         let mut existing_arrays: Vec<(String, DataType, (usize, usize))> = Vec::new();
         
         for (name, array) in &arrays {
@@ -478,12 +478,12 @@ impl NumPack {
             }
         }
 
-        // 开始追加数据
+        // Start appending data
         for (name, array) in arrays {
             let meta = self.io.get_array_meta(name).unwrap();
             let shape = get_array_shape(array)?;
             
-            // 追加数据到文件
+            // Append data to file
             let array_path = self.base_dir.join(&meta.data_file);
             let mut file = OpenOptions::new()
                 .append(true)
@@ -558,7 +558,7 @@ impl NumPack {
                 }
             }
 
-            // 更新元数据
+            // Update metadata
             let mut new_meta = meta.clone();
             new_meta.rows += shape.0 as u64;
             new_meta.size_bytes = new_meta.rows * new_meta.cols * new_meta.dtype.size_bytes() as u64;

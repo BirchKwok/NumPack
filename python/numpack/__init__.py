@@ -34,11 +34,11 @@ class NumPack:
         self._npk = _NumPack(filename)
 
     def save(self, arrays: Dict[str, np.ndarray], array_names: Optional[Union[List[str], str]] = None) -> None:
-        """保存数组到 .npk 文件
+        """Save arrays to .npk file
     
-        Args:
-            arrays: 要保存的数组字典
-            array_names: 要保存的数组名称，如果为 None，则使用字典中的键名
+        Parameters:
+            arrays (Dict[str, np.ndarray]): The arrays to save
+            array_names (Optional[Union[List[str], str]]): The names of the arrays to save, if None, use the keys of the dictionary
         """
         if not isinstance(arrays, dict):
             raise ValueError("arrays must be a dictionary")
@@ -46,22 +46,22 @@ class NumPack:
         self._npk.save(arrays, array_names)
 
     def load(self, mmap_mode: bool = False) -> Dict[str, np.ndarray]:
-        """从 .npk 文件加载数组
+        """Load arrays from .npk file
     
-        Args:
-            mmap_mode: 是否使用内存映射模式
+        Parameters:
+            mmap_mode (bool): Whether to use memory mapping mode
     
         Returns:
-            一个 LazyArrayDict 对象，可以按需加载数组
+            A LazyArrayDict object, which can load arrays on demand
         """
         return _LazyArrayDict(self._npk, mmap_mode)
 
     def replace(self, arrays: Dict[str, np.ndarray], indexes: Union[List[int], int, np.ndarray]) -> None:
-        """替换 .npk 文件中的数组
+        """Replace arrays in .npk file
     
-        Args:
-            arrays: 要替换的数组字典
-            indexes: 要替换的索引
+        Parameters:
+            arrays (Dict[str, np.ndarray]): The arrays to replace
+            indexes (Union[List[int], int, np.ndarray]): The indexes to replace
         """
         if not isinstance(arrays, dict):
             raise ValueError("arrays must be a dictionary")
@@ -69,24 +69,23 @@ class NumPack:
         self._npk.replace(arrays, indexes)
 
     def append(self, arrays: Dict[str, np.ndarray]) -> None:
-        """追加数组到 .npk 文件
+        """Append arrays to .npk file
     
-        Args:
-            arrays: 要追加的数组字典
+        Parameters:
+            arrays (Dict[str, np.ndarray]): The arrays to append
         """
         if not isinstance(arrays, dict):
             raise ValueError("arrays must be a dictionary")
         
-        # 将字典转换为元组列表
         array_tuples = [(name, array) for name, array in arrays.items()]
         self._npk.append(array_tuples)
 
     def drop(self, array_names: Optional[Union[List[str], str]] = None, indexes: Optional[Union[List[int], int, np.ndarray]] = None) -> None:
-        """从 .npk 文件中删除指定数组
+        """Drop arrays from .npk file
     
-        Args:
-            array_names: 要删除的数组名称，如果为 None，则删除所有数组
-            indexes: 要删除的行索引，如果为 None，则删除所有行
+        Parameters:
+            array_names (Optional[Union[List[str], str]]): The names of the arrays to drop, if None, drop all arrays
+            indexes (Optional[Union[List[int], int, np.ndarray]]): The indexes to drop, if None, drop all rows
         """
         if array_names is not None and isinstance(array_names, str):
             array_names = [array_names]
@@ -95,49 +94,49 @@ class NumPack:
 
 
     def getitem(self, indexes: Union[List[int], int, np.ndarray], array_names: Optional[Union[List[str], str]] = None) -> Dict[str, np.ndarray]:
-        """从 .npk 文件中随机访问指定行的数据
+        """Randomly access the data of specified rows from .npk file
     
-        Args:
-            indexes: 要访问的行索引，可以是整数、列表、切片或numpy数组
-            array_names: 要访问的数组名称，如果为 None，则访问所有数组
+        Parameters:
+            indexes (Union[List[int], int, np.ndarray]): The indexes to access, can be integers, lists, slices or numpy arrays
+            array_names (Optional[Union[List[str], str]]): The names of the arrays to access, if None, access all arrays
     
         Returns:
-            包含指定行数据的字典
+            A dictionary containing the specified row data
         """
         raise NotImplementedError("getitem is not implemented")
     
     def get_shape(self, array_names: Optional[Union[List[str], str]] = None) -> Dict[str, Tuple[int, int]]:
-        """获取 .npk 文件中指定数组的形状
+        """Get the shape of specified arrays in .npk file
     
-        Args:
-            array_names: 要获取形状的数组名称，如果为 None，则获取所有数组的形状
+        Parameters:
+            array_names (Optional[Union[List[str], str]]): The names of the arrays to get the shape, if None, get the shape of all arrays
     
         Returns:
-            包含数组形状的字典
+            A dictionary containing the shapes of the specified arrays
         """
         return self._npk.get_shape(array_names)
     
     def get_member_list(self) -> List[str]:
-        """获取 .npk 文件中的数组名称列表
+        """Get the list of array names in .npk file
     
         Returns:
-            包含数组名称的列表
+            A list containing the names of the arrays
         """
         return self._npk.get_member_list()
     
     def get_modify_time(self, array_name: str) -> Optional[int]:
-        """获取 .npk 文件中指定数组的修改时间
+        """Get the modify time of specified array in .npk file
     
-        Args:
-            array_name: 要获取修改时间的数组名称
+        Parameters:
+            array_name (str): The name of the array to get the modify time
     
         Returns:
-            数组的修改时间，如果数组不存在则返回 None
+            The modify time of the array, if the array does not exist, return None
         """
         return self._npk.get_modify_time(array_name)
     
     def reset(self) -> None:
-        """清空 .npk 文件中的所有数组"""
+        """Clear all arrays in .npk file"""
         self._npk.reset()
     
 __version__ = "0.1.0"
