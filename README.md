@@ -1,19 +1,111 @@
 # NumPack
-A high-performance file format for data storage, built with Rust and Python. LyFile provides efficient storage and retrieval of tabular data and high-dimensional vectors, with optimized SIMD operations for nearest neighbor search.
+
+NumPack is a high-performance array storage and manipulation library designed to efficiently handle large NumPy arrays. Built with Rust for performance and exposed to Python through PyO3, NumPack provides a seamless interface for storing, loading, and manipulating large numerical arrays with better performance compared to traditional NumPy storage methods.
 
 ## Features
-- Fast read/write performance with compression support
-- Efficient storage for both tabular data and high-dimensional vectors 
-- SIMD-optimized nearest neighbor search (AVX2, SSE4.1, NEON)
-- Support for multiple data input formats:
-  - Pandas DataFrame
-  - Python dictionary
-  - PyArrow Table
-- Memory-mapped vector reading for large datasets
-- Multi-threaded processing for improved performance
+
+- **High Performance**: Optimized for both reading and writing large numerical arrays
+- **Memory Mapping Support**: Efficient memory usage through memory mapping capabilities
+- **Selective Loading**: Load only the arrays you need, when you need them
+- **In-place Operations**: Support for in-place array modifications without full file rewrite
+- **Parallel I/O**: Utilizes parallel processing for improved performance
+- **Multiple Data Types**: Supports various numerical data types including:
+  - Boolean
+  - Unsigned integers (8-bit to 64-bit)
+  - Signed integers (8-bit to 64-bit)
+  - Floating point (32-bit and 64-bit)
 
 ## Installation
-TODO
 
-## Quick Start
-TODO
+```bash
+pip install numpack
+```
+
+## Requirements
+
+- Python >= 3.9
+- NumPy
+
+## Usage
+
+### Basic Operations
+
+```python
+import numpy as np
+from numpack import NumPack
+
+# Create a NumPack instance
+npk = NumPack("data_directory")
+
+# Save arrays
+arrays = {
+    'array1': np.random.rand(1000, 100).astype(np.float32),
+    'array2': np.random.rand(500, 200).astype(np.float32)
+}
+npk.save(arrays)
+
+# Load arrays
+# Normal mode
+loaded = npk.load(mmap_mode=False)
+
+# Memory mapping mode for large arrays
+lazy_loaded = npk.load(mmap_mode=True)
+
+# Access specific arrays
+array1 = loaded['array1']
+array2 = loaded['array2']
+```
+
+### Advanced Operations
+
+```python
+# Replace specific rows
+replacement = np.random.rand(10, 100).astype(np.float32)
+npk.replace({'array1': replacement}, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+
+# Append new arrays
+new_arrays = {
+    'array3': np.random.rand(200, 100).astype(np.float32)
+}
+npk.append(new_arrays)
+
+# Drop arrays or specific rows
+npk.drop('array1')  # Drop entire array
+npk.drop('array2', [0, 1, 2])  # Drop specific rows
+
+# Get metadata
+shapes = npk.get_shape()  # Get shapes of all arrays
+members = npk.get_member_list()  # Get list of array names
+mtime = npk.get_modify_time('array1')  # Get modification time
+```
+
+## Performance
+
+NumPack offers significant performance improvements compared to traditional NumPy storage methods:
+
+- Faster saving and loading of large arrays
+- Efficient memory usage through memory mapping
+- Better performance for in-place modifications
+- Optimized random access operations
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the Apache License, Version 2.0 - see the LICENSE file for details.
+
+Copyright 2024 NumPack Contributors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
