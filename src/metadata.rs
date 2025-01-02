@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use bitvec::prelude::*;
+use serde_bytes::ByteBuf;
 
 use crate::error::{NpkError, NpkResult};
 
@@ -123,6 +124,7 @@ impl WalWriter {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn batch_append(&mut self, ops: Vec<WalOp>) -> io::Result<()> {
         let mut temp_buf = Vec::new();
         
@@ -144,6 +146,7 @@ impl WalWriter {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn begin_transaction(&mut self) -> io::Result<()> {
         if !self.in_transaction {
             self.append(WalOp::BeginTransaction)?;
@@ -152,6 +155,7 @@ impl WalWriter {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn commit_transaction(&mut self) -> io::Result<()> {
         if self.in_transaction {
             self.append(WalOp::CommitTransaction)?;
@@ -202,17 +206,18 @@ impl DataType {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArrayMetadata {
     pub name: String,
     pub rows: u64,
     pub cols: u64,
     pub data_file: String,     // 数据文件名
-    pub is_deleted: bool,      // 标记删除
     pub last_modified: u64,    // 最后修改时间
     pub size_bytes: u64,       // 数据大小
     pub dtype: DataType,       // 数据类型
-    pub deleted_indices: Option<Vec<i64>>,
+    #[serde(skip)]
+    raw_data: Option<ByteBuf>,  // 用于零拷贝序列化
 }
 
 impl ArrayMetadata {
@@ -222,16 +227,16 @@ impl ArrayMetadata {
             rows,
             cols,
             data_file,
-            is_deleted: false,
             last_modified: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
             size_bytes: (rows * cols * dtype.size_bytes() as u64),
             dtype,
-            deleted_indices: None,
+            raw_data: None,
         }
     }
+
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -239,7 +244,6 @@ pub struct MetadataStore {
     version: u32,
     arrays: HashMap<String, ArrayMetadata>,
     total_size: u64,
-    deleted_size: u64,
     #[serde(skip)]
     bitmap: BitVec,
     #[serde(skip)]
@@ -256,7 +260,6 @@ impl MetadataStore {
             version: 1,
             arrays: HashMap::new(),
             total_size: 0,
-            deleted_size: 0,
             bitmap: BitVec::new(),
             name_to_index: HashMap::new(),
             next_index: 0,
@@ -287,8 +290,8 @@ impl MetadataStore {
         store.name_to_index = HashMap::new();
         store.next_index = 0;
         
-        for (name, meta) in &store.arrays {
-            store.bitmap.push(!meta.is_deleted);
+        for (name, _meta) in &store.arrays {
+            store.bitmap.push(true);
             store.name_to_index.insert(name.clone(), store.next_index);
             store.next_index += 1;
         }
@@ -373,7 +376,7 @@ impl MetadataStore {
                 Ok(())
             },
             WalOp::DeleteArray(name) => {
-                self.mark_deleted(&name)?;
+                self.delete_array(&name)?;
                 Ok(())
             },
             WalOp::UpdateArray(name, meta) => {
@@ -425,7 +428,7 @@ impl MetadataStore {
         self.arrays.insert(name, meta);
     }
 
-    pub fn mark_deleted(&mut self, name: &str) -> NpkResult<bool> {
+    pub fn delete_array(&mut self, name: &str) -> NpkResult<bool> {
         if let Some(&index) = self.name_to_index.get(name) {
             if self.bitmap[index] {
                 if let Some(wal) = &mut self.wal {
@@ -433,14 +436,42 @@ impl MetadataStore {
                 }
                 
                 self.bitmap.set(index, false);
-                if let Some(meta) = self.arrays.get(name) {
-                    self.deleted_size += meta.size_bytes;
+                if let Some(meta) = self.arrays.remove(name) {
                     self.total_size -= meta.size_bytes;
                 }
                 return Ok(true);
             }
         }
         Ok(false)
+    }
+
+    #[allow(dead_code)]
+    pub fn batch_delete_arrays(&mut self, names: &[String]) -> NpkResult<usize> {
+        let mut ops = Vec::new();
+        let mut deleted_count = 0;
+
+        self.begin_transaction()?;
+        
+        for name in names {
+            if let Some(&index) = self.name_to_index.get(name) {
+                if self.bitmap[index] {
+                    ops.push(WalOp::DeleteArray(name.clone()));
+                    self.bitmap.set(index, false);
+                    if let Some(meta) = self.arrays.remove(name) {
+                        self.total_size -= meta.size_bytes;
+                    }
+                    deleted_count += 1;
+                }
+            }
+        }
+
+        if let Some(wal) = &mut self.wal {
+            wal.batch_append(ops)?;
+        }
+
+        self.commit_transaction()?;
+        
+        Ok(deleted_count)
     }
 
     pub fn update_array_metadata(&mut self, name: &str, meta: ArrayMetadata) {
@@ -461,39 +492,6 @@ impl MetadataStore {
                 self.total_size += meta.size_bytes;
             }
         }
-    }
-
-    pub fn batch_mark_deleted(&mut self, names: &[String]) -> NpkResult<usize> {
-        let mut ops = Vec::new();
-        let mut deleted_count = 0;
-
-        self.begin_transaction()?;
-        
-        for name in names {
-            if let Some(&index) = self.name_to_index.get(name) {
-                if self.bitmap[index] {
-                    ops.push(WalOp::DeleteArray(name.clone()));
-                    self.bitmap.set(index, false);
-                    if let Some(meta) = self.arrays.get(name) {
-                        self.deleted_size += meta.size_bytes;
-                        self.total_size -= meta.size_bytes;
-                    }
-                    deleted_count += 1;
-                }
-            }
-        }
-
-        if let Some(wal) = &mut self.wal {
-            wal.batch_append(ops)?;
-        }
-
-        self.commit_transaction()?;
-        
-        Ok(deleted_count)
-    }
-
-    pub fn should_compact(&self, threshold: u64) -> bool {
-        self.total_size > threshold && (self.deleted_size as f64 / self.total_size as f64) > 0.2
     }
 
     pub fn get_array(&self, name: &str) -> Option<ArrayMetadata> {
@@ -518,53 +516,18 @@ impl MetadataStore {
             .collect()
     }
 
-    pub fn incremental_compact(&mut self, batch_size: usize) -> Vec<String> {
-        let mut compacted = Vec::new();
-        let mut count = 0;
-        
-        for (name, _) in self.arrays.iter() {
-            if count >= batch_size {
-                break;
-            }
-            
-            if let Some(&index) = self.name_to_index.get(name) {
-                if !self.bitmap[index] {
-                    compacted.push(name.clone());
-                    count += 1;
-                }
-            }
-        }
-        
-        // 移除已标记为删除的数组
-        for name in &compacted {
-            if let Some(wal) = &mut self.wal {
-                let _ = wal.append(WalOp::DeleteArray(name.to_string()));
-            }
-            self.arrays.remove(name);
-            if let Some(index) = self.name_to_index.remove(name) {
-                self.bitmap.set(index, false);
-            }
-        }
-        
-        compacted
-    }
-
-    pub fn reset_deleted_size(&mut self) {
-        self.deleted_size = 0;
-    }
-
     pub fn reset(&mut self) {
         self.arrays.clear();
         self.bitmap.clear();
         self.name_to_index.clear();
         self.next_index = 0;
         self.total_size = 0;
-        self.deleted_size = 0;
         if let Some(wal) = &mut self.wal {
             let _ = wal.truncate();
         }
     }
 
+    #[allow(dead_code)]
     pub fn begin_transaction(&mut self) -> NpkResult<()> {
         if let Some(wal) = &mut self.wal {
             wal.begin_transaction()?;
@@ -572,6 +535,7 @@ impl MetadataStore {
         Ok(())
     }
     
+    #[allow(dead_code)]
     pub fn commit_transaction(&mut self) -> NpkResult<()> {
         if let Some(wal) = &mut self.wal {
             wal.commit_transaction()?;
@@ -595,7 +559,6 @@ pub struct CachedMetadataStore {
     sync_interval: std::time::Duration,
 }
 
-#[allow(dead_code)]
 impl CachedMetadataStore {
     pub fn new(path: &Path, wal_path: Option<PathBuf>) -> NpkResult<Self> {
         let store = if path.exists() {
@@ -610,10 +573,6 @@ impl CachedMetadataStore {
             last_sync: Arc::new(Mutex::new(SystemTime::now())),
             sync_interval: std::time::Duration::from_secs(5),
         })
-    }
-
-    pub fn set_sync_interval(&mut self, interval: std::time::Duration) {
-        self.sync_interval = interval;
     }
 
     fn should_sync(&self) -> bool {
@@ -641,43 +600,14 @@ impl CachedMetadataStore {
         Ok(())
     }
 
-    pub fn mark_deleted(&self, name: &str) -> NpkResult<bool> {
+    pub fn delete_array(&self, name: &str) -> NpkResult<bool> {
         let mut store = self.store.write().unwrap();
-        let result = store.mark_deleted(name)?;
+        let result = store.delete_array(name)?;
         if result && self.should_sync() {
             drop(store);
             self.sync_to_disk()?;
         }
         Ok(result)
-    }
-
-    pub fn batch_mark_deleted(&self, names: &[String]) -> NpkResult<usize> {
-        let mut store = self.store.write().unwrap();
-        let deleted_count = store.batch_mark_deleted(names)?;
-        if deleted_count > 0 && self.should_sync() {
-            drop(store);
-            self.sync_to_disk()?;
-        }
-        Ok(deleted_count)
-    }
-
-    pub fn should_compact(&self, threshold: u64) -> bool {
-        if let Ok(store) = self.store.read() {
-            store.should_compact(threshold)
-        } else {
-            false
-        }
-    }
-
-    pub fn incremental_compact(&self, batch_size: usize) -> NpkResult<Vec<String>> {
-        let mut store = self.store.write().unwrap();
-        let compacted = store.incremental_compact(batch_size);
-        if !compacted.is_empty() {
-            store.reset_deleted_size();
-            drop(store);
-            self.sync_to_disk()?;
-        }
-        Ok(compacted)
     }
 
     pub fn get_array(&self, name: &str) -> Option<ArrayMetadata> {
@@ -690,16 +620,6 @@ impl CachedMetadataStore {
         store.list_arrays()
     }
 
-    pub fn reset_deleted_size(&self) -> NpkResult<()> {
-        let mut store = self.store.write().unwrap();
-        store.reset_deleted_size();
-        if self.should_sync() {
-            drop(store);
-            self.sync_to_disk()?;
-        }
-        Ok(())
-    }
-
     pub fn reset(&self) -> NpkResult<()> {
         let mut store = self.store.write().unwrap();
         store.reset();
@@ -708,6 +628,7 @@ impl CachedMetadataStore {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn force_sync(&self) -> NpkResult<()> {
         self.sync_to_disk()
     }

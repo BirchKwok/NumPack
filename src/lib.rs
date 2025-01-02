@@ -7,7 +7,6 @@ use numpy::{PyArray2, IntoPyArray};
 use pyo3::exceptions::PyKeyError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
-use ndarray::prelude::*;
 use pyo3::types::PySlice;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -230,20 +229,7 @@ impl NumPack {
             // 在非mmap模式下，加载到内存
             let dict = PyDict::new(py);
             for (name, mut view) in views {
-                // 合并excluded_indices和deleted_indices
-                let final_excluded = if let Some(excluded) = &excluded {
-                    if let Some(deleted) = &view.meta.deleted_indices {
-                        let mut combined = excluded.clone();
-                        combined.extend(deleted);
-                        combined.sort_unstable();
-                        combined.dedup();
-                        Some(combined)
-                    } else {
-                        Some(excluded.clone())
-                    }
-                } else {
-                    view.meta.deleted_indices.clone()
-                };
+                let final_excluded = excluded.clone();
 
                 let array: PyObject = match view.meta.dtype {
                     DataType::Bool => {
@@ -297,387 +283,94 @@ impl NumPack {
         }
     }
 
-    fn replace(&self, py: Python, arrays: &PyDict, indexes: &PyAny) -> PyResult<()> {
-        let mut bool_arrays = Vec::new();
-        let mut u8_arrays = Vec::new();
-        let mut u16_arrays = Vec::new();
-        let mut u32_arrays = Vec::new();
-        let mut u64_arrays = Vec::new();
-        let mut i8_arrays = Vec::new();
-        let mut i16_arrays = Vec::new();
-        let mut i32_arrays = Vec::new();
-        let mut i64_arrays = Vec::new();
-        let mut f32_arrays = Vec::new();
-        let mut f64_arrays = Vec::new();
+    fn replace(&self, _py: Python, arrays: &PyDict, indexes: &PyAny) -> PyResult<()> {
+        // 获取索引列表
+        let indices = if let Ok(slice) = indexes.extract::<&PySlice>() {
+            let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
+            let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(-1);
+            let step = slice.getattr("step")?.extract::<Option<i64>>()?.unwrap_or(1);
+            
+            if step != 1 {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "Step size must be 1 for replacement"
+                ));
+            }
+            
+            (start..stop).collect::<Vec<i64>>()
+        } else if let Ok(idx_list) = indexes.extract::<Vec<i64>>() {
+            idx_list
+        } else {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "Indexes must be a slice or list of integers"
+            ));
+        };
 
-        let mut all_names = Vec::new();
-
-        // 首先加载现有数组
-        let existing_arrays = self.load(
-            py,
-            None,
-            false,
-            None
-        )?;
-
+        // 处理每个数组
         for (key, value) in arrays.iter() {
             let name = key.extract::<String>()?;
-            all_names.push(name.clone());
-            let dtype = get_array_dtype(value)?;
-
-            // 获取现有数组
-            let existing_array = if let Ok(dict) = existing_arrays.extract::<&PyDict>(py) {
-                dict.get_item(&name)
-            } else {
-                None
-            };
+            let dtype = self.io.get_array_meta(&name)
+                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>(
+                    format!("Array {} not found", name)
+                ))?
+                .dtype;
 
             match dtype {
                 DataType::Bool => {
                     let array = value.extract::<&PyArray2<bool>>()?;
-                    let final_array = if let Some(existing) = existing_array {
-                        let array_ref = existing.extract::<&PyArray2<bool>>()?;
-                        let mut existing = unsafe { array_ref.as_array().to_owned() };
-                        if let Ok(slice) = indexes.extract::<&PySlice>() {
-                            let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
-                            let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(existing.shape()[0] as i64);
-                            let step = slice.getattr("step")?.extract::<Option<i64>>()?.unwrap_or(1);
-                            
-                            let start = if start < 0 { (existing.shape()[0] as i64 + start) as usize } else { start as usize };
-                            let stop = if stop < 0 { (existing.shape()[0] as i64 + stop) as usize } else { stop as usize };
-                            
-                            if step == 1 {
-                                unsafe { existing.slice_mut(s![start..stop, ..]).assign(&array.as_array()) };
-                            }
-                        } else if let Ok(indices) = indexes.extract::<Vec<i64>>() {
-                            for (i, &idx) in indices.iter().enumerate() {
-                                let idx = if idx < 0 { (existing.shape()[0] as i64 + idx) as usize } else { idx as usize };
-                                unsafe { existing.slice_mut(s![idx, ..]).assign(&array.as_array().slice(s![i, ..])) };
-                            }
-                        }
-                        existing
-                    } else {
-                        unsafe { array.as_array().to_owned() }
-                    };
-                    bool_arrays.push((name, final_array, dtype));
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Uint8 => {
                     let array = value.extract::<&PyArray2<u8>>()?;
-                    let final_array = if let Some(existing) = existing_array {
-                        let array_ref = existing.extract::<&PyArray2<u8>>()?;
-                        let mut existing = unsafe { array_ref.as_array().to_owned() };
-                        if let Ok(slice) = indexes.extract::<&PySlice>() {
-                            let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
-                            let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(existing.shape()[0] as i64);
-                            let step = slice.getattr("step")?.extract::<Option<i64>>()?.unwrap_or(1);
-                            
-                            let start = if start < 0 { (existing.shape()[0] as i64 + start) as usize } else { start as usize };
-                            let stop = if stop < 0 { (existing.shape()[0] as i64 + stop) as usize } else { stop as usize };
-                            
-                            if step == 1 {
-                                unsafe { existing.slice_mut(s![start..stop, ..]).assign(&array.as_array()) };
-                            }
-                        } else if let Ok(indices) = indexes.extract::<Vec<i64>>() {
-                            for (i, &idx) in indices.iter().enumerate() {
-                                let idx = if idx < 0 { (existing.shape()[0] as i64 + idx) as usize } else { idx as usize };
-                                unsafe { existing.slice_mut(s![idx, ..]).assign(&array.as_array().slice(s![i, ..])) };
-                            }
-                        }
-                        existing
-                    } else {
-                        unsafe { array.as_array().to_owned() }
-                    };
-                    u8_arrays.push((name, final_array, dtype));
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Uint16 => {
                     let array = value.extract::<&PyArray2<u16>>()?;
-                    let final_array = if let Some(existing) = existing_array {
-                        let array_ref = existing.extract::<&PyArray2<u16>>()?;
-                        let mut existing = unsafe { array_ref.as_array().to_owned() };
-                        if let Ok(slice) = indexes.extract::<&PySlice>() {
-                            let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
-                            let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(existing.shape()[0] as i64);
-                            let step = slice.getattr("step")?.extract::<Option<i64>>()?.unwrap_or(1);
-                            
-                            let start = if start < 0 { (existing.shape()[0] as i64 + start) as usize } else { start as usize };
-                            let stop = if stop < 0 { (existing.shape()[0] as i64 + stop) as usize } else { stop as usize };
-                            
-                            if step == 1 {
-                                unsafe { existing.slice_mut(s![start..stop, ..]).assign(&array.as_array()) };
-                            }
-                        } else if let Ok(indices) = indexes.extract::<Vec<i64>>() {
-                            for (i, &idx) in indices.iter().enumerate() {
-                                let idx = if idx < 0 { (existing.shape()[0] as i64 + idx) as usize } else { idx as usize };
-                                unsafe { existing.slice_mut(s![idx, ..]).assign(&array.as_array().slice(s![i, ..])) };
-                            }
-                        }
-                        existing
-                    } else {
-                        unsafe { array.as_array().to_owned() }
-                    };
-                    u16_arrays.push((name, final_array, dtype));
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Uint32 => {
                     let array = value.extract::<&PyArray2<u32>>()?;
-                    let final_array = if let Some(existing) = existing_array {
-                        let array_ref = existing.extract::<&PyArray2<u32>>()?;
-                        let mut existing = unsafe { array_ref.as_array().to_owned() };
-                        if let Ok(slice) = indexes.extract::<&PySlice>() {
-                            let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
-                            let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(existing.shape()[0] as i64);
-                            let step = slice.getattr("step")?.extract::<Option<i64>>()?.unwrap_or(1);
-                            
-                            let start = if start < 0 { (existing.shape()[0] as i64 + start) as usize } else { start as usize };
-                            let stop = if stop < 0 { (existing.shape()[0] as i64 + stop) as usize } else { stop as usize };
-                            
-                            if step == 1 {
-                                unsafe { existing.slice_mut(s![start..stop, ..]).assign(&array.as_array()) };
-                            }
-                        } else if let Ok(indices) = indexes.extract::<Vec<i64>>() {
-                            for (i, &idx) in indices.iter().enumerate() {
-                                let idx = if idx < 0 { (existing.shape()[0] as i64 + idx) as usize } else { idx as usize };
-                                unsafe { existing.slice_mut(s![idx, ..]).assign(&array.as_array().slice(s![i, ..])) };
-                            }
-                        }
-                        existing
-                    } else {
-                        unsafe { array.as_array().to_owned() }
-                    };
-                    u32_arrays.push((name, final_array, dtype));
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Uint64 => {
                     let array = value.extract::<&PyArray2<u64>>()?;
-                    let final_array = if let Some(existing) = existing_array {
-                        let array_ref = existing.extract::<&PyArray2<u64>>()?;
-                        let mut existing = unsafe { array_ref.as_array().to_owned() };
-                        if let Ok(slice) = indexes.extract::<&PySlice>() {
-                            let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
-                            let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(existing.shape()[0] as i64);
-                            let step = slice.getattr("step")?.extract::<Option<i64>>()?.unwrap_or(1);
-                            
-                            let start = if start < 0 { (existing.shape()[0] as i64 + start) as usize } else { start as usize };
-                            let stop = if stop < 0 { (existing.shape()[0] as i64 + stop) as usize } else { stop as usize };
-                            
-                            if step == 1 {
-                                unsafe { existing.slice_mut(s![start..stop, ..]).assign(&array.as_array()) };
-                            }
-                        } else if let Ok(indices) = indexes.extract::<Vec<i64>>() {
-                            for (i, &idx) in indices.iter().enumerate() {
-                                let idx = if idx < 0 { (existing.shape()[0] as i64 + idx) as usize } else { idx as usize };
-                                unsafe { existing.slice_mut(s![idx, ..]).assign(&array.as_array().slice(s![i, ..])) };
-                            }
-                        }
-                        existing
-                    } else {
-                        unsafe { array.as_array().to_owned() }
-                    };
-                    u64_arrays.push((name, final_array, dtype));
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Int8 => {
                     let array = value.extract::<&PyArray2<i8>>()?;
-                    let final_array = if let Some(existing) = existing_array {
-                        let array_ref = existing.extract::<&PyArray2<i8>>()?;
-                        let mut existing = unsafe { array_ref.as_array().to_owned() };
-                        if let Ok(slice) = indexes.extract::<&PySlice>() {
-                            let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
-                            let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(existing.shape()[0] as i64);
-                            let step = slice.getattr("step")?.extract::<Option<i64>>()?.unwrap_or(1);
-                            
-                            let start = if start < 0 { (existing.shape()[0] as i64 + start) as usize } else { start as usize };
-                            let stop = if stop < 0 { (existing.shape()[0] as i64 + stop) as usize } else { stop as usize };
-                            
-                            if step == 1 {
-                                unsafe { existing.slice_mut(s![start..stop, ..]).assign(&array.as_array()) };
-                            }
-                        } else if let Ok(indices) = indexes.extract::<Vec<i64>>() {
-                            for (i, &idx) in indices.iter().enumerate() {
-                                let idx = if idx < 0 { (existing.shape()[0] as i64 + idx) as usize } else { idx as usize };
-                                unsafe { existing.slice_mut(s![idx, ..]).assign(&array.as_array().slice(s![i, ..])) };
-                            }
-                        }
-                        existing
-                    } else {
-                        unsafe { array.as_array().to_owned() }
-                    };
-                    i8_arrays.push((name, final_array, dtype));
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Int16 => {
                     let array = value.extract::<&PyArray2<i16>>()?;
-                    let final_array = if let Some(existing) = existing_array {
-                        let array_ref = existing.extract::<&PyArray2<i16>>()?;
-                        let mut existing = unsafe { array_ref.as_array().to_owned() };
-                        if let Ok(slice) = indexes.extract::<&PySlice>() {
-                            let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
-                            let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(existing.shape()[0] as i64);
-                            let step = slice.getattr("step")?.extract::<Option<i64>>()?.unwrap_or(1);
-                            
-                            let start = if start < 0 { (existing.shape()[0] as i64 + start) as usize } else { start as usize };
-                            let stop = if stop < 0 { (existing.shape()[0] as i64 + stop) as usize } else { stop as usize };
-                            
-                            if step == 1 {
-                                unsafe { existing.slice_mut(s![start..stop, ..]).assign(&array.as_array()) };
-                            }
-                        } else if let Ok(indices) = indexes.extract::<Vec<i64>>() {
-                            for (i, &idx) in indices.iter().enumerate() {
-                                let idx = if idx < 0 { (existing.shape()[0] as i64 + idx) as usize } else { idx as usize };
-                                unsafe { existing.slice_mut(s![idx, ..]).assign(&array.as_array().slice(s![i, ..])) };
-                            }
-                        }
-                        existing
-                    } else {
-                        unsafe { array.as_array().to_owned() }
-                    };
-                    i16_arrays.push((name, final_array, dtype));
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Int32 => {
                     let array = value.extract::<&PyArray2<i32>>()?;
-                    let final_array = if let Some(existing) = existing_array {
-                        let array_ref = existing.extract::<&PyArray2<i32>>()?;
-                        let mut existing = unsafe { array_ref.as_array().to_owned() };
-                        if let Ok(slice) = indexes.extract::<&PySlice>() {
-                            let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
-                            let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(existing.shape()[0] as i64);
-                            let step = slice.getattr("step")?.extract::<Option<i64>>()?.unwrap_or(1);
-                            
-                            let start = if start < 0 { (existing.shape()[0] as i64 + start) as usize } else { start as usize };
-                            let stop = if stop < 0 { (existing.shape()[0] as i64 + stop) as usize } else { stop as usize };
-                            
-                            if step == 1 {
-                                unsafe { existing.slice_mut(s![start..stop, ..]).assign(&array.as_array()) };
-                            }
-                        } else if let Ok(indices) = indexes.extract::<Vec<i64>>() {
-                            for (i, &idx) in indices.iter().enumerate() {
-                                let idx = if idx < 0 { (existing.shape()[0] as i64 + idx) as usize } else { idx as usize };
-                                unsafe { existing.slice_mut(s![idx, ..]).assign(&array.as_array().slice(s![i, ..])) };
-                            }
-                        }
-                        existing
-                    } else {
-                        unsafe { array.as_array().to_owned() }
-                    };
-                    i32_arrays.push((name, final_array, dtype));
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Int64 => {
                     let array = value.extract::<&PyArray2<i64>>()?;
-                    let final_array = if let Some(existing) = existing_array {
-                        let array_ref = existing.extract::<&PyArray2<i64>>()?;
-                        let mut existing = unsafe { array_ref.as_array().to_owned() };
-                        if let Ok(slice) = indexes.extract::<&PySlice>() {
-                            let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
-                            let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(existing.shape()[0] as i64);
-                            let step = slice.getattr("step")?.extract::<Option<i64>>()?.unwrap_or(1);
-                            
-                            let start = if start < 0 { (existing.shape()[0] as i64 + start) as usize } else { start as usize };
-                            let stop = if stop < 0 { (existing.shape()[0] as i64 + stop) as usize } else { stop as usize };
-                            
-                            if step == 1 {
-                                unsafe { existing.slice_mut(s![start..stop, ..]).assign(&array.as_array()) };
-                            }
-                        } else if let Ok(indices) = indexes.extract::<Vec<i64>>() {
-                            for (i, &idx) in indices.iter().enumerate() {
-                                let idx = if idx < 0 { (existing.shape()[0] as i64 + idx) as usize } else { idx as usize };
-                                unsafe { existing.slice_mut(s![idx, ..]).assign(&array.as_array().slice(s![i, ..])) };
-                            }
-                        }
-                        existing
-                    } else {
-                        unsafe { array.as_array().to_owned() }
-                    };
-                    i64_arrays.push((name, final_array, dtype));
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Float32 => {
                     let array = value.extract::<&PyArray2<f32>>()?;
-                    let final_array = if let Some(existing) = existing_array {
-                        let array_ref = existing.extract::<&PyArray2<f32>>()?;
-                        let mut existing = unsafe { array_ref.as_array().to_owned() };
-                        if let Ok(slice) = indexes.extract::<&PySlice>() {
-                            let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
-                            let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(existing.shape()[0] as i64);
-                            let step = slice.getattr("step")?.extract::<Option<i64>>()?.unwrap_or(1);
-                            
-                            let start = if start < 0 { (existing.shape()[0] as i64 + start) as usize } else { start as usize };
-                            let stop = if stop < 0 { (existing.shape()[0] as i64 + stop) as usize } else { stop as usize };
-                            
-                            if step == 1 {
-                                unsafe { existing.slice_mut(s![start..stop, ..]).assign(&array.as_array()) };
-                            }
-                        } else if let Ok(indices) = indexes.extract::<Vec<i64>>() {
-                            for (i, &idx) in indices.iter().enumerate() {
-                                let idx = if idx < 0 { (existing.shape()[0] as i64 + idx) as usize } else { idx as usize };
-                                unsafe { existing.slice_mut(s![idx, ..]).assign(&array.as_array().slice(s![i, ..])) };
-                            }
-                        }
-                        existing
-                    } else {
-                        unsafe { array.as_array().to_owned() }
-                    };
-                    f32_arrays.push((name, final_array, dtype));
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Float64 => {
                     let array = value.extract::<&PyArray2<f64>>()?;
-                    let final_array = if let Some(existing) = existing_array {
-                        let array_ref = existing.extract::<&PyArray2<f64>>()?;
-                        let mut existing = unsafe { array_ref.as_array().to_owned() };
-                        if let Ok(slice) = indexes.extract::<&PySlice>() {
-                            let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
-                            let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(existing.shape()[0] as i64);
-                            let step = slice.getattr("step")?.extract::<Option<i64>>()?.unwrap_or(1);
-                            
-                            let start = if start < 0 { (existing.shape()[0] as i64 + start) as usize } else { start as usize };
-                            let stop = if stop < 0 { (existing.shape()[0] as i64 + stop) as usize } else { stop as usize };
-                            
-                            if step == 1 {
-                                unsafe { existing.slice_mut(s![start..stop, ..]).assign(&array.as_array()) };
-                            }
-                        } else if let Ok(indices) = indexes.extract::<Vec<i64>>() {
-                            for (i, &idx) in indices.iter().enumerate() {
-                                let idx = if idx < 0 { (existing.shape()[0] as i64 + idx) as usize } else { idx as usize };
-                                unsafe { existing.slice_mut(s![idx, ..]).assign(&array.as_array().slice(s![i, ..])) };
-                            }
-                        }
-                        existing
-                    } else {
-                        unsafe { array.as_array().to_owned() }
-                    };
-                    f64_arrays.push((name, final_array, dtype));
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
                 }
             }
-        }
-
-        self.io.mark_deleted(&all_names)?;
-        
-        if !bool_arrays.is_empty() {
-            self.io.save_arrays(&bool_arrays)?;
-        }
-        if !u8_arrays.is_empty() {
-            self.io.save_arrays(&u8_arrays)?;
-        }
-        if !u16_arrays.is_empty() {
-            self.io.save_arrays(&u16_arrays)?;
-        }
-        if !u32_arrays.is_empty() {
-            self.io.save_arrays(&u32_arrays)?;
-        }
-        if !u64_arrays.is_empty() {
-            self.io.save_arrays(&u64_arrays)?;
-        }
-        if !i8_arrays.is_empty() {
-            self.io.save_arrays(&i8_arrays)?;
-        }
-        if !i16_arrays.is_empty() {
-            self.io.save_arrays(&i16_arrays)?;
-        }
-        if !i32_arrays.is_empty() {
-            self.io.save_arrays(&i32_arrays)?;
-        }
-        if !i64_arrays.is_empty() {
-            self.io.save_arrays(&i64_arrays)?;
-        }
-        if !f32_arrays.is_empty() {
-            self.io.save_arrays(&f32_arrays)?;
-        }
-        if !f64_arrays.is_empty() {
-            self.io.save_arrays(&f64_arrays)?;
         }
 
         Ok(())
@@ -699,7 +392,7 @@ impl NumPack {
 
         // 如果有indexes参数，说明是删除特定行
         if let Some(indexes) = indexes {
-            let py = indexes.py();
+            // let py = indexes.py();
             
             for name in &names {
                 if let Some(meta) = self.io.get_array_meta(name) {
@@ -729,49 +422,13 @@ impl NumPack {
                             "indexes must be a slice or list of integers"
                         ));
                     };
-
-                    // 更新元数据中的删除的索引
-                    let mut new_meta = meta.clone();
-                    // 合并现有的deleted_indices和新的deleted_indices
-                    let mut all_deleted = if let Some(existing) = new_meta.deleted_indices {
-                        let mut combined = existing;
-                        combined.extend(deleted_indices);
-                        combined.sort_unstable();
-                        combined.dedup();
-                        combined
-                    } else {
-                        let mut sorted = deleted_indices;
-                        sorted.sort_unstable();
-                        sorted
-                    };
-                    new_meta.deleted_indices = Some(all_deleted);
-                    // 更新元数据
-                    self.io.update_array_metadata(name, new_meta)?;
+                    self.io.drop_arrays(name, Some(&deleted_indices))?;
                 }
             }
             
             Ok(())
         } else {
-            // 批量标记删除
-            let deleted_count = self.io.batch_mark_deleted(&names)?;
-            
-            // 如果删除的数组数量达到阈值，执行增量压缩
-            if deleted_count > 0 && self.io.should_compact(4 * 1024 * 1024 * 1024) { // 4GB阈值
-                // 每次处理100个数组
-                let compacted = self.io.incremental_compact(100)?;
-                if !compacted.is_empty() {
-                    // 删除已压缩的数组文件
-                    for name in compacted {
-                        if let Some(meta) = self.io.get_array_meta(&name) {
-                            let file_path = self.base_dir.join(&meta.data_file);
-                            if let Err(e) = std::fs::remove_file(file_path) {
-                                eprintln!("Warning: Failed to remove file for array {}: {}", name, e);
-                            }
-                        }
-                    }
-                }
-            }
-            
+            self.io.batch_drop_arrays(&names, None)?;
             Ok(())
         }
     }

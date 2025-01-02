@@ -85,7 +85,7 @@ def test_large_data():
         # 测试 NumPack 选择性加载
         logger.info("测试 NumPack 选择性加载...")
         start_time = time.time()
-        loaded_partial = npk.load(['array1'], mmap_mode=False)
+        loaded_partial = npk.load(mmap_mode=False)['array1']
         load_partial_time = time.time() - start_time
         logger.info(f"NumPack 选择性加载耗时: {load_partial_time:.2f}秒")
         
@@ -343,12 +343,166 @@ def test_random_access():
         logger.error(f"随机访问性能测试失败: {str(e)}")
         raise
 
+@clean_file_when_finished('test_replace', 'test_replace.npz', 'test_replace_array.npy')
+def test_replace_operations():
+    """测试替换操作的性能"""
+    logger.info("=== 测试替换操作性能 ===")
+    
+    try:
+        # 创建测试数据
+        size = 1000000  # 100万行
+        array = np.random.rand(size, 10).astype(np.float32)
+        
+        # 创建目录
+        os.makedirs('test_replace', exist_ok=True)
+        
+        # 保存初始数据
+        npk = NumPack('test_replace')
+        npk.save({'array': array})
+        np.savez('test_replace.npz', array=array)
+        np.save('test_replace_array.npy', array)
+        
+        # 测试场景1：替换单行
+        logger.info("\n测试场景1：替换单行")
+        single_row = np.random.rand(1, 10).astype(np.float32)
+        idx = size // 2  # 替换中间的一行
+        
+        # NumPack 替换
+        start_time = time.time()
+        npk.replace({'array': single_row}, [idx])
+        replace_time = time.time() - start_time
+        logger.info(f"NumPack 单行替换耗时: {replace_time:.2f}秒")
+        
+        # NumPy npz 替换
+        start_time = time.time()
+        npz_data = dict(np.load('test_replace.npz'))
+        npz_data['array'][idx] = single_row
+        np.savez('test_replace.npz', **npz_data)
+        npz_replace_time = time.time() - start_time
+        logger.info(f"NumPy npz 单行替换耗时: {npz_replace_time:.2f}秒")
+        logger.info(f"单行替换性能对比 (npz): NumPack/NumPy = {replace_time/npz_replace_time:.2f}x")
+        
+        # NumPy npy 替换
+        start_time = time.time()
+        npy_data = np.load('test_replace_array.npy')
+        npy_data[idx] = single_row
+        np.save('test_replace_array.npy', npy_data)
+        npy_replace_time = time.time() - start_time
+        logger.info(f"NumPy npy 单行替换耗时: {npy_replace_time:.2f}秒")
+        logger.info(f"单行替换性能对比 (npy): NumPack/NumPy = {replace_time/npy_replace_time:.2f}x")
+        
+        # 测试场景2：替换连续的多行
+        logger.info("\n测试场景2：替换连续的多行")
+        continuous_rows = 10000  # 替换1万行
+        multi_rows = np.random.rand(continuous_rows, 10).astype(np.float32)
+        start_idx = size // 4
+        
+        # NumPack 替换
+        start_time = time.time()
+        npk.replace({'array': multi_rows}, slice(start_idx, start_idx + continuous_rows))
+        replace_time = time.time() - start_time
+        logger.info(f"NumPack 连续多行替换耗时: {replace_time:.2f}秒")
+        
+        # NumPy npz 替换
+        start_time = time.time()
+        npz_data = dict(np.load('test_replace.npz'))
+        npz_data['array'][start_idx:start_idx + continuous_rows] = multi_rows
+        np.savez('test_replace.npz', **npz_data)
+        npz_replace_time = time.time() - start_time
+        logger.info(f"NumPy npz 连续多行替换耗时: {npz_replace_time:.2f}秒")
+        logger.info(f"连续多行替换性能对比 (npz): NumPack/NumPy = {replace_time/npz_replace_time:.2f}x")
+        
+        # NumPy npy 替换
+        start_time = time.time()
+        npy_data = np.load('test_replace_array.npy')
+        npy_data[start_idx:start_idx + continuous_rows] = multi_rows
+        np.save('test_replace_array.npy', npy_data)
+        npy_replace_time = time.time() - start_time
+        logger.info(f"NumPy npy 连续多行替换耗时: {npy_replace_time:.2f}秒")
+        logger.info(f"连续多行替换性能对比 (npy): NumPack/NumPy = {replace_time/npy_replace_time:.2f}x")
+        
+        # 测试场景3：替换随机分布的多行
+        logger.info("\n测试场景3：替换随机分布的多行")
+        random_count = 10000  # 随机替换1万行
+        random_rows = np.random.rand(random_count, 10).astype(np.float32)
+        random_indices = np.random.choice(size, random_count, replace=False)
+        
+        # NumPack 替换
+        start_time = time.time()
+        npk.replace({'array': random_rows}, random_indices.tolist())
+        replace_time = time.time() - start_time
+        logger.info(f"NumPack 随机多行替换耗时: {replace_time:.2f}秒")
+        
+        # NumPy npz 替换
+        start_time = time.time()
+        npz_data = dict(np.load('test_replace.npz'))
+        npz_data['array'][random_indices] = random_rows
+        np.savez('test_replace.npz', **npz_data)
+        npz_replace_time = time.time() - start_time
+        logger.info(f"NumPy npz 随机多行替换耗时: {npz_replace_time:.2f}秒")
+        logger.info(f"随机多行替换性能对比 (npz): NumPack/NumPy = {replace_time/npz_replace_time:.2f}x")
+        
+        # NumPy npy 替换
+        start_time = time.time()
+        npy_data = np.load('test_replace_array.npy')
+        npy_data[random_indices] = random_rows
+        np.save('test_replace_array.npy', npy_data)
+        npy_replace_time = time.time() - start_time
+        logger.info(f"NumPy npy 随机多行替换耗时: {npy_replace_time:.2f}秒")
+        logger.info(f"随机多行替换性能对比 (npy): NumPack/NumPy = {replace_time/npy_replace_time:.2f}x")
+        
+        # 测试场景4：替换大规模数据
+        logger.info("\n测试场景4：替换大规模数据")
+        large_size = size // 2  # 替换50万行
+        large_rows = np.random.rand(large_size, 10).astype(np.float32)
+        
+        # NumPack 替换
+        start_time = time.time()
+        npk.replace({'array': large_rows}, slice(0, large_size))
+        replace_time = time.time() - start_time
+        logger.info(f"NumPack 大规模替换耗时: {replace_time:.2f}秒")
+        
+        # NumPy npz 替换
+        start_time = time.time()
+        npz_data = dict(np.load('test_replace.npz'))
+        npz_data['array'][:large_size] = large_rows
+        np.savez('test_replace.npz', **npz_data)
+        npz_replace_time = time.time() - start_time
+        logger.info(f"NumPy npz 大规模替换耗时: {npz_replace_time:.2f}秒")
+        logger.info(f"大规模替换性能对比 (npz): NumPack/NumPy = {replace_time/npz_replace_time:.2f}x")
+        
+        # NumPy npy 替换
+        start_time = time.time()
+        npy_data = np.load('test_replace_array.npy')
+        npy_data[:large_size] = large_rows
+        np.save('test_replace_array.npy', npy_data)
+        npy_replace_time = time.time() - start_time
+        logger.info(f"NumPy npy 大规模替换耗时: {npy_replace_time:.2f}秒")
+        logger.info(f"大规模替换性能对比 (npy): NumPack/NumPy = {replace_time/npy_replace_time:.2f}x")
+        
+        # 验证数据正确性
+        loaded = npk.load(mmap_mode=False)['array']
+        npz_loaded = np.load('test_replace.npz')['array']
+        npy_loaded = np.load('test_replace_array.npy')
+        
+        assert np.allclose(loaded[:large_size], large_rows)
+        assert np.allclose(npz_loaded[:large_size], large_rows)
+        assert np.allclose(npy_loaded[:large_size], large_rows)
+        logger.info("数据验证通过")
+        
+        logger.info("替换操作测试完成")
+        
+    except Exception as e:
+        logger.error(f"替换操作测试失败: {str(e)}")
+        raise
+
 if __name__ == '__main__':
     try:
         logger.info("开始运行性能测试...")
         test_large_data()
         test_append_operations()
         test_random_access()
+        test_replace_operations()  # 添加替换操作测试
         logger.info("所有测试完成！")
     except Exception as e:
         logger.error(f"测试过程中发生错误: {str(e)}")
