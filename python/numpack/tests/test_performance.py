@@ -46,13 +46,10 @@ def test_large_data():
             'array2': np.random.rand(size // 2, 5).astype(np.float32)
         }
         
-        # Create directory
-        os.makedirs('test_large', exist_ok=True)
-        
         # Test NumPack save
         logger.info(f"Test NumPack save large arrays (array1: {arrays['array1'].shape}, array2: {arrays['array2'].shape})...")
         start_time = time.time()
-        npk = NumPack('test_large')
+        npk = NumPack('test_large', drop_if_exists=True)
         npk.save(arrays)
         save_time = time.time() - start_time
         logger.info(f"NumPack save time: {save_time:.2f} seconds")
@@ -77,6 +74,7 @@ def test_large_data():
         logger.info("\n\nTest NumPack full load...")
         start_time = time.time()
         loaded = npk.load(mmap_mode=False)
+        _, _ = loaded['array1'], loaded['array2']
         load_time = time.time() - start_time
         logger.info(f"NumPack load time: {load_time:.2f} seconds")
         
@@ -119,6 +117,7 @@ def test_large_data():
         logger.info("\n\nTest NumPack mmap load...")
         start_time = time.time()
         lazy_loaded = npk.load(mmap_mode=True)
+        _, _ = lazy_loaded['array1'], lazy_loaded['array2']
         lazy_load_time = time.time() - start_time
         logger.info(f"NumPack mmap load time: {lazy_load_time:.2f} seconds")
         logger.info(f"Mmap load performance comparison (npy): NumPack/NumPy = {lazy_load_time/npy_load_time:.2f}x")
@@ -216,10 +215,8 @@ def test_append_operations():
             'array2': np.random.rand(size // 2, 5).astype(np.float32)
         }
         
-        os.makedirs('test_append', exist_ok=True)
-        
         # Save initial data
-        npk = NumPack('test_append')
+        npk = NumPack('test_append', drop_if_exists=True)
         npk.save(arrays)
         np.savez('test_append.npz', **arrays)
         
@@ -278,9 +275,7 @@ def test_random_access():
             'array2': np.random.rand(size, 5).astype(np.float32)
         }
         
-        os.makedirs('test_random_access', exist_ok=True)
-        
-        npk = NumPack('test_random_access')
+        npk = NumPack('test_random_access', drop_if_exists=True)    
         npk.save(arrays)
         np.savez('test_random_access.npz', **arrays)
         np.save('test_random_access_array1.npy', arrays['array1'])
@@ -342,11 +337,8 @@ def test_replace_operations():
         size = 1000000
         array = np.random.rand(size, 10).astype(np.float32)
         
-        # Create directory
-        os.makedirs('test_replace', exist_ok=True)
-        
         # Save initial data
-        npk = NumPack('test_replace')
+        npk = NumPack('test_replace', drop_if_exists=True)
         npk.save({'array': array})
         np.savez('test_replace.npz', array=array)
         np.save('test_replace_array.npy', array)
