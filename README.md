@@ -88,6 +88,48 @@ NumPack offers significant performance improvements compared to traditional NumP
 - Better performance for in-place modifications
 - Optimized random access operations
 
+### Benchmark Results
+
+The following benchmarks were performed on a 2021 M1 Pro MacBook Pro (32GB Memory):
+
+#### Test Configuration
+- Array 1: (1,000,000 × 10) float32
+- Array 2: (500,000 × 5) float32
+- Total Data Size: ~47.68 MB
+
+#### Operation Performance (Time in seconds)
+
+| Operation | NumPack | NumPy (npz) | NumPy (npy) | Speedup vs npz | Speedup vs npy |
+|-----------|---------|-------------|-------------|----------------|----------------|
+| Save | 0.03 | 0.02 | 0.02 | 0.56x | 0.47x |
+| Full Load | 0.00 | 0.02 | 0.02 | ∞ | ∞ |
+| Selective Load | 0.02 | 0.01 | - | 0.82x | - |
+| Mmap Load | 0.00 | 0.02 | 0.01 | ∞ | ∞ |
+| Replace (Single Row) | 0.00 | 0.03 | 0.02 | 100x | 100x |
+| Replace (Continuous Rows) | 0.00 | 0.03 | 0.02 | 25x | 16.7x |
+| Replace (Random Rows) | 0.01 | 0.03 | 0.02 | 4.76x | 2.94x |
+| Replace (Large Data) | 0.01 | 0.03 | 0.02 | 1.89x | 1.22x |
+| Random Access | 0.01 | 0.02 | 0.02 | 1.45x | 1.25x |
+| Append | 0.01 | 0.02 | - | 1.14x | - |
+
+#### File Size Comparison
+
+| Format | Size |
+|--------|------|
+| NumPack | 47.68 MB |
+| NumPy (npz) | 47.68 MB |
+| NumPy (npy) | 47.68 MB |
+
+#### Key Findings
+
+1. **Loading Performance**: NumPack shows exceptional performance in full load and memory-mapped load operations, with near-instantaneous loading times.
+2. **Replace Operations**: NumPack significantly outperforms traditional NumPy formats in all replacement scenarios:
+   - Up to 100x faster for single row replacements
+   - 25x faster for continuous row replacements
+   - 4.76x faster for random row replacements
+3. **Storage Efficiency**: NumPack maintains the same file size as traditional NumPy formats while providing better performance characteristics.
+4. **Random Access**: NumPack provides up to 1.45x faster random access compared to NumPy formats.
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
