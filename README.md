@@ -85,7 +85,7 @@ NumPack offers significant performance improvements compared to traditional NumP
 
 ### Benchmark Results
 
-The following benchmarks were performed on an M1 Pro MacBook Pro (32GB Mem. 2021) with arrays of size 1M x 10 and 500K x 5 (float32).
+The following benchmarks were performed on an MacBook Pro (M1, 2020, 32GB) with arrays of size 1M x 10 and 500K x 5 (float32).
 
 #### Storage Operations
 
