@@ -81,50 +81,71 @@ mtime = npk.get_modify_time('array1')  # Get modification time
 
 ## Performance
 
-NumPack offers significant performance improvements compared to traditional NumPy storage methods:
-
-- Faster saving and loading of large arrays
-- Efficient memory usage through memory mapping
-- Better performance for in-place modifications
-- Optimized random access operations
+NumPack offers significant performance improvements compared to traditional NumPy storage methods, especially in data modification operations and random access. Below are detailed benchmark results:
 
 ### Benchmark Results
 
-The following benchmarks were performed on an M1 Pro MacBook Pro (2021, 32GB RAM).
+The following benchmarks were performed on an M1 Pro MacBook Pro (32GB Mem. 2021) with arrays of size 1M x 10 and 500K x 5 (float32).
 
-#### Storage Performance (Array Size: 1M x 10 and 500K x 5)
+#### Storage Operations
 
-| Operation | NumPack vs NPZ | NumPack vs NPY |
-|-----------|---------------|----------------|
-| Save      | 1.50x slower  | 1.91x slower   |
-| Full Load | 1.29x slower  | 1.97x slower   |
-| Mmap Load | **0.73x faster** | 1.82x slower   |
+| Operation | NumPack | NumPy NPZ | NumPy NPY |
+|-----------|---------|-----------|-----------|
+| Save | 0.026s (0.50x NPZ, 0.31x NPY) | 0.013s | 0.008s |
+| Full Load | 0.009s (1.56x NPZ, 0.89x NPY) | 0.014s | 0.008s |
+| Selective Load | 0.006s (1.67x NPZ, -) | 0.010s | - |
+| Mmap Load | 0.005s (2.60x NPZ, 0.00x NPY) | 0.013s | 0.000s |
 
-#### Data Modification Performance
+#### Data Modification Operations
 
-| Operation Type        | NumPack vs NPZ | NumPack vs NPY |
-|----------------------|----------------|----------------|
-| Single Row Replace   | **100x faster**    | **100x faster**    |
-| Continuous Rows      | **50x faster**     | **33x faster**     |
-| Random Rows          | **7.7x faster**    | **2.6x faster**    |
-| Large Data Replace   | **1.8x faster**    | **1.03x faster**   |
-| Append              | **1.5x faster**    | -              |
+| Operation | NumPack | NumPy NPZ | NumPy NPY |
+|-----------|---------|-----------|-----------|
+| Single Row Replace | 0.000s (24.00x NPZ, 13.00x NPY) | 0.024s | 0.013s |
+| Continuous Rows (10K) | 0.001s (23.00x NPZ, 14.00x NPY) | 0.023s | 0.014s |
+| Random Rows (10K) | 0.015s (1.60x NPZ, 0.93x NPY) | 0.024s | 0.014s |
+| Large Data Replace (500K) | 0.013s (1.85x NPZ, 1.08x NPY) | 0.024s | 0.014s |
 
-#### Random Access Performance
+#### Append Operations
 
-| Operation | NumPack vs NPZ | NumPack vs NPY |
-|-----------|---------------|----------------|
-| Random Access | **1.85x faster** | 0.98x faster |
+| Operation | NumPack | NumPy NPZ |
+|-----------|---------|-----------|
+| Append | 0.014s (1.14x NPZ) | 0.016s |
+
+#### Random Access Performance (10K indices)
+
+| Operation | NumPack | NumPy NPZ | NumPy NPY |
+|-----------|---------|-----------|-----------|
+| Random Access | 0.009s (1.89x NPZ, 1.11x NPY) | 0.017s | 0.010s |
 
 #### File Size Comparison
 
-| Format  | Size    | Ratio |
-|---------|---------|-------|
-| NumPack | 47.68MB | 1.0x  |
-| NPZ     | 47.68MB | 1.0x  |
-| NPY     | 47.68MB | 1.0x  |
+| Format | Size | Ratio |
+|--------|------|-------|
+| NumPack | 47.68 MB | 1.0x |
+| NPZ | 47.68 MB | 1.0x |
+| NPY | 47.68 MB | 1.0x |
 
-> Note: All benchmarks were run with NumPy arrays containing float32 data type. Performance may vary depending on the specific use case and data types.
+### Key Performance Highlights
+
+1. **Data Modification**:
+   - Single row replacement: NumPack is **24x faster** than NPZ and **13x faster** than NPY
+   - Continuous rows: NumPack is **23x faster** than NPZ and **14x faster** than NPY
+   - Random rows: NumPack is **1.6x faster** than NPZ but **0.93x slower** than NPY
+   - Large data replacement: NumPack is **1.85x faster** than NPZ and **1.08x faster** than NPY
+
+2. **Loading Performance**:
+   - Full load: NumPack is **1.56x faster** than NPZ but **0.89x slower** than NPY
+   - Memory-mapped load: NumPack is **2.6x faster** than NPZ but slower than NPY
+   - Selective load: NumPack is **1.67x faster** than NPZ (NPY does not support)
+
+3. **Random Access**:
+   - NumPack is **1.89x faster** than NPZ and **1.11x faster** than NPY for random index access
+
+4. **Storage Efficiency**:
+   - All formats achieve identical compression ratios (47.68 MB)
+   - NumPack maintains high performance while keeping file sizes competitive
+
+> Note: All benchmarks were performed with float32 arrays. Performance may vary depending on data types, array sizes, and system configurations. Numbers greater than 1.0x indicate faster performance, while numbers less than 1.0x indicate slower performance.
 
 ## Contributing
 
