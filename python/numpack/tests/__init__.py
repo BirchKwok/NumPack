@@ -1,0 +1,3 @@
+"""
+NumPack tests package
+""" 

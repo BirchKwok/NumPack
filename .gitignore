@@ -1,0 +1,16 @@
+/target
+*.lyf
+*.ly
+*.so
+*.pyd
+.idea/
+*.ipynb
+*.lock
+__pycache__/
+
+*.DS_Store
+*.npy
+*.npz
+*.npk
+*.npkd
+*.npkm
