@@ -105,6 +105,13 @@ The following benchmarks were performed on an MacBook Pro (M1, 2020, 32GB Memory
 | Random Rows (10K) | 0.015s (1.60x NPZ, 0.93x NPY) | 0.024s | 0.014s |
 | Large Data Replace (500K) | 0.013s (1.85x NPZ, 1.08x NPY) | 0.024s | 0.014s |
 
+#### Drop Operations
+
+| Operation | NumPack | NumPy NPZ | NumPy NPY |
+|-----------|---------|-----------|-----------|
+| Drop Array | 0.000s (24.00x NPZ, 13.00x NPY) | 0.024s | 0.013s |
+| Drop Rows (500K) | 0.015s (1.67x NPZ, 0.93x NPY) | 0.025s | 0.014s |
+
 #### Append Operations
 
 | Operation | NumPack | NumPy NPZ |
@@ -133,15 +140,20 @@ The following benchmarks were performed on an MacBook Pro (M1, 2020, 32GB Memory
    - Random rows: NumPack is **1.6x faster** than NPZ but **0.93x slower** than NPY
    - Large data replacement: NumPack is **1.85x faster** than NPZ and **1.08x faster** than NPY
 
-2. **Loading Performance**:
+2. **Drop Operations**:
+   - Drop array: NumPack is **24x faster** than NPZ and **13x faster** than NPY
+   - Drop rows: NumPack is **1.67x faster** than NPZ but **0.93x slower** than NPY
+   - NumPack provides efficient in-place row deletion without full file rewrite
+
+3. **Loading Performance**:
    - Full load: NumPack is **1.56x faster** than NPZ but **0.89x slower** than NPY
    - Memory-mapped load: NumPack is **2.6x faster** than NPZ but slower than NPY
-   - Selective load: NumPack is **1.67x faster** than NPZ (NPY does not support)
+   - Selective load: NumPack is **1.67x faster** than NPZ (NPY不支持)
 
-3. **Random Access**:
+4. **Random Access**:
    - NumPack is **1.89x faster** than NPZ and **1.11x faster** than NPY for random index access
 
-4. **Storage Efficiency**:
+5. **Storage Efficiency**:
    - All formats achieve identical compression ratios (47.68 MB)
    - NumPack maintains high performance while keeping file sizes competitive
 

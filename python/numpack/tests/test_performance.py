@@ -439,6 +439,99 @@ def test_replace_operations(timing_stats: TimingStats):
         logger.error(f"Replace operations test failed: {str(e)}")
         raise
 
+@run_multiple_times(runs=7)
+@clean_file_when_finished('test_drop', 'test_drop.npz', 'test_drop_array1.npy', 'test_drop_array2.npy')
+def test_drop_operations(timing_stats: TimingStats):
+    """Test drop operations performance"""
+    try:
+        # Create test data
+        size = 1000000
+        arrays = {
+            'array1': np.random.rand(size, 10).astype(np.float32),
+            'array2': np.random.rand(size, 5).astype(np.float32)
+        }
+        
+        # Save initial data
+        npk = NumPack('test_drop', drop_if_exists=True)
+        npk.save(arrays)
+        np.savez('test_drop.npz', **arrays)
+        np.save('test_drop_array1.npy', arrays['array1'])
+        np.save('test_drop_array2.npy', arrays['array2'])
+        
+        # Test scenario 1: Drop entire array
+        # NumPack drop array
+        start_time = time.time()
+        npk.drop('array1')
+        drop_time = time.time() - start_time
+        timing_stats.add_time("NumPack drop array", drop_time)
+        
+        # NumPy npz drop array (need to reload and save)
+        start_time = time.time()
+        npz_data = dict(np.load('test_drop.npz'))
+        del npz_data['array1']
+        np.savez('test_drop.npz', **npz_data)
+        npz_drop_time = time.time() - start_time
+        timing_stats.add_time("NumPy npz drop array", npz_drop_time)
+        
+        # NumPy npy drop array (just delete file)
+        start_time = time.time()
+        os.remove('test_drop_array1.npy')
+        npy_drop_time = time.time() - start_time
+        timing_stats.add_time("NumPy npy drop array", npy_drop_time)
+        
+        # Restore data for next test
+        npk.save({'array1': arrays['array1']})
+        np.savez('test_drop.npz', **arrays)
+        np.save('test_drop_array1.npy', arrays['array1'])
+        
+        # Test scenario 2: Drop specific rows
+        drop_indices = list(range(0, size, 2))  # Drop every other row
+        
+        # NumPack drop rows
+        start_time = time.time()
+        npk.drop('array1', drop_indices)
+        drop_rows_time = time.time() - start_time
+        timing_stats.add_time("NumPack drop rows", drop_rows_time)
+        
+        # NumPy npz drop rows (need to reload, modify and save)
+        start_time = time.time()
+        npz_data = dict(np.load('test_drop.npz'))
+        mask = np.ones(size, dtype=bool)
+        mask[drop_indices] = False
+        npz_data['array1'] = npz_data['array1'][mask]
+        np.savez('test_drop.npz', **npz_data)
+        npz_drop_rows_time = time.time() - start_time
+        timing_stats.add_time("NumPy npz drop rows", npz_drop_rows_time)
+        
+        # NumPy npy drop rows
+        start_time = time.time()
+        npy_data = np.load('test_drop_array1.npy')
+        mask = np.ones(size, dtype=bool)
+        mask[drop_indices] = False
+        npy_data = npy_data[mask]
+        np.save('test_drop_array1.npy', npy_data)
+        npy_drop_rows_time = time.time() - start_time
+        timing_stats.add_time("NumPy npy drop rows", npy_drop_rows_time)
+        
+        # Verify data after row dropping
+        loaded = npk.load(mmap_mode=False)
+        npz_loaded = dict(np.load('test_drop.npz'))
+        npy_loaded = np.load('test_drop_array1.npy')
+        
+        # Verify array1 has correct shape after dropping rows
+        expected_shape = (size // 2, arrays['array1'].shape[1])
+        assert loaded['array1'].shape == expected_shape
+        assert npz_loaded['array1'].shape == expected_shape
+        assert npy_loaded.shape == expected_shape
+        
+        # Verify array2 remains unchanged
+        assert np.allclose(loaded['array2'], arrays['array2'])
+        assert np.allclose(npz_loaded['array2'], arrays['array2'])
+        
+    except Exception as e:
+        logger.error(f"Drop operations test failed: {str(e)}")
+        raise
+
 if __name__ == '__main__':
     try:
         logger.info("Performance Test Results")
@@ -447,6 +540,7 @@ if __name__ == '__main__':
         test_append_operations()
         test_random_access()
         test_replace_operations()
+        test_drop_operations()
         logger.info("=" * 80)
     except Exception as e:
         logger.error(f"Error occurred during tests: {str(e)}")

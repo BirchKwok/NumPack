@@ -14,3 +14,5 @@ __pycache__/
 *.npk
 *.npkd
 *.npkm
+
+*.wal
