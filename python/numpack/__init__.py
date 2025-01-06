@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Tuple, Union, Optional
 import numpy as np
@@ -70,7 +71,7 @@ class NumPack:
             drop_if_exists (bool): Whether to drop the file if it already exists
         """
         if drop_if_exists and Path(filename).exists() and Path(filename).is_dir():
-            Path(filename).unlink()
+            shutil.rmtree(filename)
 
         Path(filename).mkdir(parents=True, exist_ok=True)
         
@@ -123,18 +124,20 @@ class NumPack:
         array_tuples = [(name, array) for name, array in arrays.items()]
         self._npk.append(array_tuples)
 
-    def drop(self, array_names: Optional[Union[List[str], str]] = None, indexes: Optional[Union[List[int], int, np.ndarray]] = None) -> None:
+    def drop(self, array_name: str, indexes: Optional[Union[List[int], int, np.ndarray]] = None) -> None:
         """Drop arrays from NumPack file
     
         Parameters:
-            array_names (Optional[Union[List[str], str]]): The names of the arrays to drop, if None, drop all arrays
+            array_name (str): The name of the array to drop
             indexes (Optional[Union[List[int], int, np.ndarray]]): The indexes to drop, if None, drop all rows
         """
-        if array_names is not None and isinstance(array_names, str):
-            array_names = [array_names]
-            
-        self._npk.drop(array_names, indexes)
-
+        if indexes is not None:
+            mask = np.ones(self._npk.get_shape(array_name)[0], dtype=bool)
+            mask[indexes] = False
+            _arrays = self.load(mmap_mode=True)[array_name]
+            self.save({array_name: _arrays[mask]})
+        else:
+            self._npk.drop(array_name, None)
 
     def getitem(self, indexes: Union[List[int], int, np.ndarray], array_name: str) -> Dict[str, np.ndarray]:
         """Randomly access the data of specified rows from NumPack file

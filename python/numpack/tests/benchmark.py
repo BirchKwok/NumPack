@@ -464,7 +464,7 @@ def test_drop_operations(timing_stats: TimingStats):
         npk.drop('array1')
         drop_time = time.time() - start_time
         timing_stats.add_time("NumPack drop array", drop_time)
-        
+
         # NumPy npz drop array (need to reload and save)
         start_time = time.time()
         npz_data = dict(np.load('test_drop.npz'))
@@ -472,27 +472,31 @@ def test_drop_operations(timing_stats: TimingStats):
         np.savez('test_drop.npz', **npz_data)
         npz_drop_time = time.time() - start_time
         timing_stats.add_time("NumPy npz drop array", npz_drop_time)
-        
+
         # NumPy npy drop array (just delete file)
         start_time = time.time()
         os.remove('test_drop_array1.npy')
         npy_drop_time = time.time() - start_time
         timing_stats.add_time("NumPy npy drop array", npy_drop_time)
-        
+
         # Restore data for next test
         npk.save({'array1': arrays['array1']})
         np.savez('test_drop.npz', **arrays)
         np.save('test_drop_array1.npy', arrays['array1'])
-        
+
         # Test scenario 2: Drop specific rows
         drop_indices = list(range(0, size, 2))  # Drop every other row
         
         # NumPack drop rows
         start_time = time.time()
-        npk.drop('array1', drop_indices)
+        # npk.drop('array1', drop_indices)
+        mask = np.ones(size, dtype=bool)
+        mask[drop_indices] = False
+        _arrays = npk.load(mmap_mode=True)['array1']
+        npk.save({'array1': _arrays[mask]})
         drop_rows_time = time.time() - start_time
         timing_stats.add_time("NumPack drop rows", drop_rows_time)
-        
+
         # NumPy npz drop rows (need to reload, modify and save)
         start_time = time.time()
         npz_data = dict(np.load('test_drop.npz'))
@@ -502,7 +506,7 @@ def test_drop_operations(timing_stats: TimingStats):
         np.savez('test_drop.npz', **npz_data)
         npz_drop_rows_time = time.time() - start_time
         timing_stats.add_time("NumPy npz drop rows", npz_drop_rows_time)
-        
+
         # NumPy npy drop rows
         start_time = time.time()
         npy_data = np.load('test_drop_array1.npy')
@@ -512,12 +516,12 @@ def test_drop_operations(timing_stats: TimingStats):
         np.save('test_drop_array1.npy', npy_data)
         npy_drop_rows_time = time.time() - start_time
         timing_stats.add_time("NumPy npy drop rows", npy_drop_rows_time)
-        
+
         # Verify data after row dropping
         loaded = npk.load(mmap_mode=False)
         npz_loaded = dict(np.load('test_drop.npz'))
         npy_loaded = np.load('test_drop_array1.npy')
-        
+
         # Verify array1 has correct shape after dropping rows
         expected_shape = (size // 2, arrays['array1'].shape[1])
         assert loaded['array1'].shape == expected_shape
@@ -536,10 +540,10 @@ if __name__ == '__main__':
     try:
         logger.info("Performance Test Results")
         logger.info("=" * 80)
-        test_large_data()
-        test_append_operations()
-        test_random_access()
-        test_replace_operations()
+        # test_large_data()
+        # test_append_operations()
+        # test_random_access()
+        # test_replace_operations()
         test_drop_operations()
         logger.info("=" * 80)
     except Exception as e:

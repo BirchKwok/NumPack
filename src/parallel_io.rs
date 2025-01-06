@@ -1,10 +1,10 @@
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufWriter, Read, Write, Seek};
+use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
-use std::sync::Arc;
-use rayon::prelude::*;
-use ndarray::{Array2, ArrayView2};
 use memmap2::MmapOptions;
+use rayon::prelude::*;
+use std::sync::Arc;
+use ndarray::{Array2, ArrayView2};
 use numpy::Element;
 use std::collections::HashSet;
 use std::os::unix::fs::FileExt;
@@ -12,13 +12,26 @@ use std::os::unix::fs::FileExt;
 use crate::error::{NpkResult, NpkError};
 use crate::metadata::{CachedMetadataStore, ArrayMetadata, DataType};
 
-const BUFFER_SIZE: usize = 8 * 1024 * 1024;  // 8MB buffer
 
 #[allow(dead_code)]
 pub struct ArrayView {
     pub meta: ArrayMetadata,
     file: File,
     file_path: PathBuf,
+}
+
+fn normalize_index(idx: i64, total_rows: usize) -> Option<usize> {
+    let normalized = if idx < 0 {
+        total_rows as i64 + idx // 若 idx = -1，则表示最后一行
+    } else {
+        idx
+    };
+    // 排除越界索引
+    if normalized >= 0 && normalized < total_rows as i64 {
+        Some(normalized as usize)
+    } else {
+        None
+    }
 }
 
 impl ArrayView {
@@ -118,48 +131,98 @@ impl ArrayView {
     pub fn physical_delete(&mut self, excluded_indices: &[i64]) -> NpkResult<()> {
         let element_size = self.meta.dtype.size_bytes() as usize;
         let row_size = (self.meta.cols as usize) * element_size;
-        
-        // Calculate rows to retain
-        let retained = self.get_retained_indices(Some(excluded_indices));
-        let new_rows = retained.len();
-        
-        // Create temporary file
-        let temp_path = self.file_path.with_extension("tmp");
-        let mut temp_file = BufWriter::with_capacity(
-            BUFFER_SIZE,
-            File::create(&temp_path)?
-        );
-        
-        // Create read buffer
-        let mut row_buffer = vec![0u8; row_size];
-        
-        // Copy needed rows to temporary file
-        for &old_row in &retained {
-            // Locate to correct file position
-            self.file.seek(io::SeekFrom::Start((old_row * row_size) as u64))?;
-            self.file.read_exact(&mut row_buffer)?;
-            temp_file.write_all(&row_buffer)?;
+        let total_rows = self.meta.rows as usize;
+    
+        // 1. 收集需要排除的行索引（去重 + 排序）
+        let mut excluded_vec: Vec<usize> = excluded_indices
+            .iter()
+            .filter_map(|&idx| normalize_index(idx, total_rows))
+            .collect();
+        excluded_vec.sort_unstable();
+        excluded_vec.dedup();
+    
+        // 如果没有任何行需要排除，直接返回
+        if excluded_vec.is_empty() {
+            return Ok(());
         }
-        
-        // Ensure all data is written to disk
-        temp_file.flush()?;
-        
-        // Close original file and temporary file
-        drop(temp_file);
-        self.file = File::create(&self.file_path)?;
-        
-        // Atomically replace original file with temporary file
+    
+        // 2. 计算删除后文件大小
+        let new_rows = total_rows - excluded_vec.len();
+        let new_size = new_rows * row_size;
+    
+        // 3. 创建临时文件，用于写入删除后的数据
+        let temp_path = self.file_path.with_extension("tmp");
+        let temp_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&temp_path)?;
+    
+        // 预先分配目标文件大小
+        temp_file.set_len(new_size as u64)?;
+    
+        // 4. 映射源文件到内存（只读）
+        let src_mmap = unsafe { MmapOptions::new().map(&self.file)? };
+    
+        // 使用较大的写缓冲，避免频繁 I/O 调用
+        let mut writer = BufWriter::with_capacity(8 * 1024 * 1024, temp_file);
+    
+        // 5. 将排除行索引合并成「连续区间」列表
+        //    例如：excluded_vec = [2, 3, 4, 10, 11, 20]
+        //    则分块 [(2,4), (10,11), (20,20)]
+        let mut chunks = Vec::new();
+        let mut chunk_start = excluded_vec[0];
+        let mut chunk_end = chunk_start;
+    
+        for &idx in excluded_vec.iter().skip(1) {
+            if idx == chunk_end + 1 {
+                // 仍在同一个连续区间
+                chunk_end = idx;
+            } else {
+                // 出现不连续，先把前一个区间保存
+                chunks.push((chunk_start, chunk_end));
+                // 开启新的区间
+                chunk_start = idx;
+                chunk_end = idx;
+            }
+        }
+        // 别忘了将最后一个区间 push 进去
+        chunks.push((chunk_start, chunk_end));
+    
+        // 6. 依次把「非排除」的块复制到临时文件
+        let mut current_pos = 0; // 当前处理到哪一行了
+        for &(start, end) in &chunks {
+            if start > current_pos {
+                let begin_offset = current_pos * row_size;
+                let end_offset = start * row_size;
+                writer.write_all(&src_mmap[begin_offset..end_offset])?;
+            }
+            // 跳过 [start..=end] 这个区间
+            current_pos = end + 1;
+        }
+    
+        // 如果还有剩余行在最后
+        if current_pos < total_rows {
+            let begin_offset = current_pos * row_size;
+            let end_offset = total_rows * row_size;
+            writer.write_all(&src_mmap[begin_offset..end_offset])?;
+        }
+    
+        // 刷新缓冲区并关闭映射
+        writer.flush()?;
+        drop(writer);
+        drop(src_mmap);
+    
+        // 7. 原子替换旧文件
         std::fs::rename(&temp_path, &self.file_path)?;
-        
-        // Reopen file
+    
+        // 8. 重新打开文件，更新元信息
         self.file = File::open(&self.file_path)?;
-        
-        // Update metadata
         self.meta.rows = new_rows as u64;
-        self.meta.size_bytes = (new_rows * self.meta.cols as usize * element_size) as u64;
-        
+        self.meta.size_bytes = new_size as u64;
+    
         Ok(())
-    }
+    }    
 }
 
 #[allow(dead_code)]
@@ -542,3 +605,5 @@ impl ParallelIO {
         Ok(data)
     }
 }
+
+

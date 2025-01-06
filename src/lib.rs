@@ -382,8 +382,6 @@ impl NumPack {
 
         // If indexes parameter is provided, it means deleting specific rows
         if let Some(indexes) = indexes {
-            // let py = indexes.py();
-            
             for name in &names {
                 if let Some(meta) = self.io.get_array_meta(name) {
                     let shape = (meta.rows as usize, meta.cols as usize);
