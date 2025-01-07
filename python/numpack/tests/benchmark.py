@@ -271,8 +271,8 @@ def test_random_access(timing_stats: TimingStats):
         # NumPack random access
         start_time = time.time()
         numpack_random = {
-            'array1': npk.getitem(random_indices, "array1"),
-            'array2': npk.getitem(random_indices, "array2")
+            'array1': npk.getitem("array1", random_indices),
+            'array2': npk.getitem("array2", random_indices)
         }
         numpack_random_time = time.time() - start_time
         timing_stats.add_time("NumPack random access", numpack_random_time)
@@ -540,10 +540,10 @@ if __name__ == '__main__':
     try:
         logger.info("Performance Test Results")
         logger.info("=" * 80)
-        # test_large_data()
-        # test_append_operations()
-        # test_random_access()
-        # test_replace_operations()
+        test_large_data()
+        test_append_operations()
+        test_random_access()
+        test_replace_operations()
         test_drop_operations()
         logger.info("=" * 80)
     except Exception as e:

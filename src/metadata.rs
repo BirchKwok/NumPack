@@ -210,8 +210,7 @@ impl DataType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArrayMetadata {
     pub name: String,
-    pub rows: u64,
-    pub cols: u64,
+    pub shape: Vec<u64>,         // 数组的形状，例如 [100, 200] 表示 100x200 的二维数组
     pub data_file: String,     // Data file name
     pub last_modified: u64,    // Last modified time
     pub size_bytes: u64,       // Data size
@@ -221,22 +220,29 @@ pub struct ArrayMetadata {
 }
 
 impl ArrayMetadata {
-    pub fn new(name: String, rows: u64, cols: u64, data_file: String, dtype: DataType) -> Self {
+    pub fn new(name: String, shape: Vec<u64>, data_file: String, dtype: DataType) -> Self {
+        let total_elements: u64 = shape.iter().product();
         Self {
             name,
-            rows,
-            cols,
+            shape,
             data_file,
             last_modified: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
-            size_bytes: (rows * cols * dtype.size_bytes() as u64),
+            size_bytes: total_elements * dtype.size_bytes() as u64,
             dtype,
             raw_data: None,
         }
     }
 
+    pub fn total_elements(&self) -> u64 {
+        self.shape.iter().product()
+    }
+
+    pub fn ndim(&self) -> usize {
+        self.shape.len()
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -256,7 +262,7 @@ pub struct MetadataStore {
 
 impl MetadataStore {
     pub fn new(wal_path: Option<PathBuf>) -> Self {
-        let mut store = Self {
+        Self {
             version: 1,
             arrays: HashMap::new(),
             total_size: 0,
@@ -264,13 +270,7 @@ impl MetadataStore {
             name_to_index: HashMap::new(),
             next_index: 0,
             wal: None,
-        };
-        
-        if let Some(path) = wal_path {
-            store.wal = WalWriter::new(path).ok();
         }
-        
-        store
     }
 
     pub fn load(path: &Path, wal_path: Option<PathBuf>) -> NpkResult<Self> {
@@ -278,14 +278,27 @@ impl MetadataStore {
             let file = OpenOptions::new()
                 .read(true)
                 .open(path)?;
-            let reader = BufReader::new(file);
-            bincode::deserialize_from(reader)
-                .map_err(|e| NpkError::InvalidMetadata(e.to_string()))?
+            
+            // 检查文件大小
+            let metadata = file.metadata()?;
+            if metadata.len() == 0 {
+                // 如果是空文件，返回新的存储实例
+                Self::new(None)
+            } else {
+                let reader = BufReader::new(file);
+                match bincode::deserialize_from(reader) {
+                    Ok(store) => store,
+                    Err(_) => {
+                        // 如果反序列化失败，返回新的存储实例
+                        Self::new(None)
+                    }
+                }
+            }
         } else {
             Self::new(None)
         };
 
-        // Rebuild bitmap and index mapping
+        // 重建位图和索引映射
         store.bitmap = BitVec::new();
         store.name_to_index = HashMap::new();
         store.next_index = 0;
@@ -296,10 +309,12 @@ impl MetadataStore {
             store.next_index += 1;
         }
 
-        // If there is WAL, replay WAL
+        // 如果有 WAL，重放 WAL
         if let Some(wal_path) = wal_path {
             if wal_path.exists() {
-                store.replay_wal(&wal_path)?;
+                if let Err(e) = store.replay_wal(&wal_path) {
+                    eprintln!("Warning: Failed to replay WAL: {}", e);
+                }
             }
             store.wal = WalWriter::new(wal_path).ok();
         }
@@ -385,7 +400,7 @@ impl MetadataStore {
             },
             WalOp::UpdateRows(name, rows) => {
                 if let Some(meta) = self.arrays.get_mut(&name) {
-                    meta.rows = rows;
+                    meta.shape[0] = rows;
                 }
                 Ok(())
             }
@@ -548,6 +563,22 @@ impl MetadataStore {
             .get(name)
             .map(|&index| self.bitmap[index])
             .unwrap_or(false)
+    }
+
+    pub fn update_rows(&mut self, name: &str, rows: u64) -> NpkResult<()> {
+        if let Some(wal) = &mut self.wal {
+            wal.append(WalOp::UpdateRows(name.to_string(), rows))?;
+            
+            if let Some(meta) = self.arrays.get_mut(name) {
+                meta.shape[0] = rows;
+            }
+            Ok(())
+        } else {
+            if let Some(meta) = self.arrays.get_mut(name) {
+                meta.shape[0] = rows;
+            }
+            Ok(())
+        }
     }
 }
 

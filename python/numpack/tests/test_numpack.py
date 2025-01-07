@@ -205,5 +205,20 @@ def test_append_operations(numpack, dtype, test_values):
     with pytest.raises(ValueError):
         numpack.append({'array': create_test_array(dtype, (10, 30))})
 
+@pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+def test_getitem(numpack, dtype, test_values):
+    """Test getitem functionality for all data types"""
+    array = create_test_array(dtype, (100, 50))
+    numpack.save({'array': array})
+    
+    loaded = numpack.getitem('array', [10, 20, 30])
+    assert np.array_equal(array[[10, 20, 30]], loaded)
+    
+    loaded = numpack.getitem('array', [15, 25, 35])
+    assert np.array_equal(array[[15, 25, 35]], loaded)
+
+    loaded = numpack.getitem('array', [10, 20, 30, 40, 50])
+    assert np.array_equal(array[[10, 20, 30, 40, 50]], loaded)
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

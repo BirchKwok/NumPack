@@ -3,16 +3,18 @@ mod metadata;
 mod parallel_io;
 
 use std::path::{Path, PathBuf};
-use numpy::{PyArray2, IntoPyArray};
+use numpy::{IntoPyArray, PyArrayDyn};
 use pyo3::exceptions::PyKeyError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
 use pyo3::types::PySlice;
 use std::fs::OpenOptions;
 use std::io::Write;
+use ndarray::ArrayD;
 
 use crate::parallel_io::ParallelIO;
 use crate::metadata::DataType;
+use crate::error::NpkError;
 
 #[allow(dead_code)]
 #[pyclass]
@@ -38,19 +40,6 @@ fn get_array_dtype(array: &PyAny) -> PyResult<DataType> {
         _ => Err(pyo3::exceptions::PyValueError::new_err(
             format!("Unsupported dtype: {}", dtype_str)
         )),
-    }
-}
-
-fn get_array_shape(array: &PyAny) -> PyResult<(usize, usize)> {
-    let shape = array.getattr("shape")?;
-    let rows = shape.get_item(0)?.extract::<usize>()?;
-    let cols = shape.get_item(1)?.extract::<usize>()?;
-    Ok((rows, cols))
-}
-
-impl PartialEq for DataType {
-    fn eq(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
     }
 }
 
@@ -93,50 +82,67 @@ impl NumPack {
             };
             
             let dtype = get_array_dtype(value)?;
+            let shape: Vec<u64> = value.getattr("shape")?
+                .extract::<Vec<usize>>()?
+                .into_iter()
+                .map(|x| x as u64)
+                .collect();
+
             match dtype {
                 DataType::Bool => {
-                    let array = value.extract::<&PyArray2<bool>>()?;
-                    bool_arrays.push((name, unsafe { array.as_array().to_owned() }, dtype));
+                    let array = value.extract::<&PyArrayDyn<bool>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    bool_arrays.push((name, array, dtype));
                 }
                 DataType::Uint8 => {
-                    let array = value.extract::<&PyArray2<u8>>()?;
-                    u8_arrays.push((name, unsafe { array.as_array().to_owned() }, dtype));
+                    let array = value.extract::<&PyArrayDyn<u8>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    u8_arrays.push((name, array, dtype));
                 }
                 DataType::Uint16 => {
-                    let array = value.extract::<&PyArray2<u16>>()?;
-                    u16_arrays.push((name, unsafe { array.as_array().to_owned() }, dtype));
+                    let array = value.extract::<&PyArrayDyn<u16>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    u16_arrays.push((name, array, dtype));
                 }
                 DataType::Uint32 => {
-                    let array = value.extract::<&PyArray2<u32>>()?;
-                    u32_arrays.push((name, unsafe { array.as_array().to_owned() }, dtype));
+                    let array = value.extract::<&PyArrayDyn<u32>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    u32_arrays.push((name, array, dtype));
                 }
                 DataType::Uint64 => {
-                    let array = value.extract::<&PyArray2<u64>>()?;
-                    u64_arrays.push((name, unsafe { array.as_array().to_owned() }, dtype));
+                    let array = value.extract::<&PyArrayDyn<u64>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    u64_arrays.push((name, array, dtype));
                 }
                 DataType::Int8 => {
-                    let array = value.extract::<&PyArray2<i8>>()?;
-                    i8_arrays.push((name, unsafe { array.as_array().to_owned() }, dtype));
+                    let array = value.extract::<&PyArrayDyn<i8>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    i8_arrays.push((name, array, dtype));
                 }
                 DataType::Int16 => {
-                    let array = value.extract::<&PyArray2<i16>>()?;
-                    i16_arrays.push((name, unsafe { array.as_array().to_owned() }, dtype));
+                    let array = value.extract::<&PyArrayDyn<i16>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    i16_arrays.push((name, array, dtype));
                 }
                 DataType::Int32 => {
-                    let array = value.extract::<&PyArray2<i32>>()?;
-                    i32_arrays.push((name, unsafe { array.as_array().to_owned() }, dtype));
+                    let array = value.extract::<&PyArrayDyn<i32>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    i32_arrays.push((name, array, dtype));
                 }
                 DataType::Int64 => {
-                    let array = value.extract::<&PyArray2<i64>>()?;
-                    i64_arrays.push((name, unsafe { array.as_array().to_owned() }, dtype));
+                    let array = value.extract::<&PyArrayDyn<i64>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    i64_arrays.push((name, array, dtype));
                 }
                 DataType::Float32 => {
-                    let array = value.extract::<&PyArray2<f32>>()?;
-                    f32_arrays.push((name, unsafe { array.as_array().to_owned() }, dtype));
+                    let array = value.extract::<&PyArrayDyn<f32>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    f32_arrays.push((name, array, dtype));
                 }
                 DataType::Float64 => {
-                    let array = value.extract::<&PyArray2<f64>>()?;
-                    f64_arrays.push((name, unsafe { array.as_array().to_owned() }, dtype));
+                    let array = value.extract::<&PyArrayDyn<f64>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    f64_arrays.push((name, array, dtype));
                 }
             }
         }
@@ -273,96 +279,175 @@ impl NumPack {
         Ok(dict.into_py(py))
     }
 
-    fn replace(&self, _py: Python, arrays: &PyDict, indexes: &PyAny) -> PyResult<()> {
-        // Get index list
-        let indices = if let Ok(slice) = indexes.extract::<&PySlice>() {
-            let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
-            let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(-1);
-            let step = slice.getattr("step")?.extract::<Option<i64>>()?.unwrap_or(1);
-            
-            if step != 1 {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "Step size must be 1 for replacement"
-                ));
-            }
-            
-            (start..stop).collect::<Vec<i64>>()
-        } else if let Ok(idx_list) = indexes.extract::<Vec<usize>>() {
-            idx_list.into_iter().map(|x| x as i64).collect()
+    fn get_shape(&self, py: Python, array_name: &str) -> PyResult<Option<Py<PyTuple>>> {
+        if let Some(meta) = self.io.get_array_meta(array_name) {
+            let shape: Vec<i64> = meta.shape.iter().map(|&x| x as i64).collect();
+            let shape_tuple = PyTuple::new(py, &shape);
+            Ok(Some(shape_tuple.into()))
         } else {
-            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                "Indexes must be a slice or list of integers"
-            ));
-        };
+            Ok(None)
+        }
+    }
 
-        // Process each array
-        for (key, value) in arrays.iter() {
-            let name = key.extract::<String>()?;
-            let dtype = self.io.get_array_meta(&name)
-                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>(
-                    format!("Array {} not found", name)
-                ))?
-                .dtype;
+    fn get_metadata(&self, py: Python) -> PyResult<PyObject> {
+        let dict = PyDict::new(py);
+        
+        let arrays = PyDict::new(py);
+        for name in self.io.list_arrays() {
+            if let Some(meta) = self.io.get_array_meta(&name) {
+                let array_dict = PyDict::new(py);
+                array_dict.set_item("shape", &meta.shape)?;
+                array_dict.set_item("data_file", &meta.data_file)?;
+                array_dict.set_item("last_modified", meta.last_modified)?;
+                array_dict.set_item("size_bytes", meta.size_bytes)?;
+                array_dict.set_item("dtype", format!("{:?}", meta.dtype))?;
+                arrays.set_item(name, array_dict)?;
+            }
+        }
+        
+        dict.set_item("arrays", arrays)?;
+        dict.set_item("base_dir", self.base_dir.to_string_lossy().as_ref())?;
+        dict.set_item("total_arrays", self.io.list_arrays().len())?;
+        
+        Ok(dict.into())
+    }
 
-            match dtype {
-                DataType::Bool => {
-                    let array = value.extract::<&PyArray2<bool>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
-                    self.io.replace_rows(&name, &array, &indices)?;
+    fn get_member_list(&self, py: Python) -> PyResult<Py<PyList>> {
+        let names = self.io.list_arrays();
+        let list = PyList::new(py, names);
+        Ok(list.into())
+    }
+
+    fn get_modify_time(&self, array_name: &str) -> PyResult<Option<u64>> {
+        Ok(self.io.get_array_meta(array_name).map(|meta| meta.last_modified))
+    }
+
+    fn reset(&self) -> PyResult<()> {
+        self.io.reset()?;
+        Ok(())
+    }
+
+    pub fn append(&mut self, arrays: Vec<(&str, &PyAny)>) -> PyResult<()> {
+        // Check if the array exists and get the existing array information
+        let mut existing_arrays: Vec<(String, DataType, Vec<usize>)> = Vec::new();
+        
+        for (name, array) in &arrays {
+            if let Some(meta) = self.io.get_array_meta(name) {
+                let shape: Vec<usize> = array.getattr("shape")?.extract()?;
+                if meta.shape.len() != shape.len() {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        format!("Dimension mismatch for array {}: expected {}, got {}", 
+                            name, meta.shape.len(), shape.len())
+                    ));
                 }
-                DataType::Uint8 => {
-                    let array = value.extract::<&PyArray2<u8>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
-                    self.io.replace_rows(&name, &array, &indices)?;
+                // 检查除第一维外的其他维度是否匹配
+                for (i, (&m, &s)) in meta.shape.iter().zip(shape.iter()).enumerate().skip(1) {
+                    if m as usize != s {
+                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            format!("Shape mismatch for array {} at dimension {}: expected {}, got {}", 
+                                name, i, m, s)
+                        ));
+                    }
                 }
-                DataType::Uint16 => {
-                    let array = value.extract::<&PyArray2<u16>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
-                    self.io.replace_rows(&name, &array, &indices)?;
-                }
-                DataType::Uint32 => {
-                    let array = value.extract::<&PyArray2<u32>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
-                    self.io.replace_rows(&name, &array, &indices)?;
-                }
-                DataType::Uint64 => {
-                    let array = value.extract::<&PyArray2<u64>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
-                    self.io.replace_rows(&name, &array, &indices)?;
-                }
-                DataType::Int8 => {
-                    let array = value.extract::<&PyArray2<i8>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
-                    self.io.replace_rows(&name, &array, &indices)?;
-                }
-                DataType::Int16 => {
-                    let array = value.extract::<&PyArray2<i16>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
-                    self.io.replace_rows(&name, &array, &indices)?;
-                }
-                DataType::Int32 => {
-                    let array = value.extract::<&PyArray2<i32>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
-                    self.io.replace_rows(&name, &array, &indices)?;
-                }
-                DataType::Int64 => {
-                    let array = value.extract::<&PyArray2<i64>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
-                    self.io.replace_rows(&name, &array, &indices)?;
-                }
-                DataType::Float32 => {
-                    let array = value.extract::<&PyArray2<f32>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
-                    self.io.replace_rows(&name, &array, &indices)?;
-                }
-                DataType::Float64 => {
-                    let array = value.extract::<&PyArray2<f64>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
-                    self.io.replace_rows(&name, &array, &indices)?;
-                }
+                existing_arrays.push((name.to_string(), meta.dtype.clone(), shape));
+            } else {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    format!("Array {} does not exist", name)
+                ));
             }
         }
 
+        // Start appending data
+        for (name, array) in arrays {
+            let meta = self.io.get_array_meta(name).unwrap();
+            let shape: Vec<usize> = array.getattr("shape")?.extract()?;
+            
+            // Append data to file
+            let array_path = self.base_dir.join(&meta.data_file);
+            let mut file = OpenOptions::new()
+                .append(true)
+                .open(array_path)?;
+                
+            match meta.dtype {
+                DataType::Bool => {
+                    let py_array = array.downcast::<PyArrayDyn<bool>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    file.write_all(bytemuck::cast_slice(data))?;
+                }
+                DataType::Uint8 => {
+                    let py_array = array.downcast::<PyArrayDyn<u8>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    file.write_all(bytemuck::cast_slice(data))?;
+                }
+                DataType::Uint16 => {
+                    let py_array = array.downcast::<PyArrayDyn<u16>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    file.write_all(bytemuck::cast_slice(data))?;
+                }
+                DataType::Uint32 => {
+                    let py_array = array.downcast::<PyArrayDyn<u32>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    file.write_all(bytemuck::cast_slice(data))?;
+                }
+                DataType::Uint64 => {
+                    let py_array = array.downcast::<PyArrayDyn<u64>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    file.write_all(bytemuck::cast_slice(data))?;
+                }
+                DataType::Int8 => {
+                    let py_array = array.downcast::<PyArrayDyn<i8>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    file.write_all(bytemuck::cast_slice(data))?;
+                }
+                DataType::Int16 => {
+                    let py_array = array.downcast::<PyArrayDyn<i16>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    file.write_all(bytemuck::cast_slice(data))?;
+                }
+                DataType::Int32 => {
+                    let py_array = array.downcast::<PyArrayDyn<i32>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    file.write_all(bytemuck::cast_slice(data))?;
+                }
+                DataType::Int64 => {
+                    let py_array = array.downcast::<PyArrayDyn<i64>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    file.write_all(bytemuck::cast_slice(data))?;
+                }
+                DataType::Float32 => {
+                    let py_array = array.downcast::<PyArrayDyn<f32>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    file.write_all(bytemuck::cast_slice(data))?;
+                }
+                DataType::Float64 => {
+                    let py_array = array.downcast::<PyArrayDyn<f64>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    file.write_all(bytemuck::cast_slice(data))?;
+                }
+            }
+
+            // Update metadata
+            let mut new_meta = meta.clone();
+            new_meta.shape[0] += shape[0] as u64;
+            new_meta.size_bytes = new_meta.total_elements() * new_meta.dtype.size_bytes() as u64;
+            new_meta.last_modified = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            self.io.update_array_metadata(name, new_meta)?;
+        }
+        
         Ok(())
     }
 
@@ -384,16 +469,14 @@ impl NumPack {
         if let Some(indexes) = indexes {
             for name in &names {
                 if let Some(meta) = self.io.get_array_meta(name) {
-                    let shape = (meta.rows as usize, meta.cols as usize);
-                    
                     // Get the indices of the rows to delete
                     let deleted_indices = if let Ok(slice) = indexes.downcast::<PySlice>() {
                         let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
-                        let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(shape.0 as i64);
+                        let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(meta.shape[0] as i64);
                         let step = slice.getattr("step")?.extract::<Option<i64>>()?.unwrap_or(1);
                         
-                        let start = if start < 0 { shape.0 as i64 + start } else { start };
-                        let stop = if stop < 0 { shape.0 as i64 + stop } else { stop };
+                        let start = if start < 0 { meta.shape[0] as i64 + start } else { start };
+                        let stop = if stop < 0 { meta.shape[0] as i64 + stop } else { stop };
                         
                         if step == 1 {
                             (start..stop).collect::<Vec<i64>>()
@@ -403,7 +486,7 @@ impl NumPack {
                     } else if let Ok(indices) = indexes.extract::<Vec<i64>>() {
                         // Process negative indices
                         indices.into_iter()
-                            .map(|idx| if idx < 0 { shape.0 as i64 + idx } else { idx })
+                            .map(|idx| if idx < 0 { meta.shape[0] as i64 + idx } else { idx })
                             .collect()
                     } else {
                         return Err(pyo3::exceptions::PyTypeError::new_err(
@@ -421,306 +504,257 @@ impl NumPack {
         }
     }
 
-    fn get_shape(&self, py: Python, array_name: &str) -> PyResult<Option<Py<PyTuple>>> {
-        if let Some(meta) = self.io.get_array_meta(array_name) {
-            let shape = PyTuple::new(py, &[meta.rows as i64, meta.cols as i64]);
-            Ok(Some(shape.into()))
-        } else {
-            Ok(None)
-        }
-    }
-
-    fn get_member_list(&self, py: Python) -> PyResult<Py<PyList>> {
-        let names = self.io.list_arrays();
-        let list = PyList::new(py, names);
-        Ok(list.into())
-    }
-
-    fn get_modify_time(&self, array_name: &str) -> PyResult<Option<u64>> {
-        Ok(self.io.get_array_meta(array_name).map(|meta| meta.last_modified))
-    }
-
-    fn reset(&self) -> PyResult<()> {
-        self.io.reset()?;
-        Ok(())
-    }
-
-    pub fn append(&mut self, arrays: Vec<(&str, &PyAny)>) -> PyResult<()> {
-        // Check if the array exists and get the existing array information
-        let mut existing_arrays: Vec<(String, DataType, (usize, usize))> = Vec::new();
-        
-        for (name, array) in &arrays {
-            if let Some(meta) = self.io.get_array_meta(name) {
-                let shape = get_array_shape(array)?;
-                if meta.cols != shape.1 as u64 {
-                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        format!("Column count mismatch for array {}: expected {}, got {}", 
-                            name, meta.cols, shape.1)
-                    ));
-                }
-                existing_arrays.push((name.to_string(), meta.dtype.clone(), shape));
-            } else {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    format!("Array {} does not exist", name)
-                ));
-            }
-        }
-
-        // Start appending data
-        for (name, array) in arrays {
-            let meta = self.io.get_array_meta(name).unwrap();
-            let shape = get_array_shape(array)?;
-            
-            // Append data to file
-            let array_path = self.base_dir.join(&meta.data_file);
-            let mut file = OpenOptions::new()
-                .append(true)
-                .open(array_path)?;
-                
-            match meta.dtype {
-                DataType::Bool => {
-                    let py_array = array.downcast::<PyArray2<bool>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
-                    let data = array_ref.as_slice().unwrap();
-                    file.write_all(bytemuck::cast_slice(data))?;
-                }
-                DataType::Uint8 => {
-                    let py_array = array.downcast::<PyArray2<u8>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
-                    let data = array_ref.as_slice().unwrap();
-                    file.write_all(bytemuck::cast_slice(data))?;
-                }
-                DataType::Uint16 => {
-                    let py_array = array.downcast::<PyArray2<u16>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
-                    let data = array_ref.as_slice().unwrap();
-                    file.write_all(bytemuck::cast_slice(data))?;
-                }
-                DataType::Uint32 => {
-                    let py_array = array.downcast::<PyArray2<u32>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
-                    let data = array_ref.as_slice().unwrap();
-                    file.write_all(bytemuck::cast_slice(data))?;
-                }
-                DataType::Uint64 => {
-                    let py_array = array.downcast::<PyArray2<u64>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
-                    let data = array_ref.as_slice().unwrap();
-                    file.write_all(bytemuck::cast_slice(data))?;
-                }
-                DataType::Int8 => {
-                    let py_array = array.downcast::<PyArray2<i8>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
-                    let data = array_ref.as_slice().unwrap();
-                    file.write_all(bytemuck::cast_slice(data))?;
-                }
-                DataType::Int16 => {
-                    let py_array = array.downcast::<PyArray2<i16>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
-                    let data = array_ref.as_slice().unwrap();
-                    file.write_all(bytemuck::cast_slice(data))?;
-                }
-                DataType::Int32 => {
-                    let py_array = array.downcast::<PyArray2<i32>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
-                    let data = array_ref.as_slice().unwrap();
-                    file.write_all(bytemuck::cast_slice(data))?;
-                }
-                DataType::Int64 => {
-                    let py_array = array.downcast::<PyArray2<i64>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
-                    let data = array_ref.as_slice().unwrap();
-                    file.write_all(bytemuck::cast_slice(data))?;
-                }
-                DataType::Float32 => {
-                    let py_array = array.downcast::<PyArray2<f32>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
-                    let data = array_ref.as_slice().unwrap();
-                    file.write_all(bytemuck::cast_slice(data))?;
-                }
-                DataType::Float64 => {
-                    let py_array = array.downcast::<PyArray2<f64>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
-                    let data = array_ref.as_slice().unwrap();
-                    file.write_all(bytemuck::cast_slice(data))?;
-                }
-            }
-
-            // Update metadata
-            let mut new_meta = meta.clone();
-            new_meta.rows += shape.0 as u64;
-            new_meta.size_bytes = new_meta.rows * new_meta.cols * new_meta.dtype.size_bytes() as u64;
-            new_meta.last_modified = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            self.io.update_array_metadata(name, new_meta)?;
-        }
-        
-        Ok(())
-    }
-
-    fn getitem(&self, py: Python, indexes: &PyAny, array_names: Option<Vec<String>>) -> PyResult<Py<PyDict>> {
-        let result = PyDict::new(py);
-        let member_list = if let Some(names) = array_names {
-            names
-        } else {
-            self.io.list_arrays()
-        };
-
-        for name in member_list {
-            let meta = self.io.get_array_metadata(&name)?;
-            let indices = indexes.extract::<Vec<i64>>()?;
-            
-            // Read specified rows of data
-            let data = self.io.read_rows(&name, &indices)?;
-            let shape = [indices.len(), meta.cols as usize];
-            
-            // Create NumPy array based on data type
-            let array: Py<PyAny> = match meta.dtype {
-                DataType::Bool => unsafe {
-                    let py_array = PyArray2::<bool>::new(py, shape, false);
-                    let mut raw_array = py_array.as_raw_array_mut();
-                    std::ptr::copy_nonoverlapping(
-                        data.as_ptr() as *const bool,
-                        raw_array.as_mut_ptr(),
-                        shape[0] * shape[1]
-                    );
-                    py_array.into()
-                },
-                DataType::Uint8 => unsafe {
-                    let py_array = PyArray2::<u8>::new(py, shape, false);
-                    let mut raw_array = py_array.as_raw_array_mut();
-                    std::ptr::copy_nonoverlapping(
-                        data.as_ptr() as *const u8,
-                        raw_array.as_mut_ptr(),
-                        shape[0] * shape[1]
-                    );
-                    py_array.into()
-                },
-                DataType::Uint16 => unsafe {
-                    let py_array = PyArray2::<u16>::new(py, shape, false);
-                    let mut raw_array = py_array.as_raw_array_mut();
-                    std::ptr::copy_nonoverlapping(
-                        data.as_ptr() as *const u16,
-                        raw_array.as_mut_ptr(),
-                        shape[0] * shape[1]
-                    );
-                    py_array.into()
-                },
-                DataType::Uint32 => unsafe {
-                    let py_array = PyArray2::<u32>::new(py, shape, false);
-                    let mut raw_array = py_array.as_raw_array_mut();
-                    std::ptr::copy_nonoverlapping(
-                        data.as_ptr() as *const u32,
-                        raw_array.as_mut_ptr(),
-                        shape[0] * shape[1]
-                    );
-                    py_array.into()
-                },
-                DataType::Uint64 => unsafe {
-                    let py_array = PyArray2::<u64>::new(py, shape, false);
-                    let mut raw_array = py_array.as_raw_array_mut();
-                    std::ptr::copy_nonoverlapping(
-                        data.as_ptr() as *const u64,
-                        raw_array.as_mut_ptr(),
-                        shape[0] * shape[1]
-                    );
-                    py_array.into()
-                },
-                DataType::Int8 => unsafe {
-                    let py_array = PyArray2::<i8>::new(py, shape, false);
-                    let mut raw_array = py_array.as_raw_array_mut();
-                    std::ptr::copy_nonoverlapping(
-                        data.as_ptr() as *const i8,
-                        raw_array.as_mut_ptr(),
-                        shape[0] * shape[1]
-                    );
-                    py_array.into()
-                },
-                DataType::Int16 => unsafe {
-                    let py_array = PyArray2::<i16>::new(py, shape, false);
-                    let mut raw_array = py_array.as_raw_array_mut();
-                    std::ptr::copy_nonoverlapping(
-                        data.as_ptr() as *const i16,
-                        raw_array.as_mut_ptr(),
-                        shape[0] * shape[1]
-                    );
-                    py_array.into()
-                },
-                DataType::Int32 => unsafe {
-                    let py_array = PyArray2::<i32>::new(py, shape, false);
-                    let mut raw_array = py_array.as_raw_array_mut();
-                    std::ptr::copy_nonoverlapping(
-                        data.as_ptr() as *const i32,
-                        raw_array.as_mut_ptr(),
-                        shape[0] * shape[1]
-                    );
-                    py_array.into()
-                },
-                DataType::Int64 => unsafe {
-                    let py_array = PyArray2::<i64>::new(py, shape, false);
-                    let mut raw_array = py_array.as_raw_array_mut();
-                    std::ptr::copy_nonoverlapping(
-                        data.as_ptr() as *const i64,
-                        raw_array.as_mut_ptr(),
-                        shape[0] * shape[1]
-                    );
-                    py_array.into()
-                },
-                DataType::Float32 => unsafe {
-                    let py_array = PyArray2::<f32>::new(py, shape, false);
-                    let mut raw_array = py_array.as_raw_array_mut();
-                    std::ptr::copy_nonoverlapping(
-                        data.as_ptr() as *const f32,
-                        raw_array.as_mut_ptr(),
-                        shape[0] * shape[1]
-                    );
-                    py_array.into()
-                },
-                DataType::Float64 => unsafe {
-                    let py_array = PyArray2::<f64>::new(py, shape, false);
-                    let mut raw_array = py_array.as_raw_array_mut();
-                    std::ptr::copy_nonoverlapping(
-                        data.as_ptr() as *const f64,
-                        raw_array.as_mut_ptr(),
-                        shape[0] * shape[1]
-                    );
-                    py_array.into()
-                },
-            };
-            result.set_item(&name, array)?;
-        }
-
-        Ok(result.into())
-    }
-
     fn get_array_path(&self, array_name: &str) -> PathBuf {
         self.base_dir.join(&self.io.get_array_metadata(array_name).unwrap().data_file)
     }
 
-    fn get_metadata(&self, py: Python) -> PyResult<PyObject> {
-        let dict = PyDict::new(py);
-        
-        let arrays = PyDict::new(py);
-        for name in self.io.list_arrays() {
-            if let Some(meta) = self.io.get_array_meta(&name) {
-                let array_dict = PyDict::new(py);
-                array_dict.set_item("rows", meta.rows)?;
-                array_dict.set_item("cols", meta.cols)?;
-                array_dict.set_item("data_file", &meta.data_file)?;
-                array_dict.set_item("last_modified", meta.last_modified)?;
-                array_dict.set_item("size_bytes", meta.size_bytes)?;
-                array_dict.set_item("dtype", format!("{:?}", meta.dtype))?;
-                arrays.set_item(name, array_dict)?;
+    fn replace(&self, arrays: &PyDict, indexes: Option<&PyAny>) -> PyResult<()> {
+        // 获取要替换的行索引
+        let indices = if let Some(idx) = indexes {
+            if let Ok(indices) = idx.extract::<Vec<i64>>() {
+                indices
+            } else if let Ok(slice) = idx.downcast::<PySlice>() {
+                let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
+                let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(-1);
+                let step = slice.getattr("step")?.extract::<Option<i64>>()?.unwrap_or(1);
+                
+                if step != 1 {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "Only step=1 is supported for slices"
+                    ));
+                }
+                
+                (start..stop).collect()
+            } else {
+                return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                    "indexes must be a list of integers or a slice"
+                ));
+            }
+        } else {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "indexes parameter is required for replace operation"
+            ));
+        };
+
+        // 处理每个要替换的数组
+        for (key, value) in arrays.iter() {
+            let name = key.extract::<String>()?;
+            
+            // 检查数组是否存在
+            if !self.io.has_array(&name) {
+                return Err(PyErr::new::<PyKeyError, _>(format!("Array {} not found", name)));
+            }
+            
+            let meta = self.io.get_array_meta(&name).unwrap();
+            let new_shape: Vec<usize> = value.getattr("shape")?.extract()?;
+            
+            // 检查维度是否匹配
+            if new_shape.len() != meta.shape.len() {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    format!("Dimension mismatch for array {}: expected {}, got {}", 
+                        name, meta.shape.len(), new_shape.len())
+                ));
+            }
+            
+            // 检查除第一维外的其他维度是否匹配
+            for (i, (&m, &s)) in meta.shape.iter().zip(new_shape.iter()).enumerate().skip(1) {
+                if m as usize != s {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        format!("Shape mismatch for array {} at dimension {}: expected {}, got {}", 
+                            name, i, m, s)
+                    ));
+                }
+            }
+            
+            // 检查索引是否在范围内
+            for &idx in &indices {
+                let normalized_idx = if idx < 0 { meta.shape[0] as i64 + idx } else { idx };
+                if normalized_idx < 0 || normalized_idx >= meta.shape[0] as i64 {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        format!("Index {} is out of bounds for array {} with shape {:?}", 
+                            idx, name, meta.shape)
+                    ));
+                }
+            }
+            
+            // 执行替换操作
+            match meta.dtype {
+                DataType::Bool => {
+                    let array = value.extract::<&PyArrayDyn<bool>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
+                }
+                DataType::Uint8 => {
+                    let array = value.extract::<&PyArrayDyn<u8>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
+                }
+                DataType::Uint16 => {
+                    let array = value.extract::<&PyArrayDyn<u16>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
+                }
+                DataType::Uint32 => {
+                    let array = value.extract::<&PyArrayDyn<u32>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
+                }
+                DataType::Uint64 => {
+                    let array = value.extract::<&PyArrayDyn<u64>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
+                }
+                DataType::Int8 => {
+                    let array = value.extract::<&PyArrayDyn<i8>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
+                }
+                DataType::Int16 => {
+                    let array = value.extract::<&PyArrayDyn<i16>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
+                }
+                DataType::Int32 => {
+                    let array = value.extract::<&PyArrayDyn<i32>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
+                }
+                DataType::Int64 => {
+                    let array = value.extract::<&PyArrayDyn<i64>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
+                }
+                DataType::Float32 => {
+                    let array = value.extract::<&PyArrayDyn<f32>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
+                }
+                DataType::Float64 => {
+                    let array = value.extract::<&PyArrayDyn<f64>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
+                }
             }
         }
         
-        dict.set_item("arrays", arrays)?;
-        dict.set_item("base_dir", self.base_dir.to_string_lossy().as_ref())?;
-        dict.set_item("total_arrays", self.io.list_arrays().len())?;
+        Ok(())
+    }
+
+    fn getitem(&self, py: Python, array_name: &str, indices: &PyAny) -> PyResult<PyObject> {
+        let meta = self.io.get_array_meta(array_name)
+            .ok_or_else(|| PyErr::new::<PyKeyError, _>(format!("Array {} not found", array_name)))?;
         
-        Ok(dict.into())
+        // 获取要读取的行索引
+        let indices = if let Ok(slice) = indices.downcast::<PySlice>() {
+            let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
+            let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(meta.shape[0] as i64);
+            let step = slice.getattr("step")?.extract::<Option<i64>>()?.unwrap_or(1);
+            
+            if step != 1 {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "Only step=1 is supported for slices"
+                ));
+            }
+            
+            (start..stop).collect::<Vec<i64>>()
+        } else if let Ok(indices) = indices.extract::<Vec<i64>>() {
+            indices
+        } else {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "indices must be a list of integers or a slice"
+            ));
+        };
+
+        // 读取数据
+        let data = self.io.read_rows(array_name, &indices)?;
+        
+        // 计算新的形状
+        let mut new_shape = meta.shape.iter().map(|&x| x as usize).collect::<Vec<_>>();
+        new_shape[0] = indices.len();
+        
+        // 根据数据类型创建 NumPy 数组
+        let array: PyObject = match meta.dtype {
+            DataType::Bool => {
+                let array = unsafe {
+                    let slice: &[u8] = bytemuck::cast_slice(&data);
+                    let bool_vec: Vec<bool> = slice.iter().map(|&x| x != 0).collect();
+                    ArrayD::from_shape_vec_unchecked(new_shape, bool_vec)
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Uint8 => {
+                let array = unsafe {
+                    let slice: &[u8] = bytemuck::cast_slice(&data);
+                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Uint16 => {
+                let array = unsafe {
+                    let slice: &[u16] = bytemuck::cast_slice(&data);
+                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Uint32 => {
+                let array = unsafe {
+                    let slice: &[u32] = bytemuck::cast_slice(&data);
+                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Uint64 => {
+                let array = unsafe {
+                    let slice: &[u64] = bytemuck::cast_slice(&data);
+                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Int8 => {
+                let array = unsafe {
+                    let slice: &[i8] = bytemuck::cast_slice(&data);
+                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Int16 => {
+                let array = unsafe {
+                    let slice: &[i16] = bytemuck::cast_slice(&data);
+                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Int32 => {
+                let array = unsafe {
+                    let slice: &[i32] = bytemuck::cast_slice(&data);
+                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Int64 => {
+                let array = unsafe {
+                    let slice: &[i64] = bytemuck::cast_slice(&data);
+                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Float32 => {
+                let array = unsafe {
+                    let slice: &[f32] = bytemuck::cast_slice(&data);
+                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Float64 => {
+                let array = unsafe {
+                    let slice: &[f64] = bytemuck::cast_slice(&data);
+                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                };
+                array.into_pyarray(py).into()
+            }
+        };
+        
+        Ok(array)
     }
 }
 

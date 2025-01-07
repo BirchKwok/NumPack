@@ -139,22 +139,22 @@ class NumPack:
         else:
             self._npk.drop(array_name, None)
 
-    def getitem(self, indexes: Union[List[int], int, np.ndarray], array_name: str) -> Dict[str, np.ndarray]:
+    def getitem(self, array_name: str, indexes: Union[List[int], int, np.ndarray]) -> np.ndarray:
         """Randomly access the data of specified rows from NumPack file
     
         Parameters:
-            indexes (Union[List[int], int, np.ndarray]): The indexes to access, can be integers, lists, slices or numpy arrays
             array_name (str): The name of the array to access
-    
+            indexes (Union[List[int], int, np.ndarray]): The indexes to access, can be integers, lists, slices or numpy arrays
+
         Returns:
-            A dictionary containing the specified row data
+            The specified row data
         """
         if isinstance(indexes, int):
             indexes = [indexes]
         elif isinstance(indexes, np.ndarray):
             indexes = indexes.tolist()
         
-        return self._npk.getitem(indexes, [array_name])[array_name]
+        return self._npk.getitem(array_name, indexes)
     
     def get_shape(self, array_names: Optional[Union[List[str], str]] = None) -> Dict[str, Tuple[int, int]]:
         """Get the shape of specified arrays in NumPack file

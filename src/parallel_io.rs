@@ -3,8 +3,8 @@ use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
 use memmap2::MmapOptions;
 use rayon::prelude::*;
-use std::sync::Arc;
-use ndarray::{Array2, ArrayView2};
+use std::sync::{Arc, Mutex};
+use ndarray::{ArrayD, ArrayViewD, IxDyn, Array2};
 use numpy::Element;
 use std::collections::HashSet;
 use std::os::unix::fs::FileExt;
@@ -45,7 +45,7 @@ impl ArrayView {
 
     fn get_retained_indices(&self, excluded_indices: Option<&[i64]>) -> Vec<usize> {
         let mut excluded_set = HashSet::new();
-        let original_rows = self.meta.rows as i64;
+        let original_rows = self.meta.shape[0] as i64;
                 
         if let Some(excluded) = excluded_indices {
             for &idx in excluded {
@@ -58,7 +58,7 @@ impl ArrayView {
 
         // If there are no indices to exclude, return all rows
         if excluded_set.is_empty() {
-            return (0..self.meta.rows as usize).collect();
+            return (0..self.meta.shape[0] as usize).collect();
         }
         
         // Create a sorted list of excluded indices
@@ -78,9 +78,10 @@ impl ArrayView {
         retained
     }
 
-    pub fn into_array<T: Element + Copy>(&mut self, excluded_indices: Option<&[i64]>) -> NpkResult<Array2<T>> {
+    pub fn into_array<T: Element + Copy>(&mut self, excluded_indices: Option<&[i64]>) -> NpkResult<ArrayD<T>> {
         let element_size = std::mem::size_of::<T>();
-        let row_size = (self.meta.cols as usize) * element_size;
+        let shape: Vec<usize> = self.meta.shape.iter().map(|&x| x as usize).collect();
+        let row_size = shape[1..].iter().product::<usize>() * element_size;
         
         // Use memory mapping
         let mmap = unsafe { MmapOptions::new().map(&self.file)? };
@@ -89,10 +90,11 @@ impl ArrayView {
             // Calculate rows to retain
             let retained = self.get_retained_indices(Some(excluded));
             let new_rows = retained.len();
-            let cols = self.meta.cols as usize;
+            let mut new_shape = shape.clone();
+            new_shape[0] = new_rows;
             
             // Create new array
-            let mut raw_data = vec![0u8; new_rows * cols * element_size];
+            let mut raw_data = vec![0u8; new_rows * row_size];
             
             // Copy needed rows
             for (new_row, &old_row) in retained.iter().enumerate() {
@@ -109,11 +111,11 @@ impl ArrayView {
             
             // Convert to final array
             let array = unsafe {
-                Array2::from_shape_vec_unchecked(
-                    (new_rows, cols),
+                ArrayD::from_shape_vec_unchecked(
+                    IxDyn(&new_shape),
                     std::slice::from_raw_parts(
                         raw_data.as_ptr() as *const T,
-                        new_rows * cols
+                        new_shape.iter().product()
                     ).to_vec()
                 )
             };
@@ -121,17 +123,17 @@ impl ArrayView {
         } else {
             // If there are no rows to exclude, return the entire array
             let ptr = mmap.as_ptr() as *const T;
-            let shape = (self.meta.rows as usize, self.meta.cols as usize);
             unsafe {
-                Ok(ArrayView2::from_shape_ptr(shape, ptr).to_owned())
+                Ok(ArrayViewD::from_shape_ptr(IxDyn(&shape), ptr).to_owned())
             }
         }
     }
 
     pub fn physical_delete(&mut self, excluded_indices: &[i64]) -> NpkResult<()> {
         let element_size = self.meta.dtype.size_bytes() as usize;
-        let row_size = (self.meta.cols as usize) * element_size;
-        let total_rows = self.meta.rows as usize;
+        let shape: Vec<usize> = self.meta.shape.iter().map(|&x| x as usize).collect();
+        let row_size = shape[1..].iter().product::<usize>() * element_size;
+        let total_rows = shape[0];
     
         // 1. 收集需要排除的行索引（去重 + 排序）
         let mut excluded_vec: Vec<usize> = excluded_indices
@@ -218,8 +220,8 @@ impl ArrayView {
     
         // 8. 重新打开文件，更新元信息
         self.file = File::open(&self.file_path)?;
-        self.meta.rows = new_rows as u64;
-        self.meta.size_bytes = new_size as u64;
+        self.meta.shape[0] = new_rows as u64;
+        self.meta.size_bytes = self.meta.total_elements() * self.meta.dtype.size_bytes() as u64;
     
         Ok(())
     }    
@@ -247,7 +249,7 @@ impl ParallelIO {
 
     const WRITE_CHUNK_SIZE: usize = 8 * 1024 * 1024;  // 8MB write chunk size
 
-    pub fn save_arrays<T: Element + Copy + Send + Sync>(&self, arrays: &[(String, Array2<T>, DataType)]) -> NpkResult<()> {
+    pub fn save_arrays<T: Element + Copy + Send + Sync>(&self, arrays: &[(String, ArrayD<T>, DataType)]) -> NpkResult<()> {
         // Parallel process array writing and collect metadata
         let metadata_updates: Vec<_> = arrays.par_iter()
             .map(|(name, array, dtype)| -> NpkResult<(String, ArrayMetadata)> {
@@ -255,7 +257,7 @@ impl ParallelIO {
                 let data_path = self.base_dir.join(&data_file);
                 
                 // Calculate total size
-                let total_size = array.shape()[0] * array.shape()[1] * std::mem::size_of::<T>();
+                let total_size = array.shape().iter().product::<usize>() * std::mem::size_of::<T>();
                 
                 // Create and preallocate file
                 let file = OpenOptions::new()
@@ -290,8 +292,7 @@ impl ParallelIO {
                 // Create metadata
                 let meta = ArrayMetadata::new(
                     name.clone(),
-                    array.shape()[0] as u64,
-                    array.shape()[1] as u64,
+                    array.shape().iter().map(|&x| x as u64).collect(),
                     data_file,
                     *dtype,
                 );
@@ -469,10 +470,61 @@ impl ParallelIO {
         groups
     }
 
+    fn process_batch<T: Element + Copy + Send + Sync>(
+        mmap: &mut memmap2::MmapMut,
+        data: &ArrayD<T>,
+        batch: &[(usize, u64)],
+        row_size: usize
+    ) -> NpkResult<()> {
+        if batch.is_empty() {
+            return Ok(());
+        }
+        
+        // 如果是连续的索引，使用一次性写入
+        if batch.len() > 1 && 
+           batch.last().unwrap().1 - batch.first().unwrap().1 + 1 == batch.len() as u64 {
+            let start_offset = (batch[0].1 as usize) * row_size;
+            let end_offset = start_offset + batch.len() * row_size;
+            
+            // 创建连续的数据缓冲区
+            let mut buffer = Vec::with_capacity(batch.len() * row_size);
+            for &(src_idx, _) in batch {
+                let src_offset = (src_idx % data.shape()[0]) * row_size;
+                let src_slice = unsafe {
+                    std::slice::from_raw_parts(
+                        (data.as_ptr() as *const u8).add(src_offset),
+                        row_size
+                    )
+                };
+                buffer.extend_from_slice(src_slice);
+            }
+            
+            // 一次性写入
+            mmap[start_offset..end_offset].copy_from_slice(&buffer);
+        } else {
+            // 对于不连续的索引，单独写入
+            for &(src_idx, dst_idx) in batch {
+                let src_offset = (src_idx % data.shape()[0]) * row_size;
+                let dst_offset = (dst_idx as usize) * row_size;
+                
+                let src_slice = unsafe {
+                    std::slice::from_raw_parts(
+                        (data.as_ptr() as *const u8).add(src_offset),
+                        row_size
+                    )
+                };
+                
+                mmap[dst_offset..dst_offset + row_size].copy_from_slice(src_slice);
+            }
+        }
+        
+        Ok(())
+    }
+
     pub fn replace_rows<T: Element + Copy + Send + Sync>(
         &self,
         name: &str,
-        data: &Array2<T>,
+        data: &ArrayD<T>,
         indices: &[i64]
     ) -> NpkResult<()> {
         let meta = self.get_array_meta(name).ok_or_else(|| {
@@ -480,7 +532,12 @@ impl ParallelIO {
         })?;
         
         let element_size = std::mem::size_of::<T>();
-        let row_size = meta.cols as usize * element_size;
+        // 计算每行的大小，对于一维数组，每行就是一个元素
+        let row_size = if meta.shape.len() == 1 {
+            element_size
+        } else {
+            meta.shape[1..].iter().product::<u64>() as usize * element_size
+        };
         
         // Open file for writing
         let file_path = self.base_dir.join(&meta.data_file);
@@ -492,12 +549,12 @@ impl ParallelIO {
         // Check if indices are continuous
         if let Some((start, len)) = Self::is_continuous_indices(indices) {
             let normalized_start = if start < 0 {
-                (meta.rows as i64 + start) as u64
+                (meta.shape[0] as i64 + start) as u64
             } else {
                 start as u64
             };
             
-            if normalized_start + len as u64 > meta.rows {
+            if normalized_start + len as u64 > meta.shape[0] {
                 return Err(NpkError::IoError(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     format!("Index range {}:{} is out of bounds", start, start + len as i64)
@@ -515,7 +572,7 @@ impl ParallelIO {
             file.write_at(data_slice, offset)?;
         } else {
             // For non-continuous indices, group them by blocks and process in parallel
-            let groups = Self::group_indices(indices, row_size, meta.rows);
+            let groups = Self::group_indices(indices, row_size, meta.shape[0]);
             
             // Process each group in parallel
             groups.par_iter().try_for_each(|group| -> NpkResult<()> {
@@ -525,13 +582,13 @@ impl ParallelIO {
                 
                 // Calculate block range
                 let first_idx = if group[0].1 < 0 {
-                    meta.rows as i64 + group[0].1
+                    meta.shape[0] as i64 + group[0].1
                 } else {
                     group[0].1
                 } as u64;
                 
                 let last_idx = if group[group.len() - 1].1 < 0 {
-                    meta.rows as i64 + group[group.len() - 1].1
+                    meta.shape[0] as i64 + group[group.len() - 1].1
                 } else {
                     group[group.len() - 1].1
                 } as u64;
@@ -544,12 +601,12 @@ impl ParallelIO {
                 // Update rows in the block
                 for &(data_idx, file_idx) in group {
                     let normalized_idx = if file_idx < 0 {
-                        (meta.rows as i64 + file_idx) as u64
+                        (meta.shape[0] as i64 + file_idx) as u64
                     } else {
                         file_idx as u64
                     };
                     
-                    if normalized_idx >= meta.rows {
+                    if normalized_idx >= meta.shape[0] {
                         return Err(NpkError::IoError(io::Error::new(
                             io::ErrorKind::InvalidInput,
                             format!("Index {} is out of bounds", file_idx)
@@ -558,7 +615,7 @@ impl ParallelIO {
                     
                     let offset = (normalized_idx - first_idx) as usize * row_size;
                     unsafe {
-                        let src_ptr = data.row(data_idx).as_ptr() as *const u8;
+                        let src_ptr = data.as_ptr().add(data_idx * row_size) as *const u8;
                         let dst_ptr = block_buffer.as_mut_ptr().add(offset);
                         std::ptr::copy_nonoverlapping(src_ptr, dst_ptr, row_size);
                     }
@@ -578,15 +635,13 @@ impl ParallelIO {
         let meta = self.get_array_metadata(name)?;
         let data_path = self.base_dir.join(format!("data_{}.npkd", name));
         
-        let row_size = usize::try_from(meta.cols)
-            .map_err(|e| NpkError::Other(e.to_string()))? * 
-            usize::try_from(meta.dtype.size_bytes())
-            .map_err(|e| NpkError::Other(e.to_string()))?;
+        let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
+        let row_size = shape[1..].iter().product::<usize>() * meta.dtype.size_bytes() as usize;
         
         // Validate all indices
         for &idx in indexes {
-            if idx < 0 || idx >= meta.rows as i64 {
-                return Err(NpkError::IndexOutOfBounds(idx, meta.rows));
+            if idx < 0 || idx >= meta.shape[0] as i64 {
+                return Err(NpkError::IndexOutOfBounds(idx, meta.shape[0]));
             }
         }
 
@@ -605,5 +660,3 @@ impl ParallelIO {
         Ok(data)
     }
 }
-
-
