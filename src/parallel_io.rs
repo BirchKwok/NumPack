@@ -70,10 +70,10 @@ fn read_exact_at_offset(file: &File, buf: &mut [u8], offset: u64) -> io::Result<
     Ok(())
 }
 
-const BUFFER_SIZE: usize = 8 * 1024 * 1024; // 8MB 缓冲区
-const MAX_BUFFERS: usize = 4; // 最大缓冲区数量
+const BUFFER_SIZE: usize = 8 * 1024 * 1024; // 8MB buffer size
+const MAX_BUFFERS: usize = 4; // Maximum number of buffers
 
-// 添加缓冲区池结构
+// Add buffer pool structure
 pub struct BufferPool {
     buffers: Mutex<VecDeque<Vec<u8>>>,
     buffer_size: usize,
@@ -116,11 +116,11 @@ pub struct ArrayView {
 
 fn normalize_index(idx: i64, total_rows: usize) -> Option<usize> {
     let normalized = if idx < 0 {
-        total_rows as i64 + idx // 若 idx = -1，则表示最后一行
+        total_rows as i64 + idx // If idx = -1, it represents the last row
     } else {
         idx
     };
-    // 排除越界索引
+    // Exclude out-of-bounds indices
     if normalized >= 0 && normalized < total_rows as i64 {
         Some(normalized as usize)
     } else {
@@ -184,10 +184,10 @@ impl ArrayView {
             let mut new_shape = shape.clone();
             new_shape[0] = new_rows;
             
-            // 使用内存映射读取源数据
+            // Use memory mapping to read source data
             let mmap = unsafe { MmapOptions::new().map(&self.file)? };
             
-            // 创建结果数组
+            // Create result array
             let mut result = unsafe { ArrayD::<T>::uninit(IxDyn(&new_shape)).assume_init() };
             let result_slice = unsafe { 
                 std::slice::from_raw_parts_mut(
@@ -196,7 +196,7 @@ impl ArrayView {
                 )
             };
             
-            // 使用缓冲区池进行分块复制
+            // Use buffer pool for chunked copying
             let buffer = BUFFER_POOL.get_buffer();
             let chunk_size = buffer.len() / row_size * row_size;
             
@@ -204,7 +204,7 @@ impl ArrayView {
                 let chunk_end = std::cmp::min(chunk_start + chunk_size / row_size, new_rows);
                 let chunk_size = (chunk_end - chunk_start) * row_size;
                 
-                // 复制数据到缓冲区
+                // Copy data to buffer
                 for (i, &old_row) in retained[chunk_start..chunk_end].iter().enumerate() {
                     let src_offset = old_row * row_size;
                     let dst_offset = i * row_size;
@@ -220,12 +220,12 @@ impl ArrayView {
                 }
             }
             
-            // 返回缓冲区到池中
+            // Return buffer to pool
             BUFFER_POOL.return_buffer(buffer);
             
             Ok(result)
         } else {
-            // 如果没有要排除的行，直接使用内存映射
+            // If there are no rows to exclude, use memory mapping directly
             let mmap = unsafe { MmapOptions::new().map(&self.file)? };
             unsafe {
                 Ok(ArrayViewD::from_shape_ptr(IxDyn(&shape), mmap.as_ptr() as *const T).to_owned())
@@ -239,7 +239,7 @@ impl ArrayView {
         let row_size = shape[1..].iter().product::<usize>() * element_size;
         let total_rows = shape[0];
 
-        // 1. 收集需要排除的行索引（去重 + 排序）
+        // 1. Collect rows to exclude (deduplicate + sort)
         let mut excluded_vec: Vec<usize> = excluded_indices
             .iter()
             .filter_map(|&idx| normalize_index(idx, total_rows))
@@ -247,16 +247,16 @@ impl ArrayView {
         excluded_vec.sort_unstable();
         excluded_vec.dedup();
 
-        // 如果没有任何行需要排除，直接返回
+        // If there are no rows to exclude, return immediately
         if excluded_vec.is_empty() {
             return Ok(());
         }
 
-        // 2. 计算删除后文件大小
+        // 2. Calculate new file size after deletion
         let new_rows = total_rows - excluded_vec.len();
         let new_size = new_rows * row_size;
 
-        // 3. 创建临时文件
+        // 3. Create temporary file
         let temp_path = self.file_path.with_extension("tmp");
         let temp_file = OpenOptions::new()
             .read(true)
@@ -264,10 +264,10 @@ impl ArrayView {
             .create(true)
             .open(&temp_path)?;
 
-        // 预先分配目标文件大小
+        // Preallocate target file size
         temp_file.set_len(new_size as u64)?;
 
-        const CHUNK_ROWS: usize = 1024 * 1024; // 每次处理100万行
+        const CHUNK_ROWS: usize = 1024 * 1024; // Process 1 million rows at a time
         let chunks_count = (total_rows + CHUNK_ROWS - 1) / CHUNK_ROWS;
         
         let source_file = Arc::new(File::open(&self.file_path)?);
@@ -308,13 +308,13 @@ impl ArrayView {
             Ok(())
         });
 
-        // 检查并处理错误
+        // Check and handle errors
         result?;
 
-        // 5. 替换原文件
+        // 5. Replace original file
         std::fs::rename(&temp_path, &self.file_path)?;
         
-        // 6. 更新元数据
+        // 6. Update metadata
         self.meta.shape[0] = new_rows as u64;
         self.meta.size_bytes = new_size as u64;
         self.meta.last_modified = std::time::SystemTime::now()

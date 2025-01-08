@@ -148,7 +148,7 @@ The following benchmarks were performed on an MacBook Pro (M1, 2020, 32GB Memory
 3. **Loading Performance**:
    - Full load: NumPack is **1.75x faster** than NPZ and comparable to NPY
    - Memory-mapped load: NumPack is **2.17x faster** than NPZ but slower than NPY
-   - Selective load: NumPack is **2.00x faster** than NPZ (NPY不支持)
+   - Selective load: NumPack is **2.00x faster** than NPZ
 
 4. **Random Access**:
    - NumPack is **1.88x faster** than NPZ and **1.13x faster** than NPY for random index access

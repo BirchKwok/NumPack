@@ -4,7 +4,6 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from numpack import NumPack
 
-# 添加所有支持的数据类型参数化装饰器
 ALL_DTYPES = [
     (np.bool_, [[True, False], [False, True]]),
     (np.uint8, [[0, 255], [128, 64]]),

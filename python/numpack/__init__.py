@@ -4,58 +4,60 @@ from typing import Any, Dict, Iterator, List, Tuple, Union, Optional
 import numpy as np
 from collections import OrderedDict
 import threading
-import resource
+import platform
 
 from numpack._lib_numpack import NumPack as _NumPack
 
 # package message
 __version__ = "0.1.0"
 
-# 获取系统最大文件描述符限制
-soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+if platform.system() == 'Windows':
+    DEFAULT_MAX_FILES = 512
+    soft_limit = DEFAULT_MAX_FILES
+    hard_limit = DEFAULT_MAX_FILES
+else:
+    import resource
+    soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
 
 class MmapCache:
-    """LRU缓存，用于管理内存映射对象"""
+    """LRU cache for memory mapping objects"""
     def __init__(self, max_size: int = max(soft_limit // 2, 100)):
-        """初始化LRU缓存
+        """Initialize LRU cache
         
         Parameters:
-            max_size (int): 最大缓存数量，默认为系统文件描述符限制的一半或100，取较大值
+            max_size (int): Maximum cache size, default to half of the system file descriptor limit or 100, whichever is larger
         """
         self.max_size = max_size
         self._cache = OrderedDict()
         self._lock = threading.Lock()
 
     def get(self, key: str) -> Optional[np.memmap]:
-        """获取缓存的内存映射对象
+        """Get the memory mapping object from the cache
         
         Parameters:
-            key (str): 缓存键值
+            key (str): Cache key
             
         Returns:
-            Optional[np.memmap]: 内存映射对象，如果不存在则返回None
+            Optional[np.memmap]: Memory mapping object, return None if not found
         """
         with self._lock:
             if key in self._cache:
-                # 移动到最新使用
                 value = self._cache.pop(key)
                 self._cache[key] = value
                 return value
             return None
 
     def put(self, key: str, value: np.memmap) -> None:
-        """添加内存映射对象到缓存
+        """Add memory mapping object to cache
         
         Parameters:
-            key (str): 缓存键值
-            value (np.memmap): 内存映射对象
+            key (str): Cache key
+            value (np.memmap): Memory mapping object
         """
         with self._lock:
             if key in self._cache:
-                # 更新现有项
                 self._cache.pop(key)
             elif len(self._cache) >= self.max_size:
-                # 移除最老的项
                 oldest_key, oldest_value = self._cache.popitem(last=False)
                 try:
                     if hasattr(oldest_value, '_mmap'):
@@ -65,10 +67,10 @@ class MmapCache:
             self._cache[key] = value
 
     def remove(self, key: str) -> None:
-        """从缓存中移除内存映射对象
+        """Remove memory mapping object from cache
         
         Parameters:
-            key (str): 要移除的缓存键值
+            key (str): Cache key to remove
         """
         with self._lock:
             if key in self._cache:
@@ -80,7 +82,7 @@ class MmapCache:
                     pass
 
     def clear(self) -> None:
-        """清空缓存"""
+        """Clear cache"""
         with self._lock:
             for value in self._cache.values():
                 try:
@@ -91,10 +93,9 @@ class MmapCache:
             self._cache.clear()
 
     def __del__(self):
-        """析构函数，确保所有内存映射对象被正确关闭"""
+        """Destructor, ensure all memory mapping objects are closed correctly"""
         self.clear()
 
-# 创建全局缓存实例
 _mmap_cache = MmapCache()
 
 _dtype_map = {
@@ -135,19 +136,19 @@ class _LazyArrayDict:
             raise KeyError(f"Key {key} not found in NumPack")
         
         if self.mmap_mode:
-            # 首先尝试从缓存获取
+            # First try to get from cache
             cache_key = f"{self.npk.get_array_path(key)}_{key}"
             mmap_array = _mmap_cache.get(cache_key)
             
             if mmap_array is None:
-                # 如果缓存中不存在，创建新的内存映射
+                # If not in cache, create a new memory mapping
                 mmap_array = np.memmap(
                     self.npk.get_array_path(key),
                     mode='r',
                     shape=self.npk.get_shape(key),
                     dtype=_dtype_map[self.npk.get_metadata()["arrays"][key]["dtype"]]
                 )
-                # 添加到缓存
+                # Add to cache
                 _mmap_cache.put(cache_key, mmap_array)
             
             return mmap_array
@@ -242,11 +243,9 @@ class NumPack:
             array_name (Union[str, List[str]]): The name or names of the arrays to drop
             indexes (Optional[Union[List[int], int, np.ndarray]]): The indexes to drop, if None, drop all rows
         """
-        # 将单个字符串转换为列表
         if isinstance(array_name, str):
             array_name = [array_name]
             
-        # 如果使用了内存映射，需要从缓存中移除
         if indexes is None:
             for name in array_name:
                 cache_key = f"{self._npk.get_array_path(name)}_{name}"
@@ -305,7 +304,6 @@ class NumPack:
     
     def reset(self) -> None:
         """Clear all arrays in NumPack file"""
-        # 清理所有内存映射缓存
         _mmap_cache.clear()
         self._npk.reset()
 

@@ -210,7 +210,7 @@ impl DataType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArrayMetadata {
     pub name: String,
-    pub shape: Vec<u64>,         // 数组的形状，例如 [100, 200] 表示 100x200 的二维数组
+    pub shape: Vec<u64>,         // Data shape
     pub data_file: String,     // Data file name
     pub last_modified: u64,    // Last modified time
     pub size_bytes: u64,       // Data size
@@ -279,17 +279,17 @@ impl MetadataStore {
                 .read(true)
                 .open(path)?;
             
-            // 检查文件大小
+            // Check file size
             let metadata = file.metadata()?;
             if metadata.len() == 0 {
-                // 如果是空文件，返回新的存储实例
+                // If it's an empty file, return a new store instance
                 Self::new(None)
             } else {
                 let reader = BufReader::new(file);
                 match bincode::deserialize_from(reader) {
                     Ok(store) => store,
                     Err(_) => {
-                        // 如果反序列化失败，返回新的存储实例
+                        // If deserialization fails, return a new store instance
                         Self::new(None)
                     }
                 }
@@ -298,7 +298,7 @@ impl MetadataStore {
             Self::new(None)
         };
 
-        // 重建位图和索引映射
+        // Rebuild bitmap and index mapping
         store.bitmap = BitVec::new();
         store.name_to_index = HashMap::new();
         store.next_index = 0;
@@ -309,7 +309,7 @@ impl MetadataStore {
             store.next_index += 1;
         }
 
-        // 如果有 WAL，重放 WAL
+        // If there is WAL, replay WAL
         if let Some(wal_path) = wal_path {
             if wal_path.exists() {
                 if let Err(e) = store.replay_wal(&wal_path) {

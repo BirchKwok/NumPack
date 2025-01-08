@@ -343,7 +343,7 @@ impl NumPack {
                             name, meta.shape.len(), shape.len())
                     ));
                 }
-                // 检查除第一维外的其他维度是否匹配
+
                 for (i, (&m, &s)) in meta.shape.iter().zip(shape.iter()).enumerate().skip(1) {
                     if m as usize != s {
                         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -512,7 +512,7 @@ impl NumPack {
     }
 
     fn replace(&self, arrays: &PyDict, indexes: Option<&PyAny>) -> PyResult<()> {
-        // 获取要替换的行索引
+        // Get the indices of the rows to replace
         let indices = if let Some(idx) = indexes {
             if let Ok(indices) = idx.extract::<Vec<i64>>() {
                 indices
@@ -539,11 +539,11 @@ impl NumPack {
             ));
         };
 
-        // 处理每个要替换的数组
+        // Process each array to replace
         for (key, value) in arrays.iter() {
             let name = key.extract::<String>()?;
             
-            // 检查数组是否存在
+            // Check if the array exists
             if !self.io.has_array(&name) {
                 return Err(PyErr::new::<PyKeyError, _>(format!("Array {} not found", name)));
             }
@@ -551,7 +551,7 @@ impl NumPack {
             let meta = self.io.get_array_meta(&name).unwrap();
             let new_shape: Vec<usize> = value.getattr("shape")?.extract()?;
             
-            // 检查维度是否匹配
+            // Check if the dimensions match
             if new_shape.len() != meta.shape.len() {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                     format!("Dimension mismatch for array {}: expected {}, got {}", 
@@ -559,7 +559,7 @@ impl NumPack {
                 ));
             }
             
-            // 检查除第一维外的其他维度是否匹配
+            // Check if the other dimensions match
             for (i, (&m, &s)) in meta.shape.iter().zip(new_shape.iter()).enumerate().skip(1) {
                 if m as usize != s {
                     return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -569,7 +569,7 @@ impl NumPack {
                 }
             }
             
-            // 检查索引是否在范围内
+            // Check if the indices are within bounds
             for &idx in &indices {
                 let normalized_idx = if idx < 0 { meta.shape[0] as i64 + idx } else { idx };
                 if normalized_idx < 0 || normalized_idx >= meta.shape[0] as i64 {
@@ -580,7 +580,7 @@ impl NumPack {
                 }
             }
             
-            // 执行替换操作
+            // Perform the replace operation
             match meta.dtype {
                 DataType::Bool => {
                     let array = value.extract::<&PyArrayDyn<bool>>()?;
@@ -647,7 +647,7 @@ impl NumPack {
         let meta = self.io.get_array_meta(array_name)
             .ok_or_else(|| PyErr::new::<PyKeyError, _>(format!("Array {} not found", array_name)))?;
         
-        // 获取要读取的行索引
+        // Get the indices of the rows to read
         let indices = if let Ok(slice) = indices.downcast::<PySlice>() {
             let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
             let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(meta.shape[0] as i64);
@@ -668,14 +668,14 @@ impl NumPack {
             ));
         };
 
-        // 读取数据
+        // Read data
         let data = self.io.read_rows(array_name, &indices)?;
         
-        // 计算新的形状
+        // Calculate the new shape
         let mut new_shape = meta.shape.iter().map(|&x| x as usize).collect::<Vec<_>>();
         new_shape[0] = indices.len();
         
-        // 根据数据类型创建 NumPy 数组
+        // Create a NumPy array based on the data type
         let array: PyObject = match meta.dtype {
             DataType::Bool => {
                 let array = unsafe {
