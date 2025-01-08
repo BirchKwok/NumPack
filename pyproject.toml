@@ -4,16 +4,32 @@ build-backend = "maturin"
 
 [project]
 name = "numpack"
+version = "0.1.0"
+description = "A high-performance array storage and manipulation library"
+authors = [{ name = "NumPack Contributors" }]
 requires-python = ">=3.10"
+readme = "README.md"
+license = { file = "LICENSE" }
+keywords = ["numpy", "array", "storage", "performance"]
 classifiers = [
-    "Programming Language :: Rust",
-    "Programming Language :: Python :: Implementation :: CPython",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+dependencies = [
+    "numpy>=1.26.0",
+    "pandas>=2.1.0",
+    "pyarrow>=17.0.0",
 ]
 
 [tool.maturin]
-python-source = "python"
-module-name = "numpack._lib_numpack"
 features = ["pyo3/extension-module"]
+module-name = "numpack._lib_numpack"
+python-source = "python"
