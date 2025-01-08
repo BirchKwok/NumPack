@@ -5,7 +5,6 @@ import numpy as np
 from collections import OrderedDict
 import threading
 import resource
-import os
 
 from numpack._lib_numpack import NumPack as _NumPack
 
