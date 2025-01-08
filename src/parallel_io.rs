@@ -18,26 +18,46 @@ use std::os::unix::fs::FileExt;
 use std::os::windows::fs::FileExt;
 
 // Helper functions for file IO
+#[cfg(unix)]
 fn read_at_offset(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
-    #[cfg(unix)]
-    {
-        file.read_at(buf, offset)
-    }
-    #[cfg(windows)]
-    {
-        file.seek_read(buf, offset)
-    }
+    file.read_at(buf, offset)
 }
 
+#[cfg(windows)]
+fn read_at_offset(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+    file.seek_read(buf, offset)
+}
+
+#[cfg(unix)]
 fn write_at_offset(file: &File, buf: &[u8], offset: u64) -> io::Result<usize> {
-    #[cfg(unix)]
-    {
-        file.write_at(buf, offset)
+    file.write_at(buf, offset)
+}
+
+#[cfg(windows)]
+fn write_at_offset(file: &File, buf: &[u8], offset: u64) -> io::Result<usize> {
+    file.seek_write(buf, offset)
+}
+
+// Helper function to ensure all data is written
+fn write_all_at_offset(file: &File, buf: &[u8], offset: u64) -> io::Result<()> {
+    let mut written = 0;
+    while written < buf.len() {
+        written += write_at_offset(file, &buf[written..], offset + written as u64)?;
     }
-    #[cfg(windows)]
-    {
-        file.seek_write(buf, offset)
+    Ok(())
+}
+
+// Helper function to ensure all data is read
+fn read_exact_at_offset(file: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
+    let mut read = 0;
+    while read < buf.len() {
+        match read_at_offset(file, &mut buf[read..], offset + read as u64) {
+            Ok(0) => return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "failed to fill whole buffer")),
+            Ok(n) => read += n,
+            Err(e) => return Err(e),
+        }
     }
+    Ok(())
 }
 
 const BUFFER_SIZE: usize = 8 * 1024 * 1024; // 8MB 缓冲区
@@ -255,7 +275,7 @@ impl ArrayView {
             
             let read_offset = (start_row * row_size) as u64;
             let source_file = &*source_file;
-            read_at_offset(source_file, &mut read_buffer[..read_size], read_offset)?;
+            read_exact_at_offset(source_file, &mut read_buffer[..read_size], read_offset)?;
             
             for row in start_row..end_row {
                 if !excluded_vec.binary_search(&row).is_ok() {
@@ -273,7 +293,7 @@ impl ArrayView {
             
             let write_offset = (write_row * row_size) as u64;
             let temp_file = &*temp_file;
-            write_at_offset(temp_file, &write_buffer, write_offset)?;
+            write_all_at_offset(temp_file, &write_buffer, write_offset)?;
             
             Ok(())
         });
@@ -583,7 +603,7 @@ impl ParallelIO {
                     len * row_size
                 )
             };
-            write_at_offset(&file, data_slice, offset)?;
+            write_all_at_offset(&file, data_slice, offset)?;
         } else {
             let groups = Self::group_indices(indices, row_size, meta.shape[0]);
             
@@ -606,7 +626,7 @@ impl ParallelIO {
                 
                 let block_size = (last_idx - first_idx + 1) as usize * row_size;
                 let mut block_buffer = vec![0u8; block_size];
-                read_at_offset(&file, &mut block_buffer, first_idx * row_size as u64)?;
+                read_exact_at_offset(&file, &mut block_buffer, first_idx * row_size as u64)?;
                 
                 for &(data_idx, file_idx) in group {
                     let normalized_idx = if file_idx < 0 {
@@ -630,7 +650,7 @@ impl ParallelIO {
                     }
                 }
                 
-                write_at_offset(&file, &block_buffer, first_idx * row_size as u64)?;
+                write_all_at_offset(&file, &block_buffer, first_idx * row_size as u64)?;
                 
                 Ok(())
             })?;
