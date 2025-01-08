@@ -19,6 +19,77 @@ else:
     import resource
     soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
 
+class FileHandlePool:
+    """Pool for managing file handles with LRU cache strategy"""
+    def __init__(self, max_open_files: int = max(soft_limit // 2, 100)):
+        self.max_open_files = max_open_files
+        self.open_files = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get_file_handle(self, file_path: str, shape: tuple, dtype: np.dtype) -> np.memmap:
+        """Get a file handle from the pool or create a new one
+        
+        Parameters:
+            file_path (str): Path to the file
+            shape (tuple): Shape of the array
+            dtype (np.dtype): Data type of the array
+            
+        Returns:
+            np.memmap: Memory mapped array
+        """
+        with self._lock:
+            if file_path in self.open_files:
+                # Move to end (most recently used)
+                self.open_files.move_to_end(file_path)
+                return self.open_files[file_path]
+
+            # Close oldest file if we've reached the limit
+            if len(self.open_files) >= self.max_open_files:
+                _, oldest_handle = self.open_files.popitem(last=False)
+                try:
+                    if hasattr(oldest_handle, '_mmap'):
+                        oldest_handle._mmap.close()
+                    del oldest_handle
+                except Exception:
+                    pass
+
+            # Create new memory mapping
+            file_handle = np.memmap(file_path, mode='r', dtype=dtype, shape=shape)
+            self.open_files[file_path] = file_handle
+            return file_handle
+
+    def remove_handle(self, file_path: str) -> None:
+        """Remove a file handle from the pool
+        
+        Parameters:
+            file_path (str): Path to the file
+        """
+        with self._lock:
+            if file_path in self.open_files:
+                handle = self.open_files.pop(file_path)
+                try:
+                    if hasattr(handle, '_mmap'):
+                        handle._mmap.close()
+                    del handle
+                except Exception:
+                    pass
+
+    def close_all(self) -> None:
+        """Close all open file handles"""
+        with self._lock:
+            for handle in self.open_files.values():
+                try:
+                    if hasattr(handle, '_mmap'):
+                        handle._mmap.close()
+                    del handle
+                except Exception:
+                    pass
+            self.open_files.clear()
+
+    def __del__(self):
+        """Ensure all handles are closed on deletion"""
+        self.close_all()
+
 class MmapCache:
     """LRU cache for memory mapping objects"""
     def __init__(self, max_size: int = max(soft_limit // 2, 100)):
@@ -27,44 +98,21 @@ class MmapCache:
         Parameters:
             max_size (int): Maximum cache size, default to half of the system file descriptor limit or 100, whichever is larger
         """
-        self.max_size = max_size
-        self._cache = OrderedDict()
+        self.file_pool = FileHandlePool(max_size)
         self._lock = threading.Lock()
 
-    def get(self, key: str) -> Optional[np.memmap]:
+    def get(self, key: str, shape: tuple, dtype: np.dtype) -> Optional[np.memmap]:
         """Get the memory mapping object from the cache
         
         Parameters:
             key (str): Cache key
+            shape (tuple): Shape of the array
+            dtype (np.dtype): Data type of the array
             
         Returns:
-            Optional[np.memmap]: Memory mapping object, return None if not found
+            Optional[np.memmap]: Memory mapping object
         """
-        with self._lock:
-            if key in self._cache:
-                value = self._cache.pop(key)
-                self._cache[key] = value
-                return value
-            return None
-
-    def put(self, key: str, value: np.memmap) -> None:
-        """Add memory mapping object to cache
-        
-        Parameters:
-            key (str): Cache key
-            value (np.memmap): Memory mapping object
-        """
-        with self._lock:
-            if key in self._cache:
-                self._cache.pop(key)
-            elif len(self._cache) >= self.max_size:
-                oldest_key, oldest_value = self._cache.popitem(last=False)
-                try:
-                    if hasattr(oldest_value, '_mmap'):
-                        oldest_value._mmap.close()
-                except Exception:
-                    pass
-            self._cache[key] = value
+        return self.file_pool.get_file_handle(key, shape, dtype)
 
     def remove(self, key: str) -> None:
         """Remove memory mapping object from cache
@@ -72,25 +120,11 @@ class MmapCache:
         Parameters:
             key (str): Cache key to remove
         """
-        with self._lock:
-            if key in self._cache:
-                value = self._cache.pop(key)
-                try:
-                    if hasattr(value, '_mmap'):
-                        value._mmap.close()
-                except Exception:
-                    pass
+        self.file_pool.remove_handle(key)
 
     def clear(self) -> None:
         """Clear cache"""
-        with self._lock:
-            for value in self._cache.values():
-                try:
-                    if hasattr(value, '_mmap'):
-                        value._mmap.close()
-                except Exception:
-                    pass
-            self._cache.clear()
+        self.file_pool.close_all()
 
     def __del__(self):
         """Destructor, ensure all memory mapping objects are closed correctly"""
@@ -114,17 +148,17 @@ _dtype_map = {
 }
 
 class _LazyArrayDict:
-    def __init__(self, npk: _NumPack, mmap_mode: bool, chunk_size: int = 1024*1024):
+    def __init__(self, npk: _NumPack, mmap_mode: bool, mmap_cache: MmapCache):
         """Initialize LazyArrayDict object
     
         Parameters:
             npk (_NumPack): The NumPack object
             mmap_mode (bool): Whether to use memory mapping mode
-            chunk_size (int): Size of chunks for reading large arrays (in bytes)
+            mmap_cache (MmapCache): Cache for memory mapped files
         """
         self.npk = npk
         self.mmap_mode = mmap_mode
-        self.chunk_size = chunk_size
+        self.mmap_cache = mmap_cache
 
     def keys(self) -> List[str]:
         """Get the list of array names in NumPack file"""
@@ -136,22 +170,14 @@ class _LazyArrayDict:
             raise KeyError(f"Key {key} not found in NumPack")
         
         if self.mmap_mode:
-            # First try to get from cache
-            cache_key = f"{self.npk.get_array_path(key)}_{key}"
-            mmap_array = _mmap_cache.get(cache_key)
+            # Get array metadata
+            meta = self.npk.get_metadata()["arrays"][key]
+            shape = tuple(meta["shape"])
+            dtype = _dtype_map[meta["dtype"]]
             
-            if mmap_array is None:
-                # If not in cache, create a new memory mapping
-                mmap_array = np.memmap(
-                    self.npk.get_array_path(key),
-                    mode='r',
-                    shape=self.npk.get_shape(key),
-                    dtype=_dtype_map[self.npk.get_metadata()["arrays"][key]["dtype"]]
-                )
-                # Add to cache
-                _mmap_cache.put(cache_key, mmap_array)
-            
-            return mmap_array
+            # Get from cache or create new mapping
+            array_path = self.npk.get_array_path(key)
+            return self.mmap_cache.get(array_path, shape, dtype)
         
         return self.npk.load([key])[key]
     
@@ -181,6 +207,7 @@ class NumPack:
         Path(filename).mkdir(parents=True, exist_ok=True)
         
         self._npk = _NumPack(filename)
+        self._mmap_cache = MmapCache()
 
     def save(self, arrays: Dict[str, np.ndarray], array_names: Optional[Union[List[str], str]] = None) -> None:
         """Save arrays to NumPack file
@@ -203,7 +230,7 @@ class NumPack:
         Returns:
             A LazyArrayDict object, which can load arrays on demand
         """
-        return _LazyArrayDict(self._npk, mmap_mode)
+        return _LazyArrayDict(self._npk, mmap_mode, self._mmap_cache)
 
     def replace(self, arrays: Dict[str, np.ndarray], indexes: Union[List[int], int, np.ndarray, slice]) -> None:
         """Replace arrays in NumPack file
@@ -248,10 +275,15 @@ class NumPack:
             
         if indexes is None:
             for name in array_name:
-                cache_key = f"{self._npk.get_array_path(name)}_{name}"
-                _mmap_cache.remove(cache_key)
+                array_path = self._npk.get_array_path(name)
+                self._mmap_cache.remove(array_path)
                 self._npk.drop(name, indexes)
         else:
+            # 确保在修改文件前关闭所有相关的内存映射
+            for name in array_name:
+                array_path = self._npk.get_array_path(name)
+                self._mmap_cache.remove(array_path)
+            # 执行删除操作
             for name in array_name:
                 self._npk.drop(name, indexes)
 
@@ -359,4 +391,9 @@ class NumPack:
             memmap_chunks.append(memmap_array[i:i+chunk_rows])
         
         return memmap_chunks
+        
+    def __del__(self):
+        """Ensure proper cleanup of resources"""
+        if hasattr(self, '_mmap_cache'):
+            self._mmap_cache.clear()
         
