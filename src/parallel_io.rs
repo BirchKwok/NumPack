@@ -12,31 +12,41 @@ use crate::error::{NpkResult, NpkError};
 use crate::metadata::{CachedMetadataStore, ArrayMetadata, DataType};
 
 // Platform-specific file IO
-#[cfg(unix)]
-use std::os::unix::fs::FileExt;
 #[cfg(windows)]
 use std::os::windows::fs::FileExt;
 
 // Helper functions for file IO
 #[cfg(unix)]
-fn read_at_offset(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
-    file.read_at(buf, offset)
+mod platform {
+    use std::io;
+    use std::fs::File;
+    use std::os::unix::fs::FileExt;
+
+    pub fn read_at_offset(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+        file.read_at(buf, offset)
+    }
+
+    pub fn write_at_offset(file: &File, buf: &[u8], offset: u64) -> io::Result<usize> {
+        file.write_at(buf, offset)
+    }
 }
 
 #[cfg(windows)]
-fn read_at_offset(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
-    file.seek_read(buf, offset)
+mod platform {
+    use std::io;
+    use std::fs::File;
+    use std::os::windows::fs::FileExt;
+
+    pub fn read_at_offset(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+        file.seek_read(buf, offset)
+    }
+
+    pub fn write_at_offset(file: &File, buf: &[u8], offset: u64) -> io::Result<usize> {
+        file.seek_write(buf, offset)
+    }
 }
 
-#[cfg(unix)]
-fn write_at_offset(file: &File, buf: &[u8], offset: u64) -> io::Result<usize> {
-    file.write_at(buf, offset)
-}
-
-#[cfg(windows)]
-fn write_at_offset(file: &File, buf: &[u8], offset: u64) -> io::Result<usize> {
-    file.seek_write(buf, offset)
-}
+use platform::{read_at_offset, write_at_offset};
 
 // Helper function to ensure all data is written
 fn write_all_at_offset(file: &File, buf: &[u8], offset: u64) -> io::Result<()> {
