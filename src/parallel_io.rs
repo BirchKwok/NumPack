@@ -1,4 +1,4 @@
-use std::io::{self, BufWriter, Write};
+use std::io::{self, BufWriter, Write, Seek, SeekFrom};
 use std::fs::{OpenOptions, File};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -7,10 +7,38 @@ use memmap2::MmapOptions;
 use ndarray::{ArrayD, ArrayViewD, IxDyn};
 use numpy::Element;
 use std::collections::{HashSet, VecDeque};
-use std::os::unix::fs::FileExt;
 
 use crate::error::{NpkResult, NpkError};
 use crate::metadata::{CachedMetadataStore, ArrayMetadata, DataType};
+
+// Platform-specific file IO
+#[cfg(unix)]
+use std::os::unix::fs::FileExt;
+#[cfg(windows)]
+use std::os::windows::fs::FileExt;
+
+// Helper functions for file IO
+fn read_at_offset(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+    #[cfg(unix)]
+    {
+        file.read_at(buf, offset)
+    }
+    #[cfg(windows)]
+    {
+        file.seek_read(buf, offset)
+    }
+}
+
+fn write_at_offset(file: &File, buf: &[u8], offset: u64) -> io::Result<usize> {
+    #[cfg(unix)]
+    {
+        file.write_at(buf, offset)
+    }
+    #[cfg(windows)]
+    {
+        file.seek_write(buf, offset)
+    }
+}
 
 const BUFFER_SIZE: usize = 8 * 1024 * 1024; // 8MB 缓冲区
 const MAX_BUFFERS: usize = 4; // 最大缓冲区数量
@@ -212,7 +240,6 @@ impl ArrayView {
         const CHUNK_ROWS: usize = 1024 * 1024; // 每次处理100万行
         let chunks_count = (total_rows + CHUNK_ROWS - 1) / CHUNK_ROWS;
         
-        // 4. 并行处理数据块
         let source_file = Arc::new(File::open(&self.file_path)?);
         let excluded_vec = Arc::new(excluded_vec);
         let temp_file = Arc::new(temp_file);
@@ -222,16 +249,14 @@ impl ArrayView {
             let end_row = std::cmp::min(total_rows, (chunk_idx + 1) * CHUNK_ROWS);
             let chunk_row_count = end_row - start_row;
             
-            // 为每个线程创建独立的缓冲区
             let read_size = chunk_row_count * row_size;
             let mut read_buffer = vec![0u8; read_size];
             let mut write_buffer = Vec::with_capacity(read_size);
             
-            // 读取源文件块
             let read_offset = (start_row * row_size) as u64;
-            source_file.read_exact_at(&mut read_buffer[..read_size], read_offset)?;
+            let source_file = &*source_file;
+            read_at_offset(source_file, &mut read_buffer[..read_size], read_offset)?;
             
-            // 处理当前块中的行
             for row in start_row..end_row {
                 if !excluded_vec.binary_search(&row).is_ok() {
                     let row_start = (row - start_row) * row_size;
@@ -239,7 +264,6 @@ impl ArrayView {
                 }
             }
             
-            // 计算写入位置
             let mut write_row = 0;
             for i in 0..start_row {
                 if !excluded_vec.binary_search(&i).is_ok() {
@@ -247,9 +271,9 @@ impl ArrayView {
                 }
             }
             
-            // 写入临时文件
             let write_offset = (write_row * row_size) as u64;
-            temp_file.write_all_at(&write_buffer, write_offset)?;
+            let temp_file = &*temp_file;
+            write_at_offset(temp_file, &write_buffer, write_offset)?;
             
             Ok(())
         });
@@ -515,69 +539,6 @@ impl ParallelIO {
         groups
     }
 
-    fn process_batch<T: Element + Copy + Send + Sync>(
-        mmap: &mut memmap2::MmapMut,
-        data: &ArrayD<T>,
-        batch: &[(usize, u64)],
-        row_size: usize
-    ) -> NpkResult<()> {
-        if batch.is_empty() {
-            return Ok(());
-        }
-        
-        let mut buffer = BUFFER_POOL.get_buffer();
-        
-        // 如果是连续的索引，使用一次性写入
-        if batch.len() > 1 && 
-           batch.last().unwrap().1 - batch.first().unwrap().1 + 1 == batch.len() as u64 {
-            let start_offset = (batch[0].1 as usize) * row_size;
-            let total_size = batch.len() * row_size;
-            
-            // 确保缓冲区足够大
-            if buffer.len() < total_size {
-                buffer.resize(total_size, 0);
-            }
-            
-            // 创建连续的数据缓冲区
-            for (i, &(src_idx, _)) in batch.iter().enumerate() {
-                let src_offset = (src_idx % data.shape()[0]) * row_size;
-                let dst_offset = i * row_size;
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        (data.as_ptr() as *const u8).add(src_offset),
-                        buffer.as_mut_ptr().add(dst_offset),
-                        row_size
-                    );
-                }
-            }
-            
-            // 一次性写入
-            mmap[start_offset..start_offset + total_size].copy_from_slice(&buffer[..total_size]);
-        } else {
-            // 对于不连续的索引，使用缓冲区进行分块写入
-            for chunk in batch.chunks(buffer.len() / row_size) {
-                for &(src_idx, dst_idx) in chunk {
-                    let src_offset = (src_idx % data.shape()[0]) * row_size;
-                    let dst_offset = (dst_idx as usize) * row_size;
-                    
-                    unsafe {
-                        std::ptr::copy_nonoverlapping(
-                            (data.as_ptr() as *const u8).add(src_offset),
-                            buffer.as_mut_ptr(),
-                            row_size
-                        );
-                    }
-                    
-                    mmap[dst_offset..dst_offset + row_size].copy_from_slice(&buffer[..row_size]);
-                }
-            }
-        }
-        
-        // 返回缓冲区到池中
-        BUFFER_POOL.return_buffer(buffer);
-        Ok(())
-    }
-
     pub fn replace_rows<T: Element + Copy + Send + Sync>(
         &self,
         name: &str,
@@ -589,21 +550,18 @@ impl ParallelIO {
         })?;
         
         let element_size = std::mem::size_of::<T>();
-        // 计算每行的大小，对于一维数组，每行就是一个元素
         let row_size = if meta.shape.len() == 1 {
             element_size
         } else {
             meta.shape[1..].iter().product::<u64>() as usize * element_size
         };
         
-        // Open file for writing
         let file_path = self.base_dir.join(&meta.data_file);
         let file = OpenOptions::new()
             .read(true)
             .write(true)
             .open(&file_path)?;
             
-        // Check if indices are continuous
         if let Some((start, len)) = Self::is_continuous_indices(indices) {
             let normalized_start = if start < 0 {
                 (meta.shape[0] as i64 + start) as u64
@@ -618,7 +576,6 @@ impl ParallelIO {
                 )));
             }
             
-            // For continuous indices, use one-time write
             let offset = normalized_start * row_size as u64;
             let data_slice = unsafe {
                 std::slice::from_raw_parts(
@@ -626,18 +583,15 @@ impl ParallelIO {
                     len * row_size
                 )
             };
-            file.write_at(data_slice, offset)?;
+            write_at_offset(&file, data_slice, offset)?;
         } else {
-            // For non-continuous indices, group them by blocks and process in parallel
             let groups = Self::group_indices(indices, row_size, meta.shape[0]);
             
-            // Process each group in parallel
             groups.par_iter().try_for_each(|group| -> NpkResult<()> {
                 if group.is_empty() {
                     return Ok(());
                 }
                 
-                // Calculate block range
                 let first_idx = if group[0].1 < 0 {
                     meta.shape[0] as i64 + group[0].1
                 } else {
@@ -650,12 +604,10 @@ impl ParallelIO {
                     group[group.len() - 1].1
                 } as u64;
                 
-                // Read the entire block
                 let block_size = (last_idx - first_idx + 1) as usize * row_size;
                 let mut block_buffer = vec![0u8; block_size];
-                file.read_at(&mut block_buffer, first_idx * row_size as u64)?;
+                read_at_offset(&file, &mut block_buffer, first_idx * row_size as u64)?;
                 
-                // Update rows in the block
                 for &(data_idx, file_idx) in group {
                     let normalized_idx = if file_idx < 0 {
                         (meta.shape[0] as i64 + file_idx) as u64
@@ -678,8 +630,7 @@ impl ParallelIO {
                     }
                 }
                 
-                // Write back the entire block
-                file.write_at(&block_buffer, first_idx * row_size as u64)?;
+                write_at_offset(&file, &block_buffer, first_idx * row_size as u64)?;
                 
                 Ok(())
             })?;
