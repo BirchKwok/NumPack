@@ -85,7 +85,6 @@ jobs:
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter
-          singlefile: true
           
       - name: Upload wheels
         uses: actions/upload-artifact@v4
