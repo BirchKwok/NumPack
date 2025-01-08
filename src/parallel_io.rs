@@ -1,17 +1,53 @@
-use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
+use std::fs::{OpenOptions, File};
 use std::path::PathBuf;
-use memmap2::MmapOptions;
-use rayon::prelude::*;
 use std::sync::{Arc, Mutex};
-use ndarray::{ArrayD, ArrayViewD, IxDyn, Array2};
+use rayon::prelude::*;
+use memmap2::MmapOptions;
+use ndarray::{ArrayD, ArrayViewD, IxDyn};
 use numpy::Element;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::os::unix::fs::FileExt;
 
 use crate::error::{NpkResult, NpkError};
 use crate::metadata::{CachedMetadataStore, ArrayMetadata, DataType};
 
+const BUFFER_SIZE: usize = 8 * 1024 * 1024; // 8MB 缓冲区
+const MAX_BUFFERS: usize = 4; // 最大缓冲区数量
+
+// 添加缓冲区池结构
+pub struct BufferPool {
+    buffers: Mutex<VecDeque<Vec<u8>>>,
+    buffer_size: usize,
+    max_buffers: usize,
+}
+
+impl BufferPool {
+    pub fn new(buffer_size: usize, max_buffers: usize) -> Self {
+        Self {
+            buffers: Mutex::new(VecDeque::with_capacity(max_buffers)),
+            buffer_size,
+            max_buffers,
+        }
+    }
+
+    pub fn get_buffer(&self) -> Vec<u8> {
+        let mut buffers = self.buffers.lock().unwrap();
+        buffers.pop_front().unwrap_or_else(|| vec![0; self.buffer_size])
+    }
+
+    pub fn return_buffer(&self, mut buffer: Vec<u8>) {
+        let mut buffers = self.buffers.lock().unwrap();
+        if buffers.len() < self.max_buffers {
+            buffer.clear();
+            buffers.push_back(buffer);
+        }
+    }
+}
+
+lazy_static! {
+    static ref BUFFER_POOL: Arc<BufferPool> = Arc::new(BufferPool::new(BUFFER_SIZE, MAX_BUFFERS));
+}
 
 #[allow(dead_code)]
 pub struct ArrayView {
@@ -35,7 +71,7 @@ fn normalize_index(idx: i64, total_rows: usize) -> Option<usize> {
 }
 
 impl ArrayView {
-    fn new(meta: ArrayMetadata, file: File, file_path: PathBuf) -> Self {
+    pub fn new(meta: ArrayMetadata, file: File, file_path: PathBuf) -> Self {
         Self {
             meta,
             file,
@@ -83,9 +119,6 @@ impl ArrayView {
         let shape: Vec<usize> = self.meta.shape.iter().map(|&x| x as usize).collect();
         let row_size = shape[1..].iter().product::<usize>() * element_size;
         
-        // Use memory mapping
-        let mmap = unsafe { MmapOptions::new().map(&self.file)? };
-        
         if let Some(excluded) = excluded_indices {
             // Calculate rows to retain
             let retained = self.get_retained_indices(Some(excluded));
@@ -93,38 +126,51 @@ impl ArrayView {
             let mut new_shape = shape.clone();
             new_shape[0] = new_rows;
             
-            // Create new array
-            let mut raw_data = vec![0u8; new_rows * row_size];
+            // 使用内存映射读取源数据
+            let mmap = unsafe { MmapOptions::new().map(&self.file)? };
             
-            // Copy needed rows
-            for (new_row, &old_row) in retained.iter().enumerate() {
-                let src_offset = old_row * row_size;
-                let dst_offset = new_row * row_size;
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        mmap.as_ptr().add(src_offset),
-                        raw_data.as_mut_ptr().add(dst_offset),
-                        row_size
-                    );
+            // 创建结果数组
+            let mut result = unsafe { ArrayD::<T>::uninit(IxDyn(&new_shape)).assume_init() };
+            let result_slice = unsafe { 
+                std::slice::from_raw_parts_mut(
+                    result.as_mut_ptr() as *mut u8,
+                    new_rows * row_size
+                )
+            };
+            
+            // 使用缓冲区池进行分块复制
+            let buffer = BUFFER_POOL.get_buffer();
+            let chunk_size = buffer.len() / row_size * row_size;
+            
+            for chunk_start in (0..new_rows).step_by(chunk_size / row_size) {
+                let chunk_end = std::cmp::min(chunk_start + chunk_size / row_size, new_rows);
+                let chunk_size = (chunk_end - chunk_start) * row_size;
+                
+                // 复制数据到缓冲区
+                for (i, &old_row) in retained[chunk_start..chunk_end].iter().enumerate() {
+                    let src_offset = old_row * row_size;
+                    let dst_offset = i * row_size;
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            mmap.as_ptr().add(src_offset),
+                            buffer.as_ptr() as *mut u8,
+                            row_size
+                        );
+                    }
+                    result_slice[dst_offset..dst_offset + row_size]
+                        .copy_from_slice(&buffer[..row_size]);
                 }
             }
             
-            // Convert to final array
-            let array = unsafe {
-                ArrayD::from_shape_vec_unchecked(
-                    IxDyn(&new_shape),
-                    std::slice::from_raw_parts(
-                        raw_data.as_ptr() as *const T,
-                        new_shape.iter().product()
-                    ).to_vec()
-                )
-            };
-            Ok(array)
+            // 返回缓冲区到池中
+            BUFFER_POOL.return_buffer(buffer);
+            
+            Ok(result)
         } else {
-            // If there are no rows to exclude, return the entire array
-            let ptr = mmap.as_ptr() as *const T;
+            // 如果没有要排除的行，直接使用内存映射
+            let mmap = unsafe { MmapOptions::new().map(&self.file)? };
             unsafe {
-                Ok(ArrayViewD::from_shape_ptr(IxDyn(&shape), ptr).to_owned())
+                Ok(ArrayViewD::from_shape_ptr(IxDyn(&shape), mmap.as_ptr() as *const T).to_owned())
             }
         }
     }
@@ -134,7 +180,7 @@ impl ArrayView {
         let shape: Vec<usize> = self.meta.shape.iter().map(|&x| x as usize).collect();
         let row_size = shape[1..].iter().product::<usize>() * element_size;
         let total_rows = shape[0];
-    
+
         // 1. 收集需要排除的行索引（去重 + 排序）
         let mut excluded_vec: Vec<usize> = excluded_indices
             .iter()
@@ -142,87 +188,86 @@ impl ArrayView {
             .collect();
         excluded_vec.sort_unstable();
         excluded_vec.dedup();
-    
+
         // 如果没有任何行需要排除，直接返回
         if excluded_vec.is_empty() {
             return Ok(());
         }
-    
+
         // 2. 计算删除后文件大小
         let new_rows = total_rows - excluded_vec.len();
         let new_size = new_rows * row_size;
-    
-        // 3. 创建临时文件，用于写入删除后的数据
+
+        // 3. 创建临时文件
         let temp_path = self.file_path.with_extension("tmp");
         let temp_file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .open(&temp_path)?;
-    
+
         // 预先分配目标文件大小
         temp_file.set_len(new_size as u64)?;
-    
-        // 4. 映射源文件到内存（只读）
-        let src_mmap = unsafe { MmapOptions::new().map(&self.file)? };
-    
-        // 使用较大的写缓冲，避免频繁 I/O 调用
-        let mut writer = BufWriter::with_capacity(8 * 1024 * 1024, temp_file);
-    
-        // 5. 将排除行索引合并成「连续区间」列表
-        //    例如：excluded_vec = [2, 3, 4, 10, 11, 20]
-        //    则分块 [(2,4), (10,11), (20,20)]
-        let mut chunks = Vec::new();
-        let mut chunk_start = excluded_vec[0];
-        let mut chunk_end = chunk_start;
-    
-        for &idx in excluded_vec.iter().skip(1) {
-            if idx == chunk_end + 1 {
-                // 仍在同一个连续区间
-                chunk_end = idx;
-            } else {
-                // 出现不连续，先把前一个区间保存
-                chunks.push((chunk_start, chunk_end));
-                // 开启新的区间
-                chunk_start = idx;
-                chunk_end = idx;
+
+        const CHUNK_ROWS: usize = 1024 * 1024; // 每次处理100万行
+        let chunks_count = (total_rows + CHUNK_ROWS - 1) / CHUNK_ROWS;
+        
+        // 4. 并行处理数据块
+        let source_file = Arc::new(File::open(&self.file_path)?);
+        let excluded_vec = Arc::new(excluded_vec);
+        let temp_file = Arc::new(temp_file);
+        
+        let result: NpkResult<()> = (0..chunks_count).into_par_iter().try_for_each(|chunk_idx| {
+            let start_row = chunk_idx * CHUNK_ROWS;
+            let end_row = std::cmp::min(total_rows, (chunk_idx + 1) * CHUNK_ROWS);
+            let chunk_row_count = end_row - start_row;
+            
+            // 为每个线程创建独立的缓冲区
+            let read_size = chunk_row_count * row_size;
+            let mut read_buffer = vec![0u8; read_size];
+            let mut write_buffer = Vec::with_capacity(read_size);
+            
+            // 读取源文件块
+            let read_offset = (start_row * row_size) as u64;
+            source_file.read_exact_at(&mut read_buffer[..read_size], read_offset)?;
+            
+            // 处理当前块中的行
+            for row in start_row..end_row {
+                if !excluded_vec.binary_search(&row).is_ok() {
+                    let row_start = (row - start_row) * row_size;
+                    write_buffer.extend_from_slice(&read_buffer[row_start..row_start + row_size]);
+                }
             }
-        }
-        // 别忘了将最后一个区间 push 进去
-        chunks.push((chunk_start, chunk_end));
-    
-        // 6. 依次把「非排除」的块复制到临时文件
-        let mut current_pos = 0; // 当前处理到哪一行了
-        for &(start, end) in &chunks {
-            if start > current_pos {
-                let begin_offset = current_pos * row_size;
-                let end_offset = start * row_size;
-                writer.write_all(&src_mmap[begin_offset..end_offset])?;
+            
+            // 计算写入位置
+            let mut write_row = 0;
+            for i in 0..start_row {
+                if !excluded_vec.binary_search(&i).is_ok() {
+                    write_row += 1;
+                }
             }
-            // 跳过 [start..=end] 这个区间
-            current_pos = end + 1;
-        }
-    
-        // 如果还有剩余行在最后
-        if current_pos < total_rows {
-            let begin_offset = current_pos * row_size;
-            let end_offset = total_rows * row_size;
-            writer.write_all(&src_mmap[begin_offset..end_offset])?;
-        }
-    
-        // 刷新缓冲区并关闭映射
-        writer.flush()?;
-        drop(writer);
-        drop(src_mmap);
-    
-        // 7. 原子替换旧文件
+            
+            // 写入临时文件
+            let write_offset = (write_row * row_size) as u64;
+            temp_file.write_all_at(&write_buffer, write_offset)?;
+            
+            Ok(())
+        });
+
+        // 检查并处理错误
+        result?;
+
+        // 5. 替换原文件
         std::fs::rename(&temp_path, &self.file_path)?;
-    
-        // 8. 重新打开文件，更新元信息
-        self.file = File::open(&self.file_path)?;
+        
+        // 6. 更新元数据
         self.meta.shape[0] = new_rows as u64;
-        self.meta.size_bytes = self.meta.total_elements() * self.meta.dtype.size_bytes() as u64;
-    
+        self.meta.size_bytes = new_size as u64;
+        self.meta.last_modified = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
         Ok(())
     }    
 }
@@ -480,44 +525,56 @@ impl ParallelIO {
             return Ok(());
         }
         
+        let mut buffer = BUFFER_POOL.get_buffer();
+        
         // 如果是连续的索引，使用一次性写入
         if batch.len() > 1 && 
            batch.last().unwrap().1 - batch.first().unwrap().1 + 1 == batch.len() as u64 {
             let start_offset = (batch[0].1 as usize) * row_size;
-            let end_offset = start_offset + batch.len() * row_size;
+            let total_size = batch.len() * row_size;
+            
+            // 确保缓冲区足够大
+            if buffer.len() < total_size {
+                buffer.resize(total_size, 0);
+            }
             
             // 创建连续的数据缓冲区
-            let mut buffer = Vec::with_capacity(batch.len() * row_size);
-            for &(src_idx, _) in batch {
+            for (i, &(src_idx, _)) in batch.iter().enumerate() {
                 let src_offset = (src_idx % data.shape()[0]) * row_size;
-                let src_slice = unsafe {
-                    std::slice::from_raw_parts(
+                let dst_offset = i * row_size;
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
                         (data.as_ptr() as *const u8).add(src_offset),
+                        buffer.as_mut_ptr().add(dst_offset),
                         row_size
-                    )
-                };
-                buffer.extend_from_slice(src_slice);
+                    );
+                }
             }
             
             // 一次性写入
-            mmap[start_offset..end_offset].copy_from_slice(&buffer);
+            mmap[start_offset..start_offset + total_size].copy_from_slice(&buffer[..total_size]);
         } else {
-            // 对于不连续的索引，单独写入
-            for &(src_idx, dst_idx) in batch {
-                let src_offset = (src_idx % data.shape()[0]) * row_size;
-                let dst_offset = (dst_idx as usize) * row_size;
-                
-                let src_slice = unsafe {
-                    std::slice::from_raw_parts(
-                        (data.as_ptr() as *const u8).add(src_offset),
-                        row_size
-                    )
-                };
-                
-                mmap[dst_offset..dst_offset + row_size].copy_from_slice(src_slice);
+            // 对于不连续的索引，使用缓冲区进行分块写入
+            for chunk in batch.chunks(buffer.len() / row_size) {
+                for &(src_idx, dst_idx) in chunk {
+                    let src_offset = (src_idx % data.shape()[0]) * row_size;
+                    let dst_offset = (dst_idx as usize) * row_size;
+                    
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            (data.as_ptr() as *const u8).add(src_offset),
+                            buffer.as_mut_ptr(),
+                            row_size
+                        );
+                    }
+                    
+                    mmap[dst_offset..dst_offset + row_size].copy_from_slice(&buffer[..row_size]);
+                }
             }
         }
         
+        // 返回缓冲区到池中
+        BUFFER_POOL.return_buffer(buffer);
         Ok(())
     }
 

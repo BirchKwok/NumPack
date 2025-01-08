@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate lazy_static;
+
 mod error;
 mod metadata;
 mod parallel_io;
