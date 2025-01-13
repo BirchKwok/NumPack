@@ -123,14 +123,14 @@ def test_large_data(timing_stats: TimingStats):
         
         # Test NumPack full load
         start_time = time.time()
-        loaded = npk.load(mmap_mode=False)
-        _, _ = loaded['array1'], loaded['array2']
+        arr1 = npk.load('array1')
+        arr2 = npk.load('array2')
         load_time = time.time() - start_time
         timing_stats.add_time("NumPack load", load_time)
         
         # Test NumPack selective load
         start_time = time.time()
-        loaded_partial = npk.load(mmap_mode=False)['array1']
+        loaded_partial = npk.load('array1')
         load_partial_time = time.time() - start_time
         timing_stats.add_time("NumPack selective load", load_partial_time)
         
@@ -159,8 +159,9 @@ def test_large_data(timing_stats: TimingStats):
         
         # Test NumPack mmap load
         start_time = time.time()
-        lazy_loaded = npk.load(mmap_mode=True)
-        _, _ = lazy_loaded['array1'], lazy_loaded['array2']
+        with npk.mmap_mode() as mmap_npk:
+            lazy_arr1 = mmap_npk.load('array1')
+            lazy_arr2 = mmap_npk.load('array2')
         lazy_load_time = time.time() - start_time
         timing_stats.add_time("NumPack mmap load", lazy_load_time)
         
@@ -182,7 +183,10 @@ def test_large_data(timing_stats: TimingStats):
         
         # Verify data
         for name, array in arrays.items():
-            assert np.allclose(array, loaded[name])
+            if name == 'array1':
+                assert np.allclose(array, arr1)
+            else:
+                assert np.allclose(array, arr2)
             assert np.allclose(array, npz_loaded[name])
             assert np.allclose(array, npy_loaded[name])
         
@@ -237,12 +241,12 @@ def test_append_operations(timing_stats: TimingStats):
         timing_stats.add_time("NumPy npz append", npz_append_time)
         
         # Verify data
-        loaded = npk.load(mmap_mode=False)
+        npz_data = dict(np.load('test_append.npz'))
         for name in {**arrays, **append_data}:
             if name in arrays:
-                assert np.allclose(arrays[name], loaded[name])
+                assert np.allclose(arrays[name], npk.load(name))
             else:
-                assert np.allclose(append_data[name], loaded[name])
+                assert np.allclose(append_data[name], npk.load(name))
         
     except Exception as e:
         logger.error(f"Append operations test failed: {str(e)}")
@@ -427,7 +431,7 @@ def test_replace_operations(timing_stats: TimingStats):
         timing_stats.add_time("NumPy npy large data replace", npy_replace_time)
         
         # Verify data correctness
-        loaded = npk.load(mmap_mode=False)['array']
+        loaded = npk.load('array')
         npz_loaded = np.load('test_replace.npz')['array']
         npy_loaded = np.load('test_replace_array.npy')
         
@@ -490,10 +494,11 @@ def test_drop_operations(timing_stats: TimingStats):
         # NumPack drop rows
         start_time = time.time()
         # npk.drop('array1', drop_indices)
-        mask = np.ones(size, dtype=bool)
-        mask[drop_indices] = False
-        _arrays = npk.load(mmap_mode=True)['array1']
-        npk.save({'array1': _arrays[mask]})
+        with npk.mmap_mode() as mmap_npk:
+            mask = np.ones(size, dtype=bool)
+            mask[drop_indices] = False
+            _arrays = mmap_npk.load('array1')
+            npk.save({'array1': _arrays[mask]})
         drop_rows_time = time.time() - start_time
         timing_stats.add_time("NumPack drop rows", drop_rows_time)
 
@@ -518,18 +523,19 @@ def test_drop_operations(timing_stats: TimingStats):
         timing_stats.add_time("NumPy npy drop rows", npy_drop_rows_time)
 
         # Verify data after row dropping
-        loaded = npk.load(mmap_mode=False)
+        loaded_arr1 = npk.load('array1')
+        loaded_arr2 = npk.load('array2')
         npz_loaded = dict(np.load('test_drop.npz'))
         npy_loaded = np.load('test_drop_array1.npy')
 
         # Verify array1 has correct shape after dropping rows
         expected_shape = (size // 2, arrays['array1'].shape[1])
-        assert loaded['array1'].shape == expected_shape
+        assert loaded_arr1.shape == expected_shape
         assert npz_loaded['array1'].shape == expected_shape
         assert npy_loaded.shape == expected_shape
         
         # Verify array2 remains unchanged
-        assert np.allclose(loaded['array2'], arrays['array2'])
+        assert np.allclose(loaded_arr2, arrays['array2'])
         assert np.allclose(npz_loaded['array2'], arrays['array2'])
         
     except Exception as e:

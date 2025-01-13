@@ -50,24 +50,26 @@ def test_basic_save_load(numpack, dtype, test_values):
     
     numpack.save(arrays)
     
-    loaded_arrays = numpack.load(mmap_mode=False)
-    assert np.array_equal(array1, loaded_arrays['array1'])
-    assert np.array_equal(array2, loaded_arrays['array2'])
-    assert array1.dtype == loaded_arrays['array1'].dtype
-    assert array2.dtype == loaded_arrays['array2'].dtype
+    arr1 = numpack.load('array1')
+    arr2 = numpack.load('array2')
+    assert np.array_equal(array1, arr1)
+    assert np.array_equal(array2, arr2)
+    assert array1.dtype == arr1.dtype
+    assert array2.dtype == arr2.dtype
     
-    assert array1.shape == loaded_arrays['array1'].shape
-    assert array2.shape == loaded_arrays['array2'].shape
+    assert array1.shape == arr1.shape
+    assert array2.shape == arr2.shape
 
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
 def test_mmap_load(numpack, dtype, test_values):
     """Test mmap load functionality for all data types"""
     array = create_test_array(dtype, (100, 100))
     numpack.save({'array': array})
-    
-    mmap_arrays = numpack.load(mmap_mode=True)
-    assert np.array_equal(array, mmap_arrays['array'])
-    assert array.dtype == mmap_arrays['array'].dtype
+
+    with numpack.mmap_mode() as mmap_npk:
+        mmap_array = mmap_npk.load('array')
+        assert np.array_equal(array, mmap_array)
+        assert array.dtype == mmap_array.dtype
 
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
 def test_mmap_load_after_row_deletion(numpack, dtype, test_values):
@@ -78,16 +80,17 @@ def test_mmap_load_after_row_deletion(numpack, dtype, test_values):
     deleted_indices = [10, 20, 30, 40, 50]
     numpack.drop('array', deleted_indices)
     
-    loaded = numpack.load(mmap_mode=True)['array']
-    expected = np.delete(array, deleted_indices, axis=0)
-    
-    assert loaded.shape == (95, 50)
-    assert loaded.dtype == dtype
-    assert np.array_equal(loaded, expected)
-    
-    test_indices = [0, 25, 50, 75]
-    for idx in test_indices:
-        assert np.array_equal(loaded[idx], expected[idx])
+    with numpack.mmap_mode() as mmap_npk:
+        loaded = mmap_npk.load('array')
+        expected = np.delete(array, deleted_indices, axis=0)
+        
+        assert loaded.shape == (95, 50)
+        assert loaded.dtype == dtype
+        assert np.array_equal(loaded, expected)
+        
+        test_indices = [0, 25, 50, 75]
+        for idx in test_indices:
+            assert np.array_equal(loaded[idx], expected[idx])
 
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
 def test_selective_load(numpack, dtype, test_values):
@@ -99,13 +102,16 @@ def test_selective_load(numpack, dtype, test_values):
     }
     numpack.save(arrays)
     
-    loaded = numpack.load(mmap_mode=False)
-    assert set(loaded.keys()) == {'array1', 'array2', 'array3'}
-    assert loaded['array1'].dtype == dtype
-    assert loaded['array2'].dtype == dtype
-    assert loaded['array3'].dtype == dtype
-    assert np.array_equal(arrays['array1'], loaded['array1'])
-    assert np.array_equal(arrays['array3'], loaded['array3'])
+    loaded1 = numpack.load('array1')
+    loaded2 = numpack.load('array2')
+    loaded3 = numpack.load('array3')
+    
+    assert loaded1.dtype == dtype
+    assert loaded2.dtype == dtype
+    assert loaded3.dtype == dtype
+    assert np.array_equal(arrays['array1'], loaded1)
+    assert np.array_equal(arrays['array2'], loaded2)
+    assert np.array_equal(arrays['array3'], loaded3)
 
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
 def test_metadata_operations(numpack, dtype, test_values):
@@ -137,17 +143,17 @@ def test_array_deletion(numpack, dtype, test_values):
     
     # Delete single array
     numpack.drop('array1')
-    loaded = numpack.load(mmap_mode=False)
-    assert 'array1' not in loaded
-    assert 'array2' in loaded
-    assert loaded['array2'].dtype == dtype
-    assert np.array_equal(arrays['array2'], loaded['array2'])
+    with pytest.raises(KeyError):
+        numpack.load('array1')
+    loaded2 = numpack.load('array2')
+    assert loaded2.dtype == dtype
+    assert np.array_equal(arrays['array2'], loaded2)
     
     # Delete multiple arrays
     numpack.save({'array1': arrays['array1']})
     numpack.drop(['array1', 'array2'])
-    loaded = numpack.load(mmap_mode=False)
-    assert len(loaded) == 0
+    member_list = numpack.get_member_list()
+    assert len(member_list) == 0
 
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
 def test_concurrent_operations(numpack, dtype, test_values):
@@ -156,24 +162,26 @@ def test_concurrent_operations(numpack, dtype, test_values):
         array = create_test_array(dtype, (100, 50))
         name = f'array_{thread_id}'
         numpack.save({name: array})
-        loaded = numpack.load(mmap_mode=False)[name]
+        loaded = numpack.load(name)
         return np.array_equal(array, loaded) and loaded.dtype == dtype
     
     with ThreadPoolExecutor(max_workers=4) as executor:
         results = list(executor.map(worker, range(4)))
     
     assert all(results)
-    loaded = numpack.load(mmap_mode=False)
-    assert len(loaded) == 4
+    member_list = numpack.get_member_list()
+    assert len(member_list) == 4
     for i in range(4):
-        assert loaded[f'array_{i}'].dtype == dtype
+        array_name = f'array_{i}'
+        loaded = numpack.load(array_name)
+        assert loaded.dtype == dtype
 
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
 def test_error_handling(numpack, dtype, test_values):
     """Test error handling for all data types"""
     # Test loading non-existent array
     with pytest.raises(KeyError):
-        numpack.load(mmap_mode=False)['nonexistent']
+        numpack.load('nonexistent')
     
     # Test saving unsupported data type
     with pytest.raises(Exception):
@@ -195,7 +203,7 @@ def test_append_operations(numpack, dtype, test_values):
     append_data = create_test_array(dtype, (50, 50))
     numpack.append({'array': append_data})
     
-    loaded = numpack.load(mmap_mode=False)['array']
+    loaded = numpack.load('array')
     assert loaded.dtype == dtype
     assert loaded.shape[0] == 150
     assert np.array_equal(array, loaded[:100])
