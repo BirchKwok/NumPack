@@ -3,11 +3,10 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Tuple, Union, Optional
 import numpy as np
 
-
 from ._lib_numpack import NumPack as _NumPack
 from .mmap import FileHandlePool, MmapMode
 
-# package message
+
 __version__ = "0.1.0"
 
 
