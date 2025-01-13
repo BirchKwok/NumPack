@@ -256,12 +256,22 @@ impl ArrayView {
         let new_rows = total_rows - excluded_vec.len();
         let new_size = new_rows * row_size;
 
-        // 3. Create temporary file
-        let temp_path = self.file_path.with_extension("tmp");
+        // 3. Create temporary file with a unique name
+        let temp_path = self.file_path.with_file_name(format!(
+            "temp_{}_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            self.file_path.file_name().unwrap().to_string_lossy()
+        ));
+
+        // Ensure temp file is created with proper permissions
         let temp_file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&temp_path)?;
 
         // Preallocate target file size
@@ -311,7 +321,16 @@ impl ArrayView {
         // Check and handle errors
         result?;
 
+        // Drop file handles explicitly
+        drop(source_file);
+        drop(temp_file);
+
         // 5. Replace original file
+        #[cfg(windows)]
+        {
+            // On Windows, we need to remove the original file first
+            std::fs::remove_file(&self.file_path)?;
+        }
         std::fs::rename(&temp_path, &self.file_path)?;
         
         // 6. Update metadata
@@ -474,15 +493,24 @@ impl ParallelIO {
     pub fn drop_arrays(&self, name: &str, excluded_indices: Option<&[i64]>) -> NpkResult<()> {
         if let Some(meta) = self.metadata.get_array(name) {
             let data_path = self.base_dir.join(&meta.data_file);
-            let file = File::open(&data_path)?;
-            let mut view = ArrayView::new(meta, file, data_path.clone());
             
-            if let Some(indices) = excluded_indices {
-                // Physical delete specified rows
-                view.physical_delete(indices)?;
-                // Update metadata
-                self.metadata.update_array_metadata(name, view.meta)?;
-            } else {
+            // 在Windows上，我们需要确保文件句柄被正确释放
+            {
+                let file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&data_path)?;
+                let mut view = ArrayView::new(meta.clone(), file, data_path.clone());
+                
+                if let Some(indices) = excluded_indices {
+                    // Physical delete specified rows
+                    view.physical_delete(indices)?;
+                    // Update metadata
+                    self.metadata.update_array_metadata(name, view.meta)?;
+                }
+            } // file handle is automatically dropped here
+            
+            if excluded_indices.is_none() {
                 // If no specified row indices, delete the entire array
                 std::fs::remove_file(&data_path)?;
                 // Delete array from metadata
