@@ -7,7 +7,7 @@ from ._lib_numpack import NumPack as _NumPack
 from .mmap import MmapMode
 
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 
 class NumPack:
@@ -152,7 +152,7 @@ class NumPack:
     
     def __getitem__(self, key: str) -> np.ndarray:
         """Get the array by key"""
-        return self.load([key])[key]
+        return self.load(key)
     
     def __iter__(self):
         """Iterate over the arrays in NumPack file"""

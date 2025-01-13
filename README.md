@@ -23,7 +23,7 @@ pip install numpack
 
 ## Requirements
 
-- Python >= 3.9
+- Python >= 3.10
 - NumPy
 
 ## Usage
@@ -46,14 +46,13 @@ npk.save(arrays)
 
 # Load arrays
 # Normal mode
-loaded = npk.load(mmap_mode=False)
+loaded = npk.load("array1")
 
 # Memory mapping mode for large arrays
-lazy_loaded = npk.load(mmap_mode=True)
-
-# Access specific arrays
-array1 = loaded['array1']
-array2 = loaded['array2']
+with npk.mmap_mode() as mmap_npk:
+   # Access specific arrays
+   array1 = mmap_npk.load('array1')
+   array2 = mmap_npk.load('array2')
 ```
 
 ### Advanced Operations
@@ -61,7 +60,8 @@ array2 = loaded['array2']
 ```python
 # Replace specific rows
 replacement = np.random.rand(10, 100).astype(np.float32)
-npk.replace({'array1': replacement}, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+npk.replace({'array1': replacement}, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])  # Using list indices
+npk.replace({'array1': replacement}, slice(0, 10))  # Using slice notation
 
 # Append new arrays
 new_arrays = {
@@ -71,13 +71,63 @@ npk.append(new_arrays)
 
 # Drop arrays or specific rows
 npk.drop('array1')  # Drop entire array
+npk.drop(['array1', 'array2'])  # Drop multiple arrays
 npk.drop('array2', [0, 1, 2])  # Drop specific rows
 
-# Get metadata
+# Random access operations
+data = npk.getitem('array1', [0, 1, 2])  # Access specific rows
+data = npk.getitem('array1', slice(0, 10))  # Access using slice
+data = npk['array1']  # Dictionary-style access for entire array
+
+# Metadata operations
 shapes = npk.get_shape()  # Get shapes of all arrays
+shapes = npk.get_shape('array1')  # Get shape of specific array
 members = npk.get_member_list()  # Get list of array names
 mtime = npk.get_modify_time('array1')  # Get modification time
+metadata = npk.get_metadata()  # Get complete metadata
+
+# Stream loading for large arrays
+for batch in npk.stream_load('array1', buffer_size=1000):
+    # Process 1000 rows at a time
+    process_batch(batch)
+
+# Reset/clear storage
+npk.reset()  # Clear all arrays
+
+# Iterate over all arrays
+for array_name in npk:
+    data = npk[array_name]
+    print(f"{array_name} shape: {data.shape}")
 ```
+
+### Memory Mapping Mode
+
+For large arrays, memory mapping mode provides more efficient memory usage:
+
+```python
+# Using memory mapping mode
+with npk.mmap_mode() as mmap_npk:
+    # Access specific arrays
+    array1 = mmap_npk.load('array1')  # Array is not fully loaded into memory
+    array2 = mmap_npk.load('array2')
+    
+    # Perform operations on memory-mapped arrays
+    result = array1[0:1000] + array2[0:1000]
+```
+
+### Performance Optimization Tips
+
+1. **Batch Operations**:
+   - Prefer batch replacements over row-by-row operations when modifying multiple rows
+   - Use `stream_load` for processing large arrays to control memory usage
+
+2. **Memory Management**:
+   - Use memory mapping mode for large arrays
+   - Release array references when no longer needed
+
+3. **Storage Optimization**:
+   - Organize data structures efficiently to minimize modification frequency
+   - Use `reset()` appropriately to clean up unnecessary data
 
 ## Performance
 
