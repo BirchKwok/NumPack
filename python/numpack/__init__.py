@@ -4,7 +4,7 @@ from typing import Any, Dict, Iterator, List, Tuple, Union, Optional
 import numpy as np
 
 from ._lib_numpack import NumPack as _NumPack
-from .mmap import FileHandlePool, MmapMode
+from .mmap import MmapMode
 
 
 __version__ = "0.1.0"
@@ -24,7 +24,6 @@ class NumPack:
         Path(filename).mkdir(parents=True, exist_ok=True)
         
         self._npk = _NumPack(filename)
-        self._file_pool = FileHandlePool()
 
     def save(self, arrays: Dict[str, np.ndarray], array_names: Optional[Union[List[str], str]] = None) -> None:
         """Save arrays to NumPack file
@@ -90,18 +89,7 @@ class NumPack:
         if isinstance(array_name, str):
             array_name = [array_name]
             
-        if indexes is None:
-            for name in array_name:
-                array_path = self._npk.get_array_path(name)
-                self._file_pool.remove_handle(array_path)
-                self._npk.drop(name, indexes)
-        else:
-            # 确保在修改文件前关闭所有相关的内存映射
-            for name in array_name:
-                array_path = self._npk.get_array_path(name)
-                self._file_pool.remove_handle(array_path)
-            
-            self._npk.drop(array_name, indexes)
+        self._npk.drop(array_name, indexes)
 
     def getitem(self, array_name: str, indexes: Union[List[int], int, np.ndarray]) -> np.ndarray:
         """Randomly access the data of specified rows from NumPack file
@@ -152,11 +140,10 @@ class NumPack:
     
     def mmap_mode(self) -> MmapMode:
         """Get a memory mapped reader for the NumPack file"""
-        return MmapMode(self._npk, self._file_pool)
+        return MmapMode(self._npk)
     
     def reset(self) -> None:
         """Clear all arrays in NumPack file"""
-        self._file_pool.close_all()
         self._npk.reset()
 
     def get_metadata(self) -> Dict[str, Any]:
@@ -193,7 +180,3 @@ class NumPack:
                 end_idx = min(start_idx + buffer_size, total_rows)
                 yield self.getitem(list(range(start_idx, end_idx)), array_name)
     
-    def __del__(self):
-        """Ensure proper cleanup of resources"""
-        if hasattr(self, '_file_pool'):
-            self._file_pool.close_all()
