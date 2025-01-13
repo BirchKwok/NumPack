@@ -1,4 +1,4 @@
-use std::io::{self, BufWriter, Write, Seek, SeekFrom};
+use std::io::{self, BufWriter, Write};
 use std::fs::{OpenOptions, File};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -202,7 +202,7 @@ impl ArrayView {
             
             for chunk_start in (0..new_rows).step_by(chunk_size / row_size) {
                 let chunk_end = std::cmp::min(chunk_start + chunk_size / row_size, new_rows);
-                let chunk_size = (chunk_end - chunk_start) * row_size;
+                let _chunk_size = (chunk_end - chunk_start) * row_size;
                 
                 // Copy data to buffer
                 for (i, &old_row) in retained[chunk_start..chunk_end].iter().enumerate() {
@@ -494,7 +494,6 @@ impl ParallelIO {
         if let Some(meta) = self.metadata.get_array(name) {
             let data_path = self.base_dir.join(&meta.data_file);
             
-            // 在Windows上，我们需要确保文件句柄被正确释放
             {
                 let file = OpenOptions::new()
                     .read(true)

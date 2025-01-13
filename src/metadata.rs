@@ -240,7 +240,7 @@ impl ArrayMetadata {
         self.shape.iter().product()
     }
 
-    pub fn ndim(&self) -> usize {
+    pub fn _ndim(&self) -> usize {
         self.shape.len()
     }
 }
@@ -261,7 +261,7 @@ pub struct MetadataStore {
 }
 
 impl MetadataStore {
-    pub fn new(wal_path: Option<PathBuf>) -> Self {
+    pub fn new(_wal_path: Option<PathBuf>) -> Self {
         Self {
             version: 1,
             arrays: HashMap::new(),
@@ -565,6 +565,7 @@ impl MetadataStore {
             .unwrap_or(false)
     }
 
+    #[allow(dead_code)]
     pub fn update_rows(&mut self, name: &str, rows: u64) -> NpkResult<()> {
         if let Some(wal) = &mut self.wal {
             wal.append(WalOp::UpdateRows(name.to_string(), rows))?;

@@ -17,7 +17,6 @@ use ndarray::ArrayD;
 
 use crate::parallel_io::ParallelIO;
 use crate::metadata::DataType;
-use crate::error::NpkError;
 
 #[allow(dead_code)]
 #[pyclass]
@@ -85,7 +84,7 @@ impl NumPack {
             };
             
             let dtype = get_array_dtype(value)?;
-            let shape: Vec<u64> = value.getattr("shape")?
+            let _shape: Vec<u64> = value.getattr("shape")?
                 .extract::<Vec<usize>>()?
                 .into_iter()
                 .map(|x| x as u64)
