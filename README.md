@@ -23,7 +23,7 @@ pip install numpack
 
 ## Requirements
 
-- Python >= 3.10
+- Python >= 3.9
 - NumPy
 
 ## Usage
@@ -115,20 +115,6 @@ with npk.mmap_mode() as mmap_npk:
     result = array1[0:1000] + array2[0:1000]
 ```
 
-### Performance Optimization Tips
-
-1. **Batch Operations**:
-   - Prefer batch replacements over row-by-row operations when modifying multiple rows
-   - Use `stream_load` for processing large arrays to control memory usage
-
-2. **Memory Management**:
-   - Use memory mapping mode for large arrays
-   - Release array references when no longer needed
-
-3. **Storage Optimization**:
-   - Organize data structures efficiently to minimize modification frequency
-   - Use `reset()` appropriately to clean up unnecessary data
-
 ## Performance
 
 NumPack offers significant performance improvements compared to traditional NumPy storage methods, especially in data modification operations and random access. Below are detailed benchmark results:
@@ -181,6 +167,15 @@ The following benchmarks were performed on an MacBook Pro (M1, 2020, 32GB Memory
 | NumPack | 47.68 MB | 1.0x |
 | NPZ | 47.68 MB | 1.0x |
 | NPY | 47.68 MB | 1.0x |
+
+#### Large-scale Data Operations (>1B rows, Float32)
+
+| Operation | NumPack | NumPy NPZ | NumPy NPY |
+|-----------|---------|-----------|-----------|
+| Replace | Zero-copy in-place modification | Memory exceeded | Memory exceeded |
+| Drop | Zero-copy in-place deletion | Memory exceeded | Memory exceeded |
+| Append | Zero-copy in-place addition | Memory exceeded | Memory exceeded |
+| Random Access | Near-hardware I/O speed | Memory exceeded | Memory exceeded |
 
 ### Key Performance Highlights
 

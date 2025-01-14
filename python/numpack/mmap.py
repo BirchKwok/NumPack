@@ -1,6 +1,5 @@
 from typing import List
 import numpy as np
-import platform
 
 from ._lib_numpack import NumPack as _NumPack
 
@@ -19,14 +18,6 @@ _dtype_map = {
     "Float32": np.float32,
     "Float64": np.float64,
 }
-
-if platform.system() == 'Windows':
-    DEFAULT_MAX_FILES = 512
-    soft_limit = DEFAULT_MAX_FILES
-    hard_limit = DEFAULT_MAX_FILES
-else:
-    import resource
-    soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
 
 
 class MmapMode:
@@ -76,7 +67,7 @@ class MmapMode:
             memmap_chunks.append(memmap_array[i:i+chunk_rows])
         
         return memmap_chunks
-
+    
     def __enter__(self):
         return self
 

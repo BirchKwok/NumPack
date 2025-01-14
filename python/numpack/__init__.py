@@ -7,7 +7,7 @@ from ._lib_numpack import NumPack as _NumPack
 from .mmap import MmapMode
 
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 
 class NumPack:
