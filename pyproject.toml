@@ -7,7 +7,7 @@ name = "numpack"
 version = "0.1.2"
 description = "A high-performance array storage and manipulation library"
 authors = [{ name = "NumPack Contributors" }]
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 readme = "README.md"
 license = { file = "LICENSE" }
 keywords = ["numpy", "array", "storage", "performance"]
