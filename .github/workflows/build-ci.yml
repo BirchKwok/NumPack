@@ -31,22 +31,6 @@ jobs:
           - os: ubuntu-latest
             python: '3.13'
             target: 'aarch64-unknown-linux-gnu'
-          # Windows ARM64 builds
-          - os: windows-latest
-            python: '3.9'
-            target: 'aarch64-pc-windows-msvc'
-          - os: windows-latest
-            python: '3.10'
-            target: 'aarch64-pc-windows-msvc'
-          - os: windows-latest
-            python: '3.11'
-            target: 'aarch64-pc-windows-msvc'
-          - os: windows-latest
-            python: '3.12'
-            target: 'aarch64-pc-windows-msvc'
-          - os: windows-latest
-            python: '3.13'
-            target: 'aarch64-pc-windows-msvc'
           # Apple Silicon (M1/M2) builds
           - os: macos-14
             python: '3.9'
