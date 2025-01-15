@@ -319,13 +319,10 @@ impl ArrayView {
             if addr == libc::MAP_FAILED {
                 MmapOptions::new().map(&self.file)?
             } else {
-                unsafe {
-                    Mmap::from_raw_parts(
-                        addr as *mut libc::c_void,
-                        self.meta.size_bytes as usize,
-                        0
-                    )
-                }
+                // unmap huge pages
+                libc::munmap(addr, self.meta.size_bytes as usize);
+                // use normal memory mapping
+                MmapOptions::new().map(&self.file)?
             }
         };
 
