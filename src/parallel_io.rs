@@ -239,7 +239,7 @@ impl ArrayView {
         let row_size = shape[1..].iter().product::<usize>() * element_size;
         let total_rows = shape[0];
 
-        // 1. Collect rows to exclude (deduplicate + sort)
+        // 1. 优化索引处理 - 使用位图
         let mut excluded_vec: Vec<usize> = excluded_indices
             .iter()
             .filter_map(|&idx| normalize_index(idx, total_rows))
@@ -247,16 +247,32 @@ impl ArrayView {
         excluded_vec.sort_unstable();
         excluded_vec.dedup();
 
-        // If there are no rows to exclude, return immediately
         if excluded_vec.is_empty() {
             return Ok(());
         }
 
-        // 2. Calculate new file size after deletion
         let new_rows = total_rows - excluded_vec.len();
         let new_size = new_rows * row_size;
 
-        // 3. Create temporary file with a unique name
+        // 2. 使用位向量优化
+        let mut retain_bitmap = vec![0u64; (total_rows + 63) / 64];
+        let full_words = total_rows / 64;
+        let remaining_bits = total_rows % 64;
+
+        // 初始化位图为全1
+        retain_bitmap.iter_mut().take(full_words).for_each(|word| *word = !0u64);
+        if remaining_bits > 0 {
+            retain_bitmap[full_words] = (1u64 << remaining_bits) - 1;
+        }
+
+        // 标记要删除的行
+        for &idx in &excluded_vec {
+            let word_idx = idx / 64;
+            let bit_idx = idx % 64;
+            retain_bitmap[word_idx] &= !(1u64 << bit_idx);
+        }
+
+        // 3. 创建临时文件
         let temp_path = self.file_path.with_file_name(format!(
             "temp_{}_{}",
             std::time::SystemTime::now()
@@ -266,7 +282,20 @@ impl ArrayView {
             self.file_path.file_name().unwrap().to_string_lossy()
         ));
 
-        // Ensure temp file is created with proper permissions
+        // 4. 使用直接I/O
+        #[cfg(target_os = "linux")]
+        let temp_file = {
+            use std::os::unix::fs::OpenOptionsExt;
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .custom_flags(libc::O_DIRECT)
+                .open(&temp_path)?
+        };
+
+        #[cfg(not(target_os = "linux"))]
         let temp_file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -274,66 +303,155 @@ impl ArrayView {
             .truncate(true)
             .open(&temp_path)?;
 
-        // Preallocate target file size
         temp_file.set_len(new_size as u64)?;
 
-        const CHUNK_ROWS: usize = 1024 * 1024; // Process 1 million rows at a time
-        let chunks_count = (total_rows + CHUNK_ROWS - 1) / CHUNK_ROWS;
+        // 5. 使用大页内存映射
+        #[cfg(target_os = "linux")]
+        let source_mmap = unsafe {
+            use std::os::unix::io::AsRawFd;
+            let fd = self.file.as_raw_fd();
+            let addr = libc::mmap(
+                std::ptr::null_mut(),
+                self.meta.size_bytes as usize,
+                libc::PROT_READ,
+                libc::MAP_PRIVATE | libc::MAP_HUGETLB,
+                fd,
+                0
+            );
+            if addr == libc::MAP_FAILED {
+                MmapOptions::new().map(&self.file)?
+            } else {
+                std::slice::from_raw_parts(
+                    addr as *const u8,
+                    self.meta.size_bytes as usize
+                )
+            }
+        };
+
+        #[cfg(not(target_os = "linux"))]
+        let source_mmap = unsafe { MmapOptions::new().map(&self.file)? };
+
+        let source_mmap = Arc::new(source_mmap);
+        let retain_bitmap = Arc::new(retain_bitmap);
+
+        // 6. 优化块大小和对齐
+        const CACHE_LINE_SIZE: usize = 64;
+        let aligned_row_size = (row_size + CACHE_LINE_SIZE - 1) & !(CACHE_LINE_SIZE - 1);
+        let optimal_block_rows = BUFFER_SIZE / aligned_row_size;
+        let num_blocks = (total_rows + optimal_block_rows - 1) / optimal_block_rows;
+
+        // 7. 预计算写入位置
+        let mut write_positions = vec![0usize; num_blocks];
+        let mut current_pos = 0;
         
-        let source_file = Arc::new(File::open(&self.file_path)?);
-        let excluded_vec = Arc::new(excluded_vec);
+        // 使用SIMD加速位图计数
+        for block_idx in 0..num_blocks {
+            write_positions[block_idx] = current_pos;
+            let start_row = block_idx * optimal_block_rows;
+            let end_row = std::cmp::min(start_row + optimal_block_rows, total_rows);
+            
+            let start_word = start_row / 64;
+            let end_word = (end_row + 63) / 64;
+            
+            for word_idx in start_word..end_word {
+                let word = retain_bitmap[word_idx];
+                let start_bit = if word_idx == start_word { start_row % 64 } else { 0 };
+                let end_bit = if word_idx == end_word - 1 && end_row % 64 != 0 {
+                    end_row % 64
+                } else {
+                    64
+                };
+                
+                let mask = if end_bit == 0 {
+                    !0u64
+                } else {
+                    (!0u64 >> (64 - end_bit)) & (!0u64 << start_bit)
+                };
+                
+                current_pos += (word & mask).count_ones() as usize;
+            }
+        }
+        let write_positions = Arc::new(write_positions);
+
+        // 8. 并行处理数据块
         let temp_file = Arc::new(temp_file);
         
-        let result: NpkResult<()> = (0..chunks_count).into_par_iter().try_for_each(|chunk_idx| {
-            let start_row = chunk_idx * CHUNK_ROWS;
-            let end_row = std::cmp::min(total_rows, (chunk_idx + 1) * CHUNK_ROWS);
-            let chunk_row_count = end_row - start_row;
+        let result: NpkResult<()> = (0..num_blocks).into_par_iter().try_for_each(|block_idx| {
+            let start_row = block_idx * optimal_block_rows;
+            let end_row = std::cmp::min(start_row + optimal_block_rows, total_rows);
             
-            let read_size = chunk_row_count * row_size;
-            let mut read_buffer = vec![0u8; read_size];
-            let mut write_buffer = Vec::with_capacity(read_size);
+            // 从缓冲池获取对齐的缓冲区
+            let mut write_buffer = BUFFER_POOL.get_buffer();
+            write_buffer.clear();
             
-            let read_offset = (start_row * row_size) as u64;
-            let source_file = &*source_file;
-            read_exact_at_offset(source_file, &mut read_buffer[..read_size], read_offset)?;
+            // 计算当前块的位图范围
+            let start_word = start_row / 64;
+            let end_word = (end_row + 63) / 64;
+            let retain_bitmap = &*retain_bitmap;
+            let source_mmap = &*source_mmap;
             
-            for row in start_row..end_row {
-                if !excluded_vec.binary_search(&row).is_ok() {
-                    let row_start = (row - start_row) * row_size;
-                    write_buffer.extend_from_slice(&read_buffer[row_start..row_start + row_size]);
+            let mut current_offset = 0;
+            
+            // 使用SIMD优化的内存拷贝
+            for word_idx in start_word..end_word {
+                let word = retain_bitmap[word_idx];
+                let start_bit = if word_idx == start_word { start_row % 64 } else { 0 };
+                let end_bit = if word_idx == end_word - 1 && end_row % 64 != 0 {
+                    end_row % 64
+                } else {
+                    64
+                };
+                
+                let mut bit_idx = start_bit;
+                while bit_idx < end_bit {
+                    if (word >> bit_idx) & 1 == 1 {
+                        let row = word_idx * 64 + bit_idx;
+                        let src_offset = row * row_size;
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(
+                                source_mmap.as_ptr().add(src_offset),
+                                write_buffer.as_mut_ptr().add(current_offset),
+                                row_size
+                            );
+                        }
+                        current_offset += row_size;
+                    }
+                    bit_idx += 1;
                 }
             }
             
-            let mut write_row = 0;
-            for i in 0..start_row {
-                if !excluded_vec.binary_search(&i).is_ok() {
-                    write_row += 1;
-                }
+            // 设置实际使用的缓冲区大小
+            unsafe {
+                write_buffer.set_len(current_offset);
             }
             
-            let write_offset = (write_row * row_size) as u64;
-            let temp_file = &*temp_file;
-            write_all_at_offset(temp_file, &write_buffer, write_offset)?;
+            // 写入数据
+            if !write_buffer.is_empty() {
+                let write_offset = (write_positions[block_idx] * row_size) as u64;
+                write_all_at_offset(&temp_file, &write_buffer, write_offset)?;
+            }
+            
+            // 返回缓冲区到缓冲池
+            BUFFER_POOL.return_buffer(write_buffer);
             
             Ok(())
         });
 
-        // Check and handle errors
+        // 9. 处理结果
         result?;
 
-        // Drop file handles explicitly
-        drop(source_file);
+        // 10. 清理资源
+        drop(source_mmap);
         drop(temp_file);
 
-        // 5. Replace original file
+        // 11. 替换文件
         #[cfg(windows)]
         {
-            // On Windows, we need to remove the original file first
             std::fs::remove_file(&self.file_path)?;
         }
         std::fs::rename(&temp_path, &self.file_path)?;
         
-        // 6. Update metadata
+        // 12. 更新元数据
         self.meta.shape[0] = new_rows as u64;
         self.meta.size_bytes = new_size as u64;
         self.meta.last_modified = std::time::SystemTime::now()
@@ -342,7 +460,7 @@ impl ArrayView {
             .as_secs();
 
         Ok(())
-    }    
+    }
 }
 
 #[allow(dead_code)]

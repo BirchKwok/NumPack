@@ -408,14 +408,24 @@ impl MetadataStore {
     }
 
     pub fn save(&self, path: &Path) -> NpkResult<()> {
-        let file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(path)?;
-        let writer = BufWriter::new(file);
-        bincode::serialize_into(writer, self)
-            .map_err(|e| NpkError::InvalidMetadata(e.to_string()))?;
+        // 先写入临时文件
+        let temp_path = path.with_extension("tmp");
+        {
+            let file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&temp_path)?;
+            
+            let mut writer = BufWriter::new(file);
+            bincode::serialize_into(&mut writer, &self)
+                .map_err(|e| NpkError::InvalidMetadata(e.to_string()))?;
+            writer.flush()?;
+        }
+        
+        // 原子地重命名临时文件
+        std::fs::rename(temp_path, path)?;
+        
         Ok(())
     }
 
@@ -594,23 +604,25 @@ pub struct CachedMetadataStore {
 impl CachedMetadataStore {
     pub fn new(path: &Path, wal_path: Option<PathBuf>) -> NpkResult<Self> {
         let store = if path.exists() {
-            MetadataStore::load(path, wal_path.clone())?
+            MetadataStore::load(path, wal_path)?
         } else {
-            MetadataStore::new(wal_path.clone())
+            let mut store = MetadataStore::new(wal_path);
+            store.save(path)?;
+            store
         };
         
         Ok(Self {
             store: Arc::new(RwLock::new(store)),
             path: Arc::from(path),
             last_sync: Arc::new(Mutex::new(SystemTime::now())),
-            sync_interval: std::time::Duration::from_secs(5),
+            sync_interval: std::time::Duration::from_secs(1),
         })
     }
 
     fn should_sync(&self) -> bool {
-        let last_sync = *self.last_sync.lock().unwrap();
+        let last = self.last_sync.lock().unwrap();
         SystemTime::now()
-            .duration_since(last_sync)
+            .duration_since(*last)
             .map(|duration| duration >= self.sync_interval)
             .unwrap_or(true)
     }
@@ -618,25 +630,24 @@ impl CachedMetadataStore {
     fn sync_to_disk(&self) -> NpkResult<()> {
         let store = self.store.read().unwrap();
         store.save(&self.path)?;
-        *self.last_sync.lock().unwrap() = SystemTime::now();
+        let mut last_sync = self.last_sync.lock().unwrap();
+        *last_sync = SystemTime::now();
         Ok(())
     }
 
     pub fn add_array(&self, meta: ArrayMetadata) -> NpkResult<()> {
         let mut store = self.store.write().unwrap();
         store.add_array(meta);
-        if self.should_sync() {
-            drop(store);
-            self.sync_to_disk()?;
-        }
+        drop(store);
+        self.sync_to_disk()?;
         Ok(())
     }
 
     pub fn delete_array(&self, name: &str) -> NpkResult<bool> {
         let mut store = self.store.write().unwrap();
         let result = store.delete_array(name)?;
-        if result && self.should_sync() {
-            drop(store);
+        drop(store);
+        if result {
             self.sync_to_disk()?;
         }
         Ok(result)
@@ -668,10 +679,8 @@ impl CachedMetadataStore {
     pub fn update_array_metadata(&self, name: &str, meta: ArrayMetadata) -> NpkResult<()> {
         let mut store = self.store.write().unwrap();
         store.update_array_metadata(name, meta);
-        if self.should_sync() {
-            drop(store);
-            self.sync_to_disk()?;
-        }
+        drop(store);
+        self.sync_to_disk()?;
         Ok(())
     }
 

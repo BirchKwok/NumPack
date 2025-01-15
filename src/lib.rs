@@ -14,15 +14,94 @@ use pyo3::types::PySlice;
 use std::fs::OpenOptions;
 use std::io::Write;
 use ndarray::ArrayD;
+use pyo3::ffi::Py_buffer;
+use memmap2::Mmap;
+use std::ptr;
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::sync::Arc;
 
 use crate::parallel_io::ParallelIO;
 use crate::metadata::DataType;
+
+lazy_static! {
+    static ref MMAP_CACHE: Mutex<HashMap<String, (Arc<Mmap>, u64)>> = Mutex::new(HashMap::new());
+}
 
 #[allow(dead_code)]
 #[pyclass]
 struct NumPack {
     io: ParallelIO,
     base_dir: PathBuf,
+}
+
+#[allow(dead_code)]
+#[pyclass]
+struct LazyArray {
+    mmap: Arc<Mmap>,
+    shape: Vec<usize>,
+    dtype: DataType,
+    itemsize: usize,
+    array_path: String,
+    modify_time: u64,
+}
+
+#[pymethods]
+impl LazyArray {
+    unsafe fn __getbuffer__(slf: PyRefMut<Self>, view: *mut Py_buffer, flags: i32) -> PyResult<()> {
+        if view.is_null() {
+            return Err(PyErr::new::<pyo3::exceptions::PyBufferError, _>("View is null"));
+        }
+
+        let format = match slf.dtype {
+            DataType::Bool => "?",
+            DataType::Uint8 => "B",
+            DataType::Uint16 => "H",
+            DataType::Uint32 => "I",
+            DataType::Uint64 => "Q",
+            DataType::Int8 => "b",
+            DataType::Int16 => "h",
+            DataType::Int32 => "i",
+            DataType::Int64 => "q",
+            DataType::Float32 => "f",
+            DataType::Float64 => "d",
+        };
+
+        let format_str = std::ffi::CString::new(format).unwrap();
+        
+        let mut strides = Vec::with_capacity(slf.shape.len());
+        let mut stride = slf.itemsize;
+        for &dim in slf.shape.iter().rev() {
+            strides.push(stride as isize);
+            stride *= dim;
+        }
+        strides.reverse();
+
+        (*view).buf = slf.mmap.as_ptr() as *mut std::ffi::c_void;
+        (*view).obj = ptr::null_mut();
+        (*view).len = slf.mmap.len() as isize;
+        (*view).readonly = 1;
+        (*view).itemsize = slf.itemsize as isize;
+        (*view).format = format_str.into_raw();
+        (*view).ndim = slf.shape.len() as i32;
+        (*view).shape = slf.shape.as_ptr() as *mut isize;
+        (*view).strides = strides.as_ptr() as *mut isize;
+        (*view).suboffsets = ptr::null_mut();
+        (*view).internal = Box::into_raw(Box::new(strides)) as *mut std::ffi::c_void;
+
+        Ok(())
+    }
+
+    unsafe fn __releasebuffer__(_slf: PyRefMut<Self>, view: *mut Py_buffer) {
+        if !view.is_null() {
+            if !(*view).format.is_null() {
+                let _ = std::ffi::CString::from_raw((*view).format as *mut i8);
+            }
+            if !(*view).internal.is_null() {
+                let _ = Box::from_raw((*view).internal as *mut Vec<isize>);
+            }
+        }
+    }
 }
 
 fn get_array_dtype(array: &PyAny) -> PyResult<DataType> {
@@ -186,8 +265,80 @@ impl NumPack {
         Ok(())
     }
 
-    #[pyo3(signature = (array_names=None, excluded_indices=None))]
-    fn load(&self, py: Python, array_names: Option<&PyList>, excluded_indices: Option<&PyAny>) -> PyResult<PyObject> {
+    #[pyo3(signature = (array_names=None, excluded_indices=None, lazy=None))]
+    fn load(&self, py: Python, array_names: Option<&PyList>, excluded_indices: Option<&PyAny>, lazy: Option<bool>) -> PyResult<PyObject> {
+        let lazy = lazy.unwrap_or(false);
+        
+        if lazy {
+            if let Some(names) = array_names {
+                if names.len() != 1 {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "Lazy loading only supports loading one array at a time"
+                    ));
+                }
+                let array_name = names.get_item(0)?.extract::<String>()?;
+                let meta = self.io.get_array_metadata(&array_name)?;
+                let data_path = self.base_dir.join(format!("data_{}.npkd", array_name));
+                let array_path = data_path.to_string_lossy().to_string();
+                
+                // 检查缓存
+                let mut cache = MMAP_CACHE.lock().unwrap();
+                let mmap = if let Some((cached_mmap, cached_time)) = cache.get(&array_path) {
+                    if *cached_time == meta.last_modified {
+                        // 缓存有效，直接使用
+                        Arc::clone(cached_mmap)
+                    } else {
+                        // 缓存过期，重新映射
+                        let file = std::fs::File::open(&data_path)?;
+                        #[cfg(target_os = "linux")]
+                        {
+                            use std::os::unix::io::AsRawFd;
+                            unsafe {
+                                libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_SEQUENTIAL);
+                            }
+                        }
+                        let mmap = unsafe { memmap2::MmapOptions::new()
+                            .populate() // 预读取到内存
+                            .map(&file)? };
+                        let mmap = Arc::new(mmap);
+                        cache.insert(array_path.clone(), (Arc::clone(&mmap), meta.last_modified));
+                        mmap
+                    }
+                } else {
+                    // 首次加载
+                    let file = std::fs::File::open(&data_path)?;
+                    #[cfg(target_os = "linux")]
+                    {
+                        use std::os::unix::io::AsRawFd;
+                        unsafe {
+                            libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_SEQUENTIAL);
+                        }
+                    }
+                    let mmap = unsafe { memmap2::MmapOptions::new()
+                        .populate() // 预读取到内存
+                        .map(&file)? };
+                    let mmap = Arc::new(mmap);
+                    cache.insert(array_path.clone(), (Arc::clone(&mmap), meta.last_modified));
+                    mmap
+                };
+                
+                let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
+                let itemsize = meta.dtype.size_bytes() as usize;
+                
+                let lazy_array = LazyArray {
+                    mmap,
+                    shape,
+                    dtype: meta.dtype,
+                    itemsize,
+                    array_path,
+                    modify_time: meta.last_modified,
+                };
+                
+                return Ok(lazy_array.into_py(py));
+            }
+        }
+        
+        // Original loading logic
         if let Some(names) = array_names {
             for name in names.iter() {
                 if !self.io.has_array(name.extract::<String>()?.as_str()) {
@@ -229,7 +380,7 @@ impl NumPack {
         let dict = PyDict::new(py);
         for (name, mut view) in views {
             let final_excluded = excluded.clone();
-
+            
             let array: PyObject = match view.meta.dtype {
                 DataType::Bool => {
                     let array = view.into_array::<bool>(final_excluded.as_deref())?;
@@ -763,5 +914,6 @@ impl NumPack {
 #[pymodule]
 fn _lib_numpack(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<NumPack>()?;
+    m.add_class::<LazyArray>()?;
     Ok(())
 }

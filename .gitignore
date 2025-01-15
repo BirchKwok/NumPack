@@ -17,3 +17,5 @@ __pycache__/
 
 *.wal
 *.tmp
+
+*.cursorrules

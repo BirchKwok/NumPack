@@ -493,12 +493,7 @@ def test_drop_operations(timing_stats: TimingStats):
         
         # NumPack drop rows
         start_time = time.time()
-        # npk.drop('array1', drop_indices)
-        with npk.mmap_mode() as mmap_npk:
-            mask = np.ones(size, dtype=bool)
-            mask[drop_indices] = False
-            _arrays = mmap_npk.load('array1')
-            npk.save({'array1': _arrays[mask]})
+        npk.drop('array1', drop_indices)
         drop_rows_time = time.time() - start_time
         timing_stats.add_time("NumPack drop rows", drop_rows_time)
 
@@ -542,12 +537,101 @@ def test_drop_operations(timing_stats: TimingStats):
         logger.error(f"Drop operations test failed: {str(e)}")
         raise
 
+@run_multiple_times(runs=7)
+@clean_file_when_finished('test_append_rows', 'test_append_rows.npz', 'test_append_rows_array.npy')
+def test_append_rows_operations(timing_stats: TimingStats):
+    """Test performance of appending rows to existing arrays"""
+    try:
+        # Create initial data
+        size = 1000000
+        initial_array = np.random.rand(size, 10).astype(np.float32)
+        
+        # Save initial data
+        npk = NumPack('test_append_rows', drop_if_exists=True)
+        npk.save({'array': initial_array})
+        np.savez('test_append_rows.npz', array=initial_array)
+        np.save('test_append_rows_array.npy', initial_array)
+        
+        # Test scenario 1: Append small number of rows
+        small_append = np.random.rand(1000, 10).astype(np.float32)
+        
+        # NumPack append rows
+        start_time = time.time()
+        npk.append({'array': small_append})
+        append_time = time.time() - start_time
+        timing_stats.add_time("NumPack small rows append", append_time)
+        
+        # NumPy npz append rows
+        start_time = time.time()
+        npz_data = dict(np.load('test_append_rows.npz'))
+        npz_data['array'] = np.vstack([npz_data['array'], small_append])
+        np.savez('test_append_rows.npz', **npz_data)
+        npz_append_time = time.time() - start_time
+        timing_stats.add_time("NumPy npz small rows append", npz_append_time)
+        
+        # NumPy npy append rows
+        start_time = time.time()
+        npy_data = np.load('test_append_rows_array.npy')
+        npy_data = np.vstack([npy_data, small_append])
+        np.save('test_append_rows_array.npy', npy_data)
+        npy_append_time = time.time() - start_time
+        timing_stats.add_time("NumPy npy small rows append", npy_append_time)
+        
+        # Test scenario 2: Append large number of rows
+        large_append = np.random.rand(size // 2, 10).astype(np.float32)
+        
+        # NumPack append rows
+        start_time = time.time()
+        npk.append({'array': large_append})
+        append_time = time.time() - start_time
+        timing_stats.add_time("NumPack large rows append", append_time)
+        
+        # NumPy npz append rows
+        start_time = time.time()
+        npz_data = dict(np.load('test_append_rows.npz'))
+        npz_data['array'] = np.vstack([npz_data['array'], large_append])
+        np.savez('test_append_rows.npz', **npz_data)
+        npz_append_time = time.time() - start_time
+        timing_stats.add_time("NumPy npz large rows append", npz_append_time)
+        
+        # NumPy npy append rows
+        start_time = time.time()
+        npy_data = np.load('test_append_rows_array.npy')
+        npy_data = np.vstack([npy_data, large_append])
+        np.save('test_append_rows_array.npy', npy_data)
+        npy_append_time = time.time() - start_time
+        timing_stats.add_time("NumPy npy large rows append", npy_append_time)
+        
+        # Verify data
+        expected_rows = size + 1000 + size // 2
+        loaded = npk.load('array')
+        npz_loaded = np.load('test_append_rows.npz')['array']
+        npy_loaded = np.load('test_append_rows_array.npy')
+        
+        assert loaded.shape == (expected_rows, 10)
+        assert npz_loaded.shape == (expected_rows, 10)
+        assert npy_loaded.shape == (expected_rows, 10)
+        
+        # Verify the appended data is correct
+        assert np.allclose(loaded[size:size+1000], small_append)
+        assert np.allclose(loaded[size+1000:], large_append)
+        assert np.allclose(npz_loaded[size:size+1000], small_append)
+        assert np.allclose(npz_loaded[size+1000:], large_append)
+        assert np.allclose(npy_loaded[size:size+1000], small_append)
+        assert np.allclose(npy_loaded[size+1000:], large_append)
+        
+    except Exception as e:
+        logger.error(f"Append rows operations test failed: {str(e)}")
+        raise
+
+
 if __name__ == '__main__':
     try:
         logger.info("Performance Test Results")
         logger.info("=" * 80)
         test_large_data()
         test_append_operations()
+        test_append_rows_operations()
         test_random_access()
         test_replace_operations()
         test_drop_operations()

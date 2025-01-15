@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Tuple, Union, Optional
 import numpy as np
 
-from ._lib_numpack import NumPack as _NumPack
+from ._lib_numpack import NumPack as _NumPack, LazyArray
 from .mmap import MmapMode
 
 
@@ -25,28 +25,31 @@ class NumPack:
         
         self._npk = _NumPack(filename)
 
-    def save(self, arrays: Dict[str, np.ndarray], array_names: Optional[Union[List[str], str]] = None) -> None:
+    def save(self, arrays: Dict[str, np.ndarray]) -> None:
         """Save arrays to NumPack file
     
         Parameters:
             arrays (Dict[str, np.ndarray]): The arrays to save
-            array_names (Optional[Union[List[str], str]]): The names of the arrays to save, if None, use the keys of the dictionary
         """
         if not isinstance(arrays, dict):
             raise ValueError("arrays must be a dictionary")
             
-        self._npk.save(arrays, array_names)
+        self._npk.save(arrays, None)
 
-    def load(self, array_name: str) -> np.ndarray:
+    def load(self, array_name: str, lazy: bool = False) -> Union[np.ndarray, LazyArray]:
         """Load arrays from NumPack file
     
         Parameters:
             array_name (str): The name of the array to load
+            lazy (bool): Whether to load the array in lazy mode (memory mapped)
     
         Returns:
             np.ndarray: The loaded array
         """
-        return self._npk.load([array_name])[array_name]
+        result = self._npk.load([array_name], lazy=lazy)
+        if lazy:
+            return result
+        return result[array_name]
 
     def replace(self, arrays: Dict[str, np.ndarray], indexes: Union[List[int], int, np.ndarray, slice]) -> None:
         """Replace arrays in NumPack file
@@ -108,16 +111,16 @@ class NumPack:
         
         return self._npk.getitem(array_name, indexes)
     
-    def get_shape(self, array_names: Optional[Union[List[str], str]] = None) -> Dict[str, Tuple[int, int]]:
+    def get_shape(self, array_name: str) -> Tuple[int, int]:
         """Get the shape of specified arrays in NumPack file
     
         Parameters:
-            array_names (Optional[Union[List[str], str]]): The names of the arrays to get the shape, if None, get the shape of all arrays
+            array_names (str): The name of the array to get the shape
     
         Returns:
-            A dictionary containing the shapes of the specified arrays
+            tuple: the shape of the array
         """
-        return self._npk.get_shape(array_names)
+        return self._npk.get_shape(array_name)
     
     def get_member_list(self) -> List[str]:
         """Get the list of array names in NumPack file
