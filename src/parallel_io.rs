@@ -3,7 +3,7 @@ use std::fs::{OpenOptions, File};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use rayon::prelude::*;
-use memmap2::MmapOptions;
+use memmap2::{MmapOptions, Mmap};
 use ndarray::{ArrayD, ArrayViewD, IxDyn};
 use numpy::Element;
 use std::collections::{HashSet, VecDeque};
@@ -239,7 +239,6 @@ impl ArrayView {
         let row_size = shape[1..].iter().product::<usize>() * element_size;
         let total_rows = shape[0];
 
-        // 1. 优化索引处理 - 使用位图
         let mut excluded_vec: Vec<usize> = excluded_indices
             .iter()
             .filter_map(|&idx| normalize_index(idx, total_rows))
@@ -254,25 +253,24 @@ impl ArrayView {
         let new_rows = total_rows - excluded_vec.len();
         let new_size = new_rows * row_size;
 
-        // 2. 使用位向量优化
         let mut retain_bitmap = vec![0u64; (total_rows + 63) / 64];
         let full_words = total_rows / 64;
         let remaining_bits = total_rows % 64;
 
-        // 初始化位图为全1
+        // initialize retain_bitmap to all 1
         retain_bitmap.iter_mut().take(full_words).for_each(|word| *word = !0u64);
         if remaining_bits > 0 {
             retain_bitmap[full_words] = (1u64 << remaining_bits) - 1;
         }
 
-        // 标记要删除的行
+        // mark rows to delete
         for &idx in &excluded_vec {
             let word_idx = idx / 64;
             let bit_idx = idx % 64;
             retain_bitmap[word_idx] &= !(1u64 << bit_idx);
         }
 
-        // 3. 创建临时文件
+        // create temp file
         let temp_path = self.file_path.with_file_name(format!(
             "temp_{}_{}",
             std::time::SystemTime::now()
@@ -282,7 +280,7 @@ impl ArrayView {
             self.file_path.file_name().unwrap().to_string_lossy()
         ));
 
-        // 4. 使用直接I/O
+        // use direct I/O
         #[cfg(target_os = "linux")]
         let temp_file = {
             use std::os::unix::fs::OpenOptionsExt;
@@ -305,7 +303,7 @@ impl ArrayView {
 
         temp_file.set_len(new_size as u64)?;
 
-        // 5. 使用大页内存映射
+        // use huge pages
         #[cfg(target_os = "linux")]
         let source_mmap = unsafe {
             use std::os::unix::io::AsRawFd;
@@ -337,17 +335,17 @@ impl ArrayView {
         let source_mmap = Arc::new(source_mmap);
         let retain_bitmap = Arc::new(retain_bitmap);
 
-        // 6. 优化块大小和对齐
+        // optimize block size and alignment
         const CACHE_LINE_SIZE: usize = 64;
         let aligned_row_size = (row_size + CACHE_LINE_SIZE - 1) & !(CACHE_LINE_SIZE - 1);
         let optimal_block_rows = BUFFER_SIZE / aligned_row_size;
         let num_blocks = (total_rows + optimal_block_rows - 1) / optimal_block_rows;
 
-        // 7. 预计算写入位置
+        // pre-calculate write positions
         let mut write_positions = vec![0usize; num_blocks];
         let mut current_pos = 0;
         
-        // 使用SIMD加速位图计数
+        // use SIMD to count bitmap
         for block_idx in 0..num_blocks {
             write_positions[block_idx] = current_pos;
             let start_row = block_idx * optimal_block_rows;
@@ -376,18 +374,18 @@ impl ArrayView {
         }
         let write_positions = Arc::new(write_positions);
 
-        // 8. 并行处理数据块
+        // parallel process data blocks
         let temp_file = Arc::new(temp_file);
         
         let result: NpkResult<()> = (0..num_blocks).into_par_iter().try_for_each(|block_idx| {
             let start_row = block_idx * optimal_block_rows;
             let end_row = std::cmp::min(start_row + optimal_block_rows, total_rows);
             
-            // 从缓冲池获取对齐的缓冲区
+            // get aligned buffer from buffer pool
             let mut write_buffer = BUFFER_POOL.get_buffer();
             write_buffer.clear();
             
-            // 计算当前块的位图范围
+            // calculate bitmap range for current block
             let start_word = start_row / 64;
             let end_word = (end_row + 63) / 64;
             let retain_bitmap = &*retain_bitmap;
@@ -395,7 +393,7 @@ impl ArrayView {
             
             let mut current_offset = 0;
             
-            // 使用SIMD优化的内存拷贝
+            // use SIMD optimized memory copy
             for word_idx in start_word..end_word {
                 let word = retain_bitmap[word_idx];
                 let start_bit = if word_idx == start_word { start_row % 64 } else { 0 };
@@ -423,38 +421,38 @@ impl ArrayView {
                 }
             }
             
-            // 设置实际使用的缓冲区大小
+            // set actual buffer size
             unsafe {
                 write_buffer.set_len(current_offset);
             }
             
-            // 写入数据
+            // write data
             if !write_buffer.is_empty() {
                 let write_offset = (write_positions[block_idx] * row_size) as u64;
                 write_all_at_offset(&temp_file, &write_buffer, write_offset)?;
             }
             
-            // 返回缓冲区到缓冲池
+            // return buffer to buffer pool
             BUFFER_POOL.return_buffer(write_buffer);
             
             Ok(())
         });
 
-        // 9. 处理结果
+        // handle result
         result?;
 
-        // 10. 清理资源
+        // clean up resources
         drop(source_mmap);
         drop(temp_file);
 
-        // 11. 替换文件
+        // replace file
         #[cfg(windows)]
         {
             std::fs::remove_file(&self.file_path)?;
         }
         std::fs::rename(&temp_path, &self.file_path)?;
         
-        // 12. 更新元数据
+        // update metadata
         self.meta.shape[0] = new_rows as u64;
         self.meta.size_bytes = new_size as u64;
         self.meta.last_modified = std::time::SystemTime::now()

@@ -281,14 +281,11 @@ impl NumPack {
                 let data_path = self.base_dir.join(format!("data_{}.npkd", array_name));
                 let array_path = data_path.to_string_lossy().to_string();
                 
-                // 检查缓存
                 let mut cache = MMAP_CACHE.lock().unwrap();
                 let mmap = if let Some((cached_mmap, cached_time)) = cache.get(&array_path) {
                     if *cached_time == meta.last_modified {
-                        // 缓存有效，直接使用
                         Arc::clone(cached_mmap)
                     } else {
-                        // 缓存过期，重新映射
                         let file = std::fs::File::open(&data_path)?;
                         #[cfg(target_os = "linux")]
                         {
@@ -298,14 +295,13 @@ impl NumPack {
                             }
                         }
                         let mmap = unsafe { memmap2::MmapOptions::new()
-                            .populate() // 预读取到内存
+                            .populate()
                             .map(&file)? };
                         let mmap = Arc::new(mmap);
                         cache.insert(array_path.clone(), (Arc::clone(&mmap), meta.last_modified));
                         mmap
                     }
                 } else {
-                    // 首次加载
                     let file = std::fs::File::open(&data_path)?;
                     #[cfg(target_os = "linux")]
                     {
@@ -315,7 +311,7 @@ impl NumPack {
                         }
                     }
                     let mmap = unsafe { memmap2::MmapOptions::new()
-                        .populate() // 预读取到内存
+                        .populate() 
                         .map(&file)? };
                     let mmap = Arc::new(mmap);
                     cache.insert(array_path.clone(), (Arc::clone(&mmap), meta.last_modified));

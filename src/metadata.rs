@@ -408,7 +408,6 @@ impl MetadataStore {
     }
 
     pub fn save(&self, path: &Path) -> NpkResult<()> {
-        // 先写入临时文件
         let temp_path = path.with_extension("tmp");
         {
             let file = OpenOptions::new()
@@ -423,7 +422,6 @@ impl MetadataStore {
             writer.flush()?;
         }
         
-        // 原子地重命名临时文件
         std::fs::rename(temp_path, path)?;
         
         Ok(())
