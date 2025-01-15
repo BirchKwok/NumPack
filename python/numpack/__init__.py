@@ -7,7 +7,7 @@ from ._lib_numpack import NumPack as _NumPack, LazyArray
 from .mmap import MmapMode
 
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 
 class NumPack:
