@@ -321,10 +321,13 @@ impl ArrayView {
             if addr == libc::MAP_FAILED {
                 MmapOptions::new().map(&self.file)?
             } else {
-                std::slice::from_raw_parts(
-                    addr as *const u8,
-                    self.meta.size_bytes as usize
-                )
+                unsafe {
+                    Mmap::from_raw_parts(
+                        addr as *mut libc::c_void,
+                        self.meta.size_bytes as usize,
+                        0
+                    )
+                }
             }
         };
 
