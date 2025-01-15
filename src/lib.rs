@@ -95,7 +95,7 @@ impl LazyArray {
     unsafe fn __releasebuffer__(_slf: PyRefMut<Self>, view: *mut Py_buffer) {
         if !view.is_null() {
             if !(*view).format.is_null() {
-                let _ = std::ffi::CString::from_raw((*view).format as *mut i8);
+                let _ = std::ffi::CString::from_raw((*view).format);
             }
             if !(*view).internal.is_null() {
                 let _ = Box::from_raw((*view).internal as *mut Vec<isize>);
