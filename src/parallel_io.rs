@@ -289,7 +289,6 @@ impl ArrayView {
                 .write(true)
                 .create(true)
                 .truncate(true)
-                .custom_flags(libc::O_DIRECT)
                 .open(&temp_path)?
         };
 
