@@ -227,5 +227,56 @@ def test_getitem(numpack, dtype, test_values):
     loaded = numpack.getitem('array', [10, 20, 30, 40, 50])
     assert np.array_equal(array[[10, 20, 30, 40, 50]], loaded)
 
+@pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+def test_get_metadata(numpack, dtype, test_values):
+    """Test get_metadata functionality"""
+    array = create_test_array(dtype, (100, 50))
+    numpack.save({'array': array})
+    
+    metadata = numpack.get_metadata()
+    assert isinstance(metadata, dict)
+    assert 'arrays' in metadata
+    assert 'array' in metadata['arrays']
+    assert 'shape' in metadata['arrays']['array']
+    assert metadata['arrays']['array']['shape'] == [100, 50]
+
+@pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+def test_magic_methods(numpack, dtype, test_values):
+    """Test magic methods (__getitem__ and __iter__)"""
+    arrays = {
+        'array1': create_test_array(dtype, (10, 10)),
+        'array2': create_test_array(dtype, (20, 10))
+    }
+    numpack.save(arrays)
+    
+    # Test __getitem__
+    loaded1 = numpack['array1']
+    assert np.array_equal(arrays['array1'], loaded1)
+    
+    # Test __iter__
+    member_list = list(numpack)
+    assert set(member_list) == set(['array1', 'array2'])
+
+@pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+def test_stream_load(numpack, dtype, test_values):
+    """Test stream_load functionality"""
+    array = create_test_array(dtype, (100, 50))
+    numpack.save({'array': array})
+    
+    # Test with buffer_size=None
+    for i, chunk in enumerate(numpack.stream_load('array', buffer_size=None)):
+        assert np.array_equal(array[i:i+1], chunk)
+    
+    # Test with specific buffer_size
+    buffer_size = 10
+    for i, chunk in enumerate(numpack.stream_load('array', buffer_size=buffer_size)):
+        start_idx = i * buffer_size
+        end_idx = min(start_idx + buffer_size, 100)
+        assert np.array_equal(array[start_idx:end_idx], chunk)
+    
+    # Test invalid buffer_size
+    with pytest.raises(ValueError):
+        next(numpack.stream_load('array', buffer_size=0))
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

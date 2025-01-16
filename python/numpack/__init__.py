@@ -7,7 +7,7 @@ from ._lib_numpack import NumPack as _NumPack, LazyArray
 from .mmap import MmapMode
 
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 
 
 class NumPack:
@@ -163,23 +163,23 @@ class NumPack:
     
     def stream_load(self, array_name: str, buffer_size: Union[int, None] = None) -> Iterator[np.ndarray]:
         """Stream the array by name with buffering support
-        
+    
         Parameters:
             array_name (str): The name of the array to stream
             buffer_size (Union[int, None]): Number of rows to load in each batch, if None, load all rows one by one
-            
+    
         Returns:
             Iterator yielding numpy arrays of size up to buffer_size
         """
-        if buffer_size <= 0:
+        if buffer_size is not None and buffer_size <= 0:
             raise ValueError("buffer_size must be greater than 0")
         
         if buffer_size is None:
             for i in range(self.get_shape(array_name)[0]):
-                yield self.getitem(i, array_name)
+                yield self.getitem(array_name, [i])
         else:
             total_rows = self.get_shape(array_name)[0]
             for start_idx in range(0, total_rows, buffer_size):
                 end_idx = min(start_idx + buffer_size, total_rows)
-                yield self.getitem(list(range(start_idx, end_idx)), array_name)
+                yield self.getitem(array_name, list(range(start_idx, end_idx)))
     
