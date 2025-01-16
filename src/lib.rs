@@ -102,6 +102,122 @@ impl LazyArray {
             }
         }
     }
+
+    fn __repr__(&self, py: Python) -> PyResult<String> {
+        let total_rows = self.shape[0];
+        let total_cols = if self.shape.len() > 1 { self.shape[1] } else { 1 };
+        
+        // 从路径中提取数组名称（去掉后缀和data_前缀）
+        let array_name = self.array_path
+            .split('/')
+            .last()
+            .unwrap_or(&self.array_path)
+            .trim_end_matches(".npkd")
+            .trim_start_matches("data_");
+        
+        // 构建形状字符串
+        let shape_str = format!("shape={:?}, dtype={:?}", self.shape, self.dtype);
+        
+        // 如果数组太小，直接显示全部内容
+        if total_rows <= 6 && total_cols <= 6 {
+            let array = self.get_preview_data(py, 0, total_rows, 0, total_cols)?;
+            return Ok(format!("LazyArray('{}', {}, \n{}", array_name, shape_str, array));
+        }
+
+        let mut result = String::new();
+        result.push_str(&format!("LazyArray('{}', {}, \n", array_name, shape_str));
+
+        // 获取前3行和后3行
+        let show_rows = if total_rows > 6 {
+            vec![0, 1, 2, total_rows-3, total_rows-2, total_rows-1]
+        } else {
+            (0..total_rows).collect()
+        };
+
+        // 获取前3列和后3列
+        let show_cols = if total_cols > 6 {
+            vec![0, 1, 2, total_cols-3, total_cols-2, total_cols-1]
+        } else {
+            (0..total_cols).collect()
+        };
+
+        let mut last_row = None;
+        for &row in &show_rows {
+            if let Some(last) = last_row {
+                if row > last + 1 {
+                    result.push_str(" ...\n");
+                }
+            }
+            
+            // 获取当前行的数据
+            let mut row_str = String::new();
+            let mut last_col = None;
+            
+            for &col in &show_cols {
+                if let Some(last) = last_col {
+                    if col > last + 1 {
+                        row_str.push_str(" ...");
+                    }
+                }
+                
+                // 获取单个元素
+                let value = self.get_element(py, row, col)?;
+                row_str.push_str(&format!(" {}", value));
+                
+                last_col = Some(col);
+            }
+            
+            result.push_str(&format!("[{}]\n", row_str.trim()));
+            last_row = Some(row);
+        }
+
+        result.push(')');
+        Ok(result)
+    }
+
+    fn get_element(&self, py: Python, row: usize, col: usize) -> PyResult<String> {
+        let offset = (row * self.shape[1] + col) * self.itemsize;
+        let value = match self.dtype {
+            DataType::Bool => {
+                let val = unsafe { *self.mmap.as_ptr().add(offset) };
+                if val == 0 { "False" } else { "True" }.to_string()
+            }
+            DataType::Uint8 => unsafe { *self.mmap.as_ptr().add(offset) as u8 }.to_string(),
+            DataType::Uint16 => unsafe { *(self.mmap.as_ptr().add(offset) as *const u16) }.to_string(),
+            DataType::Uint32 => unsafe { *(self.mmap.as_ptr().add(offset) as *const u32) }.to_string(),
+            DataType::Uint64 => unsafe { *(self.mmap.as_ptr().add(offset) as *const u64) }.to_string(),
+            DataType::Int8 => unsafe { *self.mmap.as_ptr().add(offset) as i8 }.to_string(),
+            DataType::Int16 => unsafe { *(self.mmap.as_ptr().add(offset) as *const i16) }.to_string(),
+            DataType::Int32 => unsafe { *(self.mmap.as_ptr().add(offset) as *const i32) }.to_string(),
+            DataType::Int64 => unsafe { *(self.mmap.as_ptr().add(offset) as *const i64) }.to_string(),
+            DataType::Float32 => {
+                let val = unsafe { *(self.mmap.as_ptr().add(offset) as *const f32) };
+                format!("{:.6}", val)
+            }
+            DataType::Float64 => {
+                let val = unsafe { *(self.mmap.as_ptr().add(offset) as *const f64) };
+                format!("{:.6}", val)
+            }
+        };
+        Ok(value)
+    }
+
+    fn get_preview_data(&self, py: Python, start_row: usize, end_row: usize, start_col: usize, end_col: usize) -> PyResult<String> {
+        let mut result = String::new();
+        for row in start_row..end_row {
+            let mut row_str = String::new();
+            for col in start_col..end_col {
+                let value = self.get_element(py, row, col)?;
+                row_str.push_str(&format!(" {}", value));
+            }
+            if result.is_empty() {
+                result.push_str(&format!("[{}]", row_str.trim()));
+            } else {
+                result.push_str(&format!("\n [{}]", row_str.trim()));
+            }
+        }
+        Ok(result)
+    }
 }
 
 fn get_array_dtype(array: &PyAny) -> PyResult<DataType> {
