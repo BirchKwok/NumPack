@@ -799,6 +799,76 @@ def test_append_rows_operations(timing_stats: TimingStats):
         logger.error(f"Append rows operations test failed: {str(e)}")
         raise
 
+@run_multiple_times(runs=7)
+@clean_file_when_finished('test_matrix', 'test_matrix.npz', 'test_matrix_array.npy')
+def test_matrix_computation(timing_stats: TimingStats):
+    """Test matrix computation performance with different storage methods"""
+    try:
+        # 创建测试数据
+        rows = 1000000  # 100万行
+        cols = 128
+        array = np.random.random((rows, cols)).astype(np.float32)
+        
+        # 保存初始数据
+        npk = NumPack('test_matrix', drop_if_exists=True)
+        npk.save({'array': array})
+        np.savez('test_matrix.npz', array=array)
+        np.save('test_matrix_array.npy', array)
+        
+        # 预热：先加载一次数据
+        _ = npk.load('array', lazy=True)
+        with np.load('test_matrix.npz', mmap_mode='r') as npz_data:
+            _ = npz_data['array']
+        _ = np.load('test_matrix_array.npy', mmap_mode='r')
+        
+        # 执行多次计算以获得更稳定的结果
+        n_inner_runs = 10
+        
+        # 1. NumPack lazy模式性能测试
+        lazy_array = npk.load('array', lazy=True)
+        query_vector = np.random.random((1, cols)).astype(np.float32)
+        start_time = time.time()
+        for _ in range(n_inner_runs):
+            result_numpack = np.inner(query_vector, lazy_array)
+        numpack_time = (time.time() - start_time) / n_inner_runs
+        timing_stats.add_time("NumPack lazy mode matrix computation", numpack_time)
+        
+        # 2. NumPy npz mmap模式性能测试
+        with np.load('test_matrix.npz', mmap_mode='r') as npz_data:
+            start_time = time.time()
+            for _ in range(n_inner_runs):
+                result_npz = np.inner(query_vector, npz_data['array'])
+            npz_time = (time.time() - start_time) / n_inner_runs
+        timing_stats.add_time("NumPy npz mmap matrix computation", npz_time)
+        
+        # 3. NumPy npy mmap模式性能测试
+        npy_mmap = np.load('test_matrix_array.npy', mmap_mode='r')
+        start_time = time.time()
+        for _ in range(n_inner_runs):
+            result_npy = np.inner(query_vector, npy_mmap)
+        npy_time = (time.time() - start_time) / n_inner_runs
+        timing_stats.add_time("NumPy npy mmap matrix computation", npy_time)
+        
+        # 4. 内存中直接计算（作为基准）
+        start_time = time.time()
+        for _ in range(n_inner_runs):
+            result_memory = np.inner(query_vector, array)
+        memory_time = (time.time() - start_time) / n_inner_runs
+        timing_stats.add_time("In-memory matrix computation", memory_time)
+        
+        # 验证结果一致性
+        result_numpack = np.inner(query_vector, lazy_array)
+        result_memory = np.inner(query_vector, array)
+        assert np.allclose(result_numpack, result_memory, rtol=1e-5)
+        
+        # 测试内存使用情况
+        process = psutil.Process(os.getpid())
+        timing_stats.add_time("Memory usage (MB)", process.memory_info().rss / (1024 * 1024))
+        
+    except Exception as e:
+        logger.error(f"Matrix computation test failed: {str(e)}")
+        raise
+
 if __name__ == '__main__':
     try:
         logger.info("Performance Test Results")
@@ -809,6 +879,7 @@ if __name__ == '__main__':
         test_random_access()
         test_replace_operations()
         test_drop_operations()
+        test_matrix_computation()
         # test_very_large_array()
         logger.info("=" * 80)
     except Exception as e:

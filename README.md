@@ -206,6 +206,20 @@ The following benchmarks were performed on an MacBook Pro (Apple Silicon) with a
 | Append | Zero-copy in-place addition | Memory exceeded | Memory exceeded |
 | Random Access | Near-hardware I/O speed | Memory exceeded | Memory exceeded |
 
+#### Matrix Computation Performance (1M rows x 128 columns, Float32)
+
+| Operation | NumPack | NumPy NPZ | NumPy NPY | In-Memory |
+|-----------|---------|-----------|-----------|-----------|
+| Inner Product | 0.019s (6.58x NPZ, 1.00x NPY) | 0.125s | 0.019s | 0.011s |
+| Other calculations are similar to the above case | ... | ... | ... | ... |
+
+> **Key Advantage**: NumPack achieves the same performance as NumPy's NPY mmap (0.019s) for matrix computations, with several implementation advantages:
+> - Uses Arc<Mmap> for reference counting, ensuring automatic resource cleanup
+> - Implements MMAP_CACHE to avoid redundant data loading
+> - Linux-specific optimizations with huge pages and sequential access hints
+> - Supports parallel I/O operations for improved data throughput
+> - Optimizes memory usage through Buffer Pool to reduce fragmentation
+
 ### Key Performance Highlights
 
 1. **Data Modification**:
@@ -235,6 +249,12 @@ The following benchmarks were performed on an MacBook Pro (Apple Silicon) with a
 6. **Storage Efficiency**:
    - All formats achieve identical compression ratios (47.68 MB)
    - NumPack maintains high performance while keeping file sizes competitive
+
+7. **Matrix Computation**:
+   - NumPack matches NPY mmap performance while providing better resource management
+   - **6.58x faster** than NPZ mmap for matrix operations
+   - Only 1.72x slower than pure in-memory computation
+   - Zero risk of file descriptor leaks or resource exhaustion
 
 > Note: All benchmarks were performed with float32 arrays. Performance may vary depending on data types, array sizes, and system configurations. Numbers greater than 1.0x indicate faster performance, while numbers less than 1.0x indicate slower performance.
 
