@@ -7,6 +7,7 @@ from functools import wraps
 from numpack import NumPack
 from typing import Dict, List, Callable
 from statistics import mean
+import psutil
 
 logging.basicConfig(
     level=logging.INFO,
@@ -88,6 +89,120 @@ def run_multiple_times(runs: int = 7):
             return result
         return wrapper
     return decorator
+
+def format_size(size_bytes):
+    """Format size in bytes to human readable format"""
+    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+        if size_bytes < 1024.0:
+            return f"{size_bytes:.2f} {unit}"
+        size_bytes /= 1024.0
+
+def get_memory_usage():
+    """Get memory usage of the current process"""
+    process = psutil.Process(os.getpid())
+    return process.memory_info().rss
+
+@run_multiple_times(runs=3)
+@clean_file_when_finished('benchmark_data')
+def test_very_large_array(timing_stats: TimingStats):
+    """Test performance of 100 million rows, 128-dimensional float32 arrays"""
+    try:
+        rows = 100_000_000
+        cols = 128
+        chunk_size = 1_000_000
+        
+        test_dir = "benchmark_data"
+        if not os.path.exists(test_dir):
+            os.makedirs(test_dir)
+        
+        np_pack = NumPack(test_dir)
+        
+        # 1. Test save performance
+        start_time = time.time()
+        total_chunks = rows // chunk_size
+        
+        for i in range(total_chunks):
+            if i == 0:
+                # Create array for the first time
+                data = np.random.randn(chunk_size, cols).astype(np.float32)
+                np_pack.save({"large_array": data})
+            else:
+                # Append data
+                data = np.random.randn(chunk_size, cols).astype(np.float32)
+                np_pack.append({"large_array": data})
+            
+            if (i + 1) % 10 == 0:
+                logger.info(f"Appended: {(i + 1) / total_chunks * 100:.2f}%")
+            
+        save_time = time.time() - start_time
+        timing_stats.add_time("Save 100M rows array", save_time)
+        
+        # 2. Test load performance (normal mode)
+        # start_time = time.time()
+        # mem_before = get_memory_usage()
+        # array = np_pack.load("large_array")
+        # load_time = time.time() - start_time
+        # mem_after = get_memory_usage()
+        # timing_stats.add_time("Load 100M rows array", load_time)
+        # timing_stats.add_time("Load memory increase(GB)", (mem_after - mem_before) / (1024**3))
+        
+        # 3. Test load performance (lazy mode)
+        start_time = time.time()
+        mem_before = get_memory_usage()
+        lazy_array = np_pack.load("large_array", lazy=True)
+        load_time = time.time() - start_time
+        mem_after = get_memory_usage()
+        timing_stats.add_time("Load 100M rows array", load_time)
+        timing_stats.add_time("Lazy load memory increase(MB)", (mem_after - mem_before) / (1024**2))
+        
+        # 4. Test random access performance
+        n_reads = 1000
+        indices = np.random.randint(0, rows, n_reads)
+        
+        start_time = time.time()
+        for i in range(n_reads):
+            _ = np_pack.getitem("large_array", indices[i:i+1])
+        random_read_time = time.time() - start_time
+        timing_stats.add_time("Average random read time(ms)", random_read_time/n_reads*1000)
+        
+        # Batch random read
+        start_time = time.time()
+        _ = np_pack.getitem("large_array", indices)
+        batch_read_time = time.time() - start_time
+        timing_stats.add_time("Batch random read", batch_read_time)
+        
+        # 5. Test append performance
+        append_size = 1_000_000  # Append 1000000 rows
+        data = np.random.randn(append_size, cols).astype(np.float32)
+        
+        start_time = time.time()
+        np_pack.append({"large_array": data})
+        append_time = time.time() - start_time
+        timing_stats.add_time("Append 1000000 rows", append_time)
+        
+        # 6. Test drop performance
+        delete_size = 1_000_000  # Delete 1000000 rows
+        start_time = time.time()
+        np_pack.drop("large_array", list(range(delete_size)))
+        delete_time = time.time() - start_time
+        timing_stats.add_time("Delete 1000000 rows", delete_time)
+        
+        # 7. Test replace performance
+        replace_size = 1_000_000  # Replace 1000000 rows
+        data = np.random.randn(replace_size, cols).astype(np.float32)
+        indices = list(range(replace_size))
+        
+        start_time = time.time()
+        np_pack.replace({"large_array": data}, indices)
+        replace_time = time.time() - start_time
+        timing_stats.add_time("Replace 1000000 rows", replace_time)
+        
+    finally:
+        # Clean test data
+        np_pack.reset()
+        if os.path.exists(test_dir):
+            import shutil
+            shutil.rmtree(test_dir)
 
 @run_multiple_times(runs=7)
 @clean_file_when_finished('test_large', 'test_large.npz', 'test_large_array1.npy', 'test_large_array2.npy')
@@ -446,7 +561,7 @@ def test_replace_operations(timing_stats: TimingStats):
 @run_multiple_times(runs=7)
 @clean_file_when_finished('test_drop', 'test_drop.npz', 'test_drop_array1.npy', 'test_drop_array2.npy')
 def test_drop_operations(timing_stats: TimingStats):
-    """Test drop operations performance"""
+    """Test drop operations performance for various scenarios"""
     try:
         # Create test data
         size = 1000000
@@ -462,76 +577,136 @@ def test_drop_operations(timing_stats: TimingStats):
         np.save('test_drop_array1.npy', arrays['array1'])
         np.save('test_drop_array2.npy', arrays['array2'])
         
-        # Test scenario 1: Drop entire array
-        # NumPack drop array
+        # 1.1 Drop first row
+        start_time = time.time()
+        npk.drop('array1', [0])
+        timing_stats.add_time("NumPack drop first row", time.time() - start_time)
+        
+        # 1.2 Drop middle row
+        middle_idx = size // 2
+        start_time = time.time()
+        npk.drop('array1', [middle_idx])
+        timing_stats.add_time("NumPack drop middle row", time.time() - start_time)
+        
+        # 1.3 Drop last row
+        start_time = time.time()
+        npk.drop('array1', [size - 1])
+        timing_stats.add_time("NumPack drop last row", time.time() - start_time)
+        
+        # Reload data for next test
+        npk.reset()
+        npk.save(arrays)
+        
+        # 2.1 Drop front continuous rows
+        chunk_size = 10000  # Drop 10000 rows each time
+        
+        # 2.1 Drop front continuous rows
+        front_indices = list(range(chunk_size))
+        start_time = time.time()
+        npk.drop('array1', front_indices)
+        timing_stats.add_time("NumPack drop front continuous rows", time.time() - start_time)
+        
+        # 2.2 Drop middle continuous rows
+        middle_start = size // 2 - chunk_size // 2
+        middle_indices = list(range(middle_start, middle_start + chunk_size))
+        start_time = time.time()
+        npk.drop('array1', middle_indices)
+        timing_stats.add_time("NumPack drop middle continuous rows", time.time() - start_time)
+        
+        # 2.3 Drop end continuous rows
+        end_indices = list(range(size - chunk_size, size))
+        start_time = time.time()
+        npk.drop('array1', end_indices)
+        timing_stats.add_time("NumPack drop end continuous rows", time.time() - start_time)
+        
+        # Reload data for next test
+        npk.reset()
+        npk.save(arrays)
+        
+        # 3.1 Drop near but non-continuous rows
+        step = 2
+        near_indices = list(range(0, chunk_size * step, step))  # Drop every other row
+        start_time = time.time()
+        npk.drop('array1', near_indices)
+        timing_stats.add_time("NumPack drop near but non-continuous rows", time.time() - start_time)
+        
+        # Reload data for next test
+        npk.reset()
+        npk.save(arrays)
+        
+        # 4.1 Drop random distributed rows
+        random_indices = np.random.choice(size, chunk_size, replace=False).tolist()
+        start_time = time.time()
+        npk.drop('array1', random_indices)
+        timing_stats.add_time("NumPack drop random rows", time.time() - start_time)
+        
+        # Reload data for next test
+        npk.reset()
+        npk.save(arrays)
+        
+        # 5.1 Drop entire array
         start_time = time.time()
         npk.drop('array1')
-        drop_time = time.time() - start_time
-        timing_stats.add_time("NumPack drop array", drop_time)
-
-        # NumPy npz drop array (need to reload and save)
+        timing_stats.add_time("NumPack drop entire array", time.time() - start_time)
+        
+        # Compare with NumPy performance
+        # For fair comparison, we also perform the same operations on npz and npy files
+        
+        # Test drop random rows performance (as a representative scenario)
+        # NumPy npz
+        start_time = time.time()
+        npz_data = dict(np.load('test_drop.npz'))
+        mask = np.ones(size, dtype=bool)
+        mask[random_indices] = False
+        npz_data['array1'] = npz_data['array1'][mask]
+        np.savez('test_drop.npz', **npz_data)
+        timing_stats.add_time("NumPy npz drop random rows", time.time() - start_time)
+        
+        # NumPy npy
+        start_time = time.time()
+        npy_data = np.load('test_drop_array1.npy')
+        npy_data = npy_data[mask]
+        np.save('test_drop_array1.npy', npy_data)
+        timing_stats.add_time("NumPy npy drop random rows", time.time() - start_time)
+        
+        # Test drop entire array performance
+        # NumPy npz
         start_time = time.time()
         npz_data = dict(np.load('test_drop.npz'))
         del npz_data['array1']
         np.savez('test_drop.npz', **npz_data)
-        npz_drop_time = time.time() - start_time
-        timing_stats.add_time("NumPy npz drop array", npz_drop_time)
-
-        # NumPy npy drop array (just delete file)
+        timing_stats.add_time("NumPy npz drop entire array", time.time() - start_time)
+        
+        # NumPy npy
         start_time = time.time()
         os.remove('test_drop_array1.npy')
-        npy_drop_time = time.time() - start_time
-        timing_stats.add_time("NumPy npy drop array", npy_drop_time)
-
-        # Restore data for next test
-        npk.save({'array1': arrays['array1']})
-        np.savez('test_drop.npz', **arrays)
-        np.save('test_drop_array1.npy', arrays['array1'])
-
-        # Test scenario 2: Drop specific rows
-        drop_indices = list(range(0, size, 2))  # Drop every other row
+        timing_stats.add_time("NumPy npy drop entire array", time.time() - start_time)
         
-        # NumPack drop rows
-        start_time = time.time()
-        npk.drop('array1', drop_indices)
-        drop_rows_time = time.time() - start_time
-        timing_stats.add_time("NumPack drop rows", drop_rows_time)
-
-        # NumPy npz drop rows (need to reload, modify and save)
-        start_time = time.time()
-        npz_data = dict(np.load('test_drop.npz'))
-        mask = np.ones(size, dtype=bool)
-        mask[drop_indices] = False
-        npz_data['array1'] = npz_data['array1'][mask]
-        np.savez('test_drop.npz', **npz_data)
-        npz_drop_rows_time = time.time() - start_time
-        timing_stats.add_time("NumPy npz drop rows", npz_drop_rows_time)
-
-        # NumPy npy drop rows
-        start_time = time.time()
-        npy_data = np.load('test_drop_array1.npy')
-        mask = np.ones(size, dtype=bool)
-        mask[drop_indices] = False
-        npy_data = npy_data[mask]
-        np.save('test_drop_array1.npy', npy_data)
-        npy_drop_rows_time = time.time() - start_time
-        timing_stats.add_time("NumPy npy drop rows", npy_drop_rows_time)
-
-        # Verify data after row dropping
-        loaded_arr1 = npk.load('array1')
-        loaded_arr2 = npk.load('array2')
-        npz_loaded = dict(np.load('test_drop.npz'))
-        npy_loaded = np.load('test_drop_array1.npy')
-
-        # Verify array1 has correct shape after dropping rows
-        expected_shape = (size // 2, arrays['array1'].shape[1])
-        assert loaded_arr1.shape == expected_shape
-        assert npz_loaded['array1'].shape == expected_shape
-        assert npy_loaded.shape == expected_shape
+        # Verify data consistency
+        # Reload data for verification
+        npk.reset()
+        npk.save(arrays)
         
-        # Verify array2 remains unchanged
-        assert np.allclose(loaded_arr2, arrays['array2'])
-        assert np.allclose(npz_loaded['array2'], arrays['array2'])
+        # Verify single row drop
+        npk.drop('array1', [0])
+        loaded = npk.load('array1')
+        assert loaded.shape[0] == size - 1
+        assert np.allclose(loaded[0], arrays['array1'][1])
+        
+        # Verify continuous rows drop
+        npk.reset()
+        npk.save(arrays)
+        npk.drop('array1', list(range(chunk_size)))
+        loaded = npk.load('array1')
+        assert loaded.shape[0] == size - chunk_size
+        assert np.allclose(loaded[0], arrays['array1'][chunk_size])
+        
+        # Verify random rows drop
+        npk.reset()
+        npk.save(arrays)
+        npk.drop('array1', random_indices)
+        loaded = npk.load('array1')
+        assert loaded.shape[0] == size - len(random_indices)
         
     except Exception as e:
         logger.error(f"Drop operations test failed: {str(e)}")
@@ -624,7 +799,6 @@ def test_append_rows_operations(timing_stats: TimingStats):
         logger.error(f"Append rows operations test failed: {str(e)}")
         raise
 
-
 if __name__ == '__main__':
     try:
         logger.info("Performance Test Results")
@@ -635,6 +809,7 @@ if __name__ == '__main__':
         test_random_access()
         test_replace_operations()
         test_drop_operations()
+        # test_very_large_array()
         logger.info("=" * 80)
     except Exception as e:
         logger.error(f"Error occurred during tests: {str(e)}")

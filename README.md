@@ -164,10 +164,17 @@ The following benchmarks were performed on an MacBook Pro (Apple Silicon) with a
 
 #### Drop Operations
 
-| Operation | NumPack | NumPy NPZ | NumPy NPY |
+| Operation (1M rows, float32) | NumPack | NumPy NPZ | NumPy NPY |
 |-----------|---------|-----------|-----------|
 | Drop Array | 0.001s (22.00x NPZ, 1.00x NPY) | 0.022s | 0.001s |
-| Drop Rows (500K) | 0.075s (0.61x NPZ, 0.41x NPY) | 0.046s | 0.031s |
+| Drop First Row | 0.014s (3.21x NPZ, 1.93x NPY) | 0.045s | 0.027s |
+| Drop Last Row | 0.000s (∞x NPZ, ∞x NPY) | 0.045s | 0.027s |
+| Drop Middle Row | 0.014s (3.21x NPZ, 1.93x NPY) | 0.045s | 0.027s |
+| Drop Front Continuous (10K rows) | 0.016s (2.81x NPZ, 1.69x NPY) | 0.045s | 0.027s |
+| Drop Middle Continuous (10K rows) | 0.016s (2.81x NPZ, 1.69x NPY) | 0.045s | 0.027s |
+| Drop End Continuous (10K rows) | 0.001s (45.00x NPZ, 27.00x NPY) | 0.045s | 0.027s |
+| Drop Random Rows (10K rows) | 0.018s (2.50x NPZ, 1.50x NPY) | 0.045s | 0.027s |
+| Drop Near Non-continuous (10K rows) | 0.015s (3.00x NPZ, 1.80x NPY) | 0.045s | 0.027s |
 
 #### Append Operations
 

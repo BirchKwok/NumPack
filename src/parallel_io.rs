@@ -1,4 +1,4 @@
-use std::io::{self, BufWriter, Write};
+use std::io::{self, BufWriter, Write, Seek, SeekFrom};
 use std::fs::{OpenOptions, File};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};

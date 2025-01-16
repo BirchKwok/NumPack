@@ -107,7 +107,7 @@ impl LazyArray {
         let total_rows = self.shape[0];
         let total_cols = if self.shape.len() > 1 { self.shape[1] } else { 1 };
         
-        // 从路径中提取数组名称（去掉后缀和data_前缀）
+        // Extract array name from path (remove suffix and data_ prefix)
         let array_name = self.array_path
             .split('/')
             .last()
@@ -115,10 +115,10 @@ impl LazyArray {
             .trim_end_matches(".npkd")
             .trim_start_matches("data_");
         
-        // 构建形状字符串
+        // Build shape string
         let shape_str = format!("shape={:?}, dtype={:?}", self.shape, self.dtype);
         
-        // 如果数组太小，直接显示全部内容
+        // If array is too small, display all content
         if total_rows <= 6 && total_cols <= 6 {
             let array = self.get_preview_data(py, 0, total_rows, 0, total_cols)?;
             return Ok(format!("LazyArray('{}', {}, \n{}", array_name, shape_str, array));
@@ -127,14 +127,14 @@ impl LazyArray {
         let mut result = String::new();
         result.push_str(&format!("LazyArray('{}', {}, \n", array_name, shape_str));
 
-        // 获取前3行和后3行
+        // Get first 3 rows and last 3 rows
         let show_rows = if total_rows > 6 {
             vec![0, 1, 2, total_rows-3, total_rows-2, total_rows-1]
         } else {
             (0..total_rows).collect()
         };
 
-        // 获取前3列和后3列
+        // Get first 3 columns and last 3 columns
         let show_cols = if total_cols > 6 {
             vec![0, 1, 2, total_cols-3, total_cols-2, total_cols-1]
         } else {
@@ -149,7 +149,7 @@ impl LazyArray {
                 }
             }
             
-            // 获取当前行的数据
+            // Get current row data
             let mut row_str = String::new();
             let mut last_col = None;
             
@@ -160,7 +160,7 @@ impl LazyArray {
                     }
                 }
                 
-                // 获取单个元素
+                // Get single element
                 let value = self.get_element(py, row, col)?;
                 row_str.push_str(&format!(" {}", value));
                 
