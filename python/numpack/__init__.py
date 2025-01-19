@@ -46,10 +46,7 @@ class NumPack:
         Returns:
             np.ndarray: The loaded array
         """
-        result = self._npk.load([array_name], lazy=lazy)
-        if lazy:
-            return result
-        return result[array_name]
+        return self._npk.load(array_name, lazy=lazy)
 
     def replace(self, arrays: Dict[str, np.ndarray], indexes: Union[List[int], int, np.ndarray, slice]) -> None:
         """Replace arrays in NumPack file

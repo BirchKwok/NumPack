@@ -34,20 +34,18 @@ class MmapMode:
         Returns:
             np.memmap: A memory mapped array
         """
-        if array_name not in self.npk.get_member_list():
-            raise KeyError(f"Key {array_name} not found in NumPack")
-        
         if array_name in self.mmap_arrays:
             return self.mmap_arrays[array_name]
         
-        meta = self.npk.get_metadata()["arrays"][array_name]
-        shape = tuple(meta["shape"])
-        dtype = _dtype_map[meta["dtype"]]
-        
-        array_path = self.npk.get_array_path(array_name)
-        mmap_array = np.memmap(array_path, mode='r', dtype=dtype, shape=shape)
-        self.mmap_arrays[array_name] = mmap_array
-        return mmap_array
+        try:
+            meta = self.npk.get_array_metadata(array_name)
+            
+            mmap_array = np.memmap(meta.data_file, mode='r', dtype=_dtype_map[meta.dtype], shape=meta.shape)
+            self.mmap_arrays[array_name] = mmap_array
+            return mmap_array
+            
+        except KeyError:
+            raise KeyError(f"Array {array_name} not found in NumPack")
     
     def chunked_load(self, array_name: str, chunk_rows: int = 100000) -> List[np.memmap]:
         """Load large arrays in chunks
@@ -67,6 +65,9 @@ class MmapMode:
             memmap_chunks.append(memmap_array[i:i+chunk_rows])
         
         return memmap_chunks
+    
+    def __getitem__(self, key):
+        return self.load(key)
     
     def __enter__(self):
         return self

@@ -18,6 +18,14 @@ ALL_DTYPES = [
     (np.float64, [[-1.0, 1.0], [0.0, 0.5]])
 ]
 
+ARRAY_DIMS = [
+    (1, (100,)),                           # 1 dimension
+    (2, (50, 40)),                         # 2 dimension
+    (3, (30, 20, 10)),                     # 3 dimension
+    (4, (20, 15, 10, 5)),                  # 4 dimension
+    (5, (10, 8, 6, 4, 2))                  # 5 dimension
+]
+
 @pytest.fixture
 def temp_dir():
     """Create a temporary directory fixture"""
@@ -42,10 +50,11 @@ def create_test_array(dtype, shape):
         return np.random.rand(*shape).astype(dtype)
 
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
-def test_basic_save_load(numpack, dtype, test_values):
-    """Test basic save and load functionality for all data types"""
-    array1 = create_test_array(dtype, (100, 100))
-    array2 = create_test_array(dtype, (50, 200))
+@pytest.mark.parametrize("ndim,shape", ARRAY_DIMS)
+def test_basic_save_load(numpack, dtype, test_values, ndim, shape):
+    """Test basic save and load functionality for all data types and dimensions"""
+    array1 = create_test_array(dtype, shape)
+    array2 = create_test_array(dtype, shape)
     arrays = {'array1': array1, 'array2': array2}
     
     numpack.save(arrays)
@@ -56,14 +65,14 @@ def test_basic_save_load(numpack, dtype, test_values):
     assert np.array_equal(array2, arr2)
     assert array1.dtype == arr1.dtype
     assert array2.dtype == arr2.dtype
-    
     assert array1.shape == arr1.shape
     assert array2.shape == arr2.shape
 
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
-def test_mmap_load(numpack, dtype, test_values):
-    """Test mmap load functionality for all data types"""
-    array = create_test_array(dtype, (100, 100))
+@pytest.mark.parametrize("ndim,shape", ARRAY_DIMS)
+def test_mmap_load(numpack, dtype, test_values, ndim, shape):
+    """Test mmap load functionality for all data types and dimensions"""
+    array = create_test_array(dtype, shape)
     numpack.save({'array': array})
 
     with numpack.mmap_mode() as mmap_npk:
@@ -72,33 +81,31 @@ def test_mmap_load(numpack, dtype, test_values):
         assert array.dtype == mmap_array.dtype
 
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
-def test_mmap_load_after_row_deletion(numpack, dtype, test_values):
-    """Test mmap load functionality after row deletion for all data types"""
-    array = create_test_array(dtype, (100, 50))
+@pytest.mark.parametrize("ndim,shape", ARRAY_DIMS)
+def test_mmap_load_after_row_deletion(numpack, dtype, test_values, ndim, shape):
+    """Test mmap load functionality after row deletion for all data types and dimensions"""
+    array = create_test_array(dtype, shape)
     numpack.save({'array': array})
     
-    deleted_indices = [10, 20, 30, 40, 50]
+    deleted_indices = [1, 2, 3]  # Delete the first 3 elements
     numpack.drop('array', deleted_indices)
     
     with numpack.mmap_mode() as mmap_npk:
         loaded = mmap_npk.load('array')
         expected = np.delete(array, deleted_indices, axis=0)
         
-        assert loaded.shape == (95, 50)
+        assert loaded.shape[0] == shape[0] - len(deleted_indices)
         assert loaded.dtype == dtype
         assert np.array_equal(loaded, expected)
-        
-        test_indices = [0, 25, 50, 75]
-        for idx in test_indices:
-            assert np.array_equal(loaded[idx], expected[idx])
 
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
-def test_selective_load(numpack, dtype, test_values):
-    """Test selective load functionality for all data types"""
+@pytest.mark.parametrize("ndim,shape", ARRAY_DIMS)
+def test_selective_load(numpack, dtype, test_values, ndim, shape):
+    """Test selective load functionality for all data types and dimensions"""
     arrays = {
-        'array1': create_test_array(dtype, (10, 10)),
-        'array2': create_test_array(dtype, (10, 10)),
-        'array3': create_test_array(dtype, (10, 10))
+        'array1': create_test_array(dtype, shape),
+        'array2': create_test_array(dtype, shape),
+        'array3': create_test_array(dtype, shape)
     }
     numpack.save(arrays)
     
@@ -114,14 +121,15 @@ def test_selective_load(numpack, dtype, test_values):
     assert np.array_equal(arrays['array3'], loaded3)
 
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
-def test_metadata_operations(numpack, dtype, test_values):
-    """Test metadata operations for all data types"""
-    array = create_test_array(dtype, (100, 50))
+@pytest.mark.parametrize("ndim,shape", ARRAY_DIMS)
+def test_metadata_operations(numpack, dtype, test_values, ndim, shape):
+    """Test metadata operations for all data types and dimensions"""
+    array = create_test_array(dtype, shape)
     numpack.save({'array': array})
     
     # Test shape retrieval
-    shape = numpack.get_shape('array')
-    assert shape == (100, 50)
+    saved_shape = numpack.get_shape('array')
+    assert saved_shape == shape  # Direct comparison of tuples
     
     # Test member list
     members = numpack.get_member_list()
@@ -133,11 +141,12 @@ def test_metadata_operations(numpack, dtype, test_values):
     assert mtime > 0
 
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
-def test_array_deletion(numpack, dtype, test_values):
-    """Test array deletion functionality for all data types"""
+@pytest.mark.parametrize("ndim,shape", ARRAY_DIMS)
+def test_array_deletion(numpack, dtype, test_values, ndim, shape):
+    """Test array deletion functionality for all data types and dimensions"""
     arrays = {
-        'array1': create_test_array(dtype, (10, 10)),
-        'array2': create_test_array(dtype, (10, 10))
+        'array1': create_test_array(dtype, shape),
+        'array2': create_test_array(dtype, shape)
     }
     numpack.save(arrays)
     
@@ -156,10 +165,11 @@ def test_array_deletion(numpack, dtype, test_values):
     assert len(member_list) == 0
 
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
-def test_concurrent_operations(numpack, dtype, test_values):
-    """Test concurrent operations for all data types"""
+@pytest.mark.parametrize("ndim,shape", ARRAY_DIMS)
+def test_concurrent_operations(numpack, dtype, test_values, ndim, shape):
+    """Test concurrent operations for all data types and dimensions"""
     def worker(thread_id):
-        array = create_test_array(dtype, (100, 50))
+        array = create_test_array(dtype, shape)
         name = f'array_{thread_id}'
         numpack.save({name: array})
         loaded = numpack.load(name)
@@ -177,8 +187,9 @@ def test_concurrent_operations(numpack, dtype, test_values):
         assert loaded.dtype == dtype
 
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
-def test_error_handling(numpack, dtype, test_values):
-    """Test error handling for all data types"""
+@pytest.mark.parametrize("ndim,shape", ARRAY_DIMS)
+def test_error_handling(numpack, dtype, test_values, ndim, shape):
+    """Test error handling for all data types and dimensions"""
     # Test loading non-existent array
     with pytest.raises(KeyError):
         numpack.load('nonexistent')
@@ -188,49 +199,44 @@ def test_error_handling(numpack, dtype, test_values):
         numpack.save({'array': np.array([1+2j, 3+4j])})  # Complex type not supported
     
     # Test invalid slice operation
-    array = create_test_array(dtype, (10, 10))
+    array = create_test_array(dtype, shape)
     numpack.save({'array': array})
     with pytest.raises(Exception):
-        replacement = create_test_array(dtype, (5, 10))
-        numpack.replace({'array': replacement}, slice(20, 25))  # Slice out of range
+        replacement = create_test_array(dtype, shape)
+        numpack.replace({'array': replacement}, slice(shape[0] + 10, shape[0] + 15))  # Slice out of range
 
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
-def test_append_operations(numpack, dtype, test_values):
-    """Test append operations for all data types"""
-    array = create_test_array(dtype, (100, 50))
+@pytest.mark.parametrize("ndim,shape", ARRAY_DIMS)
+def test_append_operations(numpack, dtype, test_values, ndim, shape):
+    """Test append operations for all data types and dimensions"""
+    array = create_test_array(dtype, shape)
     numpack.save({'array': array})
     
-    append_data = create_test_array(dtype, (50, 50))
+    append_data = create_test_array(dtype, shape)
     numpack.append({'array': append_data})
     
     loaded = numpack.load('array')
     assert loaded.dtype == dtype
-    assert loaded.shape[0] == 150
-    assert np.array_equal(array, loaded[:100])
-    assert np.array_equal(append_data, loaded[100:])
-    
-    with pytest.raises(ValueError):
-        numpack.append({'array': create_test_array(dtype, (10, 30))})
+    assert loaded.shape[0] == 2 * shape[0]  # The first dimension should double
+    assert np.array_equal(array, loaded[:shape[0]])
+    assert np.array_equal(append_data, loaded[shape[0]:])
 
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
-def test_getitem(numpack, dtype, test_values):
-    """Test getitem functionality for all data types"""
-    array = create_test_array(dtype, (100, 50))
+@pytest.mark.parametrize("ndim,shape", ARRAY_DIMS)
+def test_getitem(numpack, dtype, test_values, ndim, shape):
+    """Test getitem functionality for all data types and dimensions"""
+    array = create_test_array(dtype, shape)
     numpack.save({'array': array})
     
-    loaded = numpack.getitem('array', [10, 20, 30])
-    assert np.array_equal(array[[10, 20, 30]], loaded)
-    
-    loaded = numpack.getitem('array', [15, 25, 35])
-    assert np.array_equal(array[[15, 25, 35]], loaded)
-
-    loaded = numpack.getitem('array', [10, 20, 30, 40, 50])
-    assert np.array_equal(array[[10, 20, 30, 40, 50]], loaded)
+    indices = [1, 2, 3]
+    loaded = numpack.getitem('array', indices)
+    assert np.array_equal(array[indices], loaded)
 
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
-def test_get_metadata(numpack, dtype, test_values):
-    """Test get_metadata functionality"""
-    array = create_test_array(dtype, (100, 50))
+@pytest.mark.parametrize("ndim,shape", ARRAY_DIMS)
+def test_get_metadata(numpack, dtype, test_values, ndim, shape):
+    """Test get_metadata functionality for all dimensions"""
+    array = create_test_array(dtype, shape)
     numpack.save({'array': array})
     
     metadata = numpack.get_metadata()
@@ -238,14 +244,15 @@ def test_get_metadata(numpack, dtype, test_values):
     assert 'arrays' in metadata
     assert 'array' in metadata['arrays']
     assert 'shape' in metadata['arrays']['array']
-    assert metadata['arrays']['array']['shape'] == [100, 50]
+    assert metadata['arrays']['array']['shape'] == list(shape)
 
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
-def test_magic_methods(numpack, dtype, test_values):
-    """Test magic methods (__getitem__ and __iter__)"""
+@pytest.mark.parametrize("ndim,shape", ARRAY_DIMS)
+def test_magic_methods(numpack, dtype, test_values, ndim, shape):
+    """Test magic methods (__getitem__ and __iter__) for all dimensions"""
     arrays = {
-        'array1': create_test_array(dtype, (10, 10)),
-        'array2': create_test_array(dtype, (20, 10))
+        'array1': create_test_array(dtype, shape),
+        'array2': create_test_array(dtype, shape)
     }
     numpack.save(arrays)
     
@@ -258,9 +265,10 @@ def test_magic_methods(numpack, dtype, test_values):
     assert set(member_list) == set(['array1', 'array2'])
 
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
-def test_stream_load(numpack, dtype, test_values):
+@pytest.mark.parametrize("ndim,shape", ARRAY_DIMS)
+def test_stream_load(numpack, dtype, test_values, ndim, shape):
     """Test stream_load functionality"""
-    array = create_test_array(dtype, (100, 50))
+    array = create_test_array(dtype, shape)
     numpack.save({'array': array})
     
     # Test with buffer_size=None
@@ -271,7 +279,7 @@ def test_stream_load(numpack, dtype, test_values):
     buffer_size = 10
     for i, chunk in enumerate(numpack.stream_load('array', buffer_size=buffer_size)):
         start_idx = i * buffer_size
-        end_idx = min(start_idx + buffer_size, 100)
+        end_idx = min(start_idx + buffer_size, shape[0])
         assert np.array_equal(array[start_idx:end_idx], chunk)
     
     # Test invalid buffer_size

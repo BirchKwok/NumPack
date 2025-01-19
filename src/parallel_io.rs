@@ -839,4 +839,13 @@ impl ParallelIO {
 
         Ok(data)
     }
+
+    pub fn get_array_view(&self, name: &str) -> NpkResult<ArrayView> {
+        let views = self.get_array_views(Some(&[name.to_string()]))?;
+        if let Some((_, view)) = views.into_iter().next() {
+            Ok(view)
+        } else {
+            Err(NpkError::ArrayNotFound(name.to_string()))
+        }
+    }
 }
