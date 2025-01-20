@@ -25,6 +25,18 @@ use std::sync::MutexGuard;
 use crate::parallel_io::ParallelIO;
 use crate::metadata::DataType;
 
+#[cfg(target_family = "unix")]
+use std::os::unix::io::AsRawFd;
+
+#[cfg(target_family = "windows")] 
+use std::os::windows::io::{AsRawHandle, AsHandle};
+
+#[cfg(target_family = "windows")]
+use windows_sys::Win32::Storage::FileSystem::SetFileIoOverlappedRange;
+
+#[cfg(target_family = "windows")]
+use windows_sys::Win32::System::Memory::VirtualLock;
+
 lazy_static! {
     static ref MMAP_CACHE: Mutex<HashMap<String, (Arc<Mmap>, u64)>> = Mutex::new(HashMap::new());
 }
@@ -235,7 +247,7 @@ impl LazyArray {
         let mut indexes = Vec::new();
 
         if let Ok(slice) = key.downcast::<PySlice>() {
-            let indices = slice.indices(total_rows as i64)?;
+            let indices = slice.indices((total_rows as i32).try_into().unwrap())?;
             for i in (indices.start..indices.stop).step_by(indices.step as usize) {
                 if i >= 0 && (i as usize) < total_rows {
                     indexes.push(i as usize);
@@ -1149,13 +1161,13 @@ impl NumPack {
 }
 
 fn create_optimized_mmap(path: &Path, modify_time: u64, cache: &mut MutexGuard<HashMap<String, (Arc<Mmap>, u64)>>) -> PyResult<Arc<Mmap>> {
-    use std::os::unix::io::AsRawFd;
-    
     let file = std::fs::File::open(path)?;
     let file_size = file.metadata()?.len() as usize;
     
-    #[cfg(target_os = "linux")]
+    // Unix系统特定的优化
+    #[cfg(all(target_family = "unix", target_os = "linux"))]
     unsafe {
+        use std::os::unix::io::AsRawFd;
         let addr = libc::mmap(
             std::ptr::null_mut(),
             file_size,
@@ -1183,17 +1195,43 @@ fn create_optimized_mmap(path: &Path, modify_time: u64, cache: &mut MutexGuard<H
         libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_WILLNEED);
     }
     
-    #[cfg(target_os = "macos")]
+    // macOS系统特定的优化
+    #[cfg(all(target_family = "unix", target_os = "macos"))]
     unsafe {
+        use std::os::unix::io::AsRawFd;
         let radv = libc::radvisory {
             ra_offset: 0,
             ra_count: file_size as i32,
         };
         libc::fcntl(file.as_raw_fd(), libc::F_RDADVISE, &radv);
-        
         libc::fcntl(file.as_raw_fd(), libc::F_RDAHEAD, 1);
     }
+
+    // Windows系统特定的优化
+    #[cfg(target_family = "windows")]
+    unsafe {
+        // 创建内存映射视图
+        if let Ok(mmap_view) = memmap2::MmapOptions::new()
+            .populate() // 预取页面到内存
+            .map(&file) 
+        {
+            // 锁定内存区域以防止页面交换
+            let _ = VirtualLock(
+                mmap_view.as_ptr() as *mut _,
+                mmap_view.len()
+            );
+        }
+
+        // 设置文件IO重叠范围以优化性能
+        let handle = file.as_handle();
+        let _ = SetFileIoOverlappedRange(
+            handle as _,
+            0,
+            file_size.min(u32::MAX as usize) as u32  // 确保不超过u32的范围
+        );
+    }
     
+    // 通用的mmap创建代码
     let mmap = unsafe { 
         memmap2::MmapOptions::new()
             .populate()
@@ -1213,3 +1251,4 @@ fn _lib_numpack(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<ArrayMetadata>()?;
     Ok(())
 }
+
