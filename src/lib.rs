@@ -29,7 +29,7 @@ use crate::metadata::DataType;
 use std::os::unix::io::AsRawFd;
 
 #[cfg(target_family = "windows")] 
-use std::os::windows::io::AsHandle;
+use std::os::windows::io::{AsHandle, HandleOrInvalid};
 
 #[cfg(target_family = "windows")]
 use windows_sys::Win32::Storage::FileSystem::SetFileIoOverlappedRange;
@@ -1164,7 +1164,7 @@ fn create_optimized_mmap(path: &Path, modify_time: u64, cache: &mut MutexGuard<H
     let file = std::fs::File::open(path)?;
     let file_size = file.metadata()?.len() as usize;
     
-    // Unix系统特定的优化
+    // Unix
     #[cfg(all(target_family = "unix", target_os = "linux"))]
     unsafe {
         use std::os::unix::io::AsRawFd;
@@ -1195,7 +1195,7 @@ fn create_optimized_mmap(path: &Path, modify_time: u64, cache: &mut MutexGuard<H
         libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_WILLNEED);
     }
     
-    // macOS系统特定的优化
+    // macOS
     #[cfg(all(target_family = "unix", target_os = "macos"))]
     unsafe {
         use std::os::unix::io::AsRawFd;
@@ -1207,31 +1207,31 @@ fn create_optimized_mmap(path: &Path, modify_time: u64, cache: &mut MutexGuard<H
         libc::fcntl(file.as_raw_fd(), libc::F_RDAHEAD, 1);
     }
 
-    // Windows系统特定的优化
+    // Windows
     #[cfg(target_family = "windows")]
     unsafe {
-        // 创建内存映射视图
         if let Ok(mmap_view) = memmap2::MmapOptions::new()
-            .populate() // 预取页面到内存
+            .populate() 
             .map(&file) 
         {
-            // 锁定内存区域以防止页面交换
+            
             let _ = VirtualLock(
                 mmap_view.as_ptr() as *mut _,
                 mmap_view.len()
             );
         }
 
-        // 设置文件IO重叠范围以优化性能
+        
         let handle = file.as_handle();
+        let raw_handle = handle.as_raw_handle() as isize;
         let _ = SetFileIoOverlappedRange(
-            handle.as_ptr() as _,  // 修复: 使用as_ptr()获取原始句柄
-            std::ptr::null(),      // 修复: 使用null指针
-            file_size.min(u32::MAX as usize) as u32  // 确保不超过u32的范围
+            raw_handle as *mut _,
+            std::ptr::null(),
+            file_size.min(u32::MAX as usize) as u32
         );
     }
     
-    // 通用的mmap创建代码
+    
     let mmap = unsafe { 
         memmap2::MmapOptions::new()
             .populate()

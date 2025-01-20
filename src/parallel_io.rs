@@ -1,15 +1,15 @@
 use std::io::{self, BufWriter, Write};
-use std::path::{Path, PathBuf};
-use std::fs::{self, File, OpenOptions};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::PathBuf;
+use std::fs::{File, OpenOptions};
+use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
-use memmap2::{MmapOptions, Mmap};
+use memmap2::MmapOptions;
 use rayon::prelude::*;
 use ndarray::{ArrayD, ArrayViewD, IxDyn};
 use numpy::Element;
 
 use crate::error::{NpkError, NpkResult};
-use crate::metadata::{ArrayMetadata, DataType, MetadataStore, CachedMetadataStore};
+use crate::metadata::{ArrayMetadata, DataType, CachedMetadataStore};
 
 // Platform-specific file IO
 #[cfg(windows)]
