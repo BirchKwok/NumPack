@@ -29,7 +29,7 @@ use crate::metadata::DataType;
 use std::os::unix::io::AsRawFd;
 
 #[cfg(target_family = "windows")] 
-use std::os::windows::io::{AsHandle, HandleOrInvalid};
+use std::os::windows::io::{AsHandle, AsRawHandle};
 
 #[cfg(target_family = "windows")]
 use windows_sys::Win32::Storage::FileSystem::SetFileIoOverlappedRange;

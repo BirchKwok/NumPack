@@ -261,7 +261,7 @@ pub struct MetadataStore {
 }
 
 impl MetadataStore {
-    pub fn new(_wal_path: Option<PathBuf>) -> Self {
+    pub fn new(wal_path: Option<PathBuf>) -> Self {
         Self {
             version: 1,
             arrays: HashMap::new(),

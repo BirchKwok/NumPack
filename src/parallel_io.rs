@@ -13,7 +13,7 @@ use crate::metadata::{ArrayMetadata, DataType, CachedMetadataStore};
 
 // Platform-specific file IO
 #[cfg(windows)]
-use std::os::windows::fs::FileExt;
+use std::os::windows::prelude::*;
 
 // Helper functions for file IO
 #[cfg(unix)]
@@ -35,7 +35,7 @@ mod platform {
 mod platform {
     use std::io;
     use std::fs::File;
-    use std::os::windows::fs::FileExt;
+    use std::os::windows::prelude::*;
 
     pub fn read_at_offset(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
         file.seek_read(buf, offset)
