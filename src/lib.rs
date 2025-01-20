@@ -1214,23 +1214,20 @@ fn create_optimized_mmap(path: &Path, modify_time: u64, cache: &mut MutexGuard<H
             .populate() 
             .map(&file) 
         {
-            
             let _ = VirtualLock(
                 mmap_view.as_ptr() as *mut _,
                 mmap_view.len()
             );
         }
 
-        
         let handle = file.as_handle();
-        let raw_handle = handle.as_raw_handle() as isize;
+        let raw_handle = handle.as_raw_handle();
         let _ = SetFileIoOverlappedRange(
-            raw_handle as *mut _,
+            raw_handle,
             std::ptr::null(),
             file_size.min(u32::MAX as usize) as u32
         );
     }
-    
     
     let mmap = unsafe { 
         memmap2::MmapOptions::new()
