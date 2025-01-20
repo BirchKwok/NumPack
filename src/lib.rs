@@ -29,7 +29,7 @@ use crate::metadata::DataType;
 use std::os::unix::io::AsRawFd;
 
 #[cfg(target_family = "windows")] 
-use std::os::windows::io::{AsRawHandle, AsHandle};
+use std::os::windows::io::AsHandle;
 
 #[cfg(target_family = "windows")]
 use windows_sys::Win32::Storage::FileSystem::SetFileIoOverlappedRange;
@@ -71,7 +71,7 @@ struct ArrayMetadata {
 
 #[pymethods]
 impl LazyArray {
-    unsafe fn __getbuffer__(slf: PyRefMut<Self>, view: *mut Py_buffer, flags: i32) -> PyResult<()> {
+    unsafe fn __getbuffer__(slf: PyRefMut<Self>, view: *mut Py_buffer, _flags: i32) -> PyResult<()> {
         if view.is_null() {
             return Err(PyErr::new::<pyo3::exceptions::PyBufferError, _>("View is null"));
         }
@@ -1225,8 +1225,8 @@ fn create_optimized_mmap(path: &Path, modify_time: u64, cache: &mut MutexGuard<H
         // 设置文件IO重叠范围以优化性能
         let handle = file.as_handle();
         let _ = SetFileIoOverlappedRange(
-            handle as _,
-            0,
+            handle.as_ptr() as _,  // 修复: 使用as_ptr()获取原始句柄
+            std::ptr::null(),      // 修复: 使用null指针
             file_size.min(u32::MAX as usize) as u32  // 确保不超过u32的范围
         );
     }
