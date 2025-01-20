@@ -11,9 +11,6 @@ use numpy::Element;
 use crate::error::{NpkError, NpkResult};
 use crate::metadata::{ArrayMetadata, DataType, CachedMetadataStore};
 
-#[cfg(windows)]
-use std::os::windows::fs::FileExt;
-
 // Helper functions for file IO
 #[cfg(unix)]
 mod platform {

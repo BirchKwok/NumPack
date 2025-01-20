@@ -37,6 +37,9 @@ use windows_sys::Win32::Storage::FileSystem::SetFileIoOverlappedRange;
 #[cfg(target_family = "windows")]
 use windows_sys::Win32::System::Memory::VirtualLock;
 
+#[cfg(target_family = "windows")]
+use windows_sys::Win32::Foundation::HANDLE;
+
 lazy_static! {
     static ref MMAP_CACHE: Mutex<HashMap<String, (Arc<Mmap>, u64)>> = Mutex::new(HashMap::new());
 }
@@ -1221,9 +1224,9 @@ fn create_optimized_mmap(path: &Path, modify_time: u64, cache: &mut MutexGuard<H
         }
 
         let handle = file.as_handle();
-        let raw_handle = handle.as_raw_handle();
+        let raw_handle = handle.as_raw_handle() as HANDLE;
         let _ = SetFileIoOverlappedRange(
-            raw_handle,
+            raw_handle as isize,
             std::ptr::null(),
             file_size.min(u32::MAX as usize) as u32
         );
