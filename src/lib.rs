@@ -6,7 +6,7 @@ mod metadata;
 mod parallel_io;
 
 use std::path::{Path, PathBuf};
-use numpy::{IntoPyArray, PyArrayDyn};
+use numpy::{IntoPyArray, PyArrayDyn, PyArrayMethods};
 use pyo3::exceptions::PyKeyError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
@@ -21,6 +21,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::Arc;
 use std::sync::MutexGuard;
+use half::f16;
 
 use crate::parallel_io::ParallelIO;
 use crate::metadata::DataType;
@@ -89,6 +90,7 @@ impl LazyArray {
             DataType::Int16 => "h",
             DataType::Int32 => "i",
             DataType::Int64 => "q",
+            DataType::Float16 => "e",
             DataType::Float32 => "f",
             DataType::Float64 => "d",
         };
@@ -216,6 +218,10 @@ impl LazyArray {
             DataType::Int16 => unsafe { *(self.mmap.as_ptr().add(offset) as *const i16) }.to_string(),
             DataType::Int32 => unsafe { *(self.mmap.as_ptr().add(offset) as *const i32) }.to_string(),
             DataType::Int64 => unsafe { *(self.mmap.as_ptr().add(offset) as *const i64) }.to_string(),
+            DataType::Float16 => {
+                let val = unsafe { *(self.mmap.as_ptr().add(offset) as *const f16) };
+                format!("{:.6}", val)
+            }
             DataType::Float32 => {
                 let val = unsafe { *(self.mmap.as_ptr().add(offset) as *const f32) };
                 format!("{:.6}", val)
@@ -245,7 +251,7 @@ impl LazyArray {
         Ok(result)
     }
 
-    fn __getitem__(&self, py: Python, key: &PyAny) -> PyResult<PyObject> {
+    fn __getitem__(&self, py: Python, key: &Bound<'_, PyAny>) -> PyResult<PyObject> {
         let total_rows = self.shape[0];
         let mut indexes = Vec::new();
 
@@ -351,6 +357,13 @@ impl LazyArray {
                 };
                 array.into_pyarray(py).into()
             }
+            DataType::Float16 => {
+                let array = unsafe {
+                    let slice: &[f16] = bytemuck::cast_slice(&result_data);
+                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                };
+                array.into_pyarray(py).into()
+            }
             DataType::Float32 => {
                 let array = unsafe {
                     let slice: &[f32] = bytemuck::cast_slice(&result_data);
@@ -376,7 +389,7 @@ impl LazyArray {
     }
 }
 
-fn get_array_dtype(array: &PyAny) -> PyResult<DataType> {
+fn get_array_dtype(array: &Bound<'_, PyAny>) -> PyResult<DataType> {
     let dtype_str = array.getattr("dtype")?.getattr("name")?.extract::<String>()?;
     match dtype_str.as_str() {
         "bool" => Ok(DataType::Bool),
@@ -388,6 +401,7 @@ fn get_array_dtype(array: &PyAny) -> PyResult<DataType> {
         "int16" => Ok(DataType::Int16),
         "int32" => Ok(DataType::Int32),
         "int64" => Ok(DataType::Int64),
+        "float16" => Ok(DataType::Float16),
         "float32" => Ok(DataType::Float32),
         "float64" => Ok(DataType::Float64),
         _ => Err(pyo3::exceptions::PyValueError::new_err(
@@ -414,7 +428,7 @@ impl NumPack {
         })
     }
 
-    fn save(&self, arrays: &PyDict, array_name: Option<String>) -> PyResult<()> {
+    fn save(&self, arrays: &Bound<'_, PyDict>, array_name: Option<String>) -> PyResult<()> {
         let mut bool_arrays = Vec::new();
         let mut u8_arrays = Vec::new();
         let mut u16_arrays = Vec::new();
@@ -424,6 +438,7 @@ impl NumPack {
         let mut i16_arrays = Vec::new();
         let mut i32_arrays = Vec::new();
         let mut i64_arrays = Vec::new();
+        let mut f16_arrays = Vec::new();
         let mut f32_arrays = Vec::new();
         let mut f64_arrays = Vec::new();
 
@@ -434,7 +449,7 @@ impl NumPack {
                 key.extract::<String>()?
             };
             
-            let dtype = get_array_dtype(value)?;
+            let dtype = get_array_dtype(&value)?;
             let _shape: Vec<u64> = value.getattr("shape")?
                 .extract::<Vec<usize>>()?
                 .into_iter()
@@ -443,57 +458,62 @@ impl NumPack {
 
             match dtype {
                 DataType::Bool => {
-                    let array = value.extract::<&PyArrayDyn<bool>>()?;
+                    let array = value.downcast::<PyArrayDyn<bool>>()?;
                     let array = unsafe { array.as_array().to_owned() };
                     bool_arrays.push((name, array, dtype));
                 }
                 DataType::Uint8 => {
-                    let array = value.extract::<&PyArrayDyn<u8>>()?;
+                    let array = value.downcast::<PyArrayDyn<u8>>()?;
                     let array = unsafe { array.as_array().to_owned() };
                     u8_arrays.push((name, array, dtype));
                 }
                 DataType::Uint16 => {
-                    let array = value.extract::<&PyArrayDyn<u16>>()?;
+                    let array = value.downcast::<PyArrayDyn<u16>>()?;
                     let array = unsafe { array.as_array().to_owned() };
                     u16_arrays.push((name, array, dtype));
                 }
                 DataType::Uint32 => {
-                    let array = value.extract::<&PyArrayDyn<u32>>()?;
+                    let array = value.downcast::<PyArrayDyn<u32>>()?;
                     let array = unsafe { array.as_array().to_owned() };
                     u32_arrays.push((name, array, dtype));
                 }
                 DataType::Uint64 => {
-                    let array = value.extract::<&PyArrayDyn<u64>>()?;
+                    let array = value.downcast::<PyArrayDyn<u64>>()?;
                     let array = unsafe { array.as_array().to_owned() };
                     u64_arrays.push((name, array, dtype));
                 }
                 DataType::Int8 => {
-                    let array = value.extract::<&PyArrayDyn<i8>>()?;
+                    let array = value.downcast::<PyArrayDyn<i8>>()?;
                     let array = unsafe { array.as_array().to_owned() };
                     i8_arrays.push((name, array, dtype));
                 }
                 DataType::Int16 => {
-                    let array = value.extract::<&PyArrayDyn<i16>>()?;
+                    let array = value.downcast::<PyArrayDyn<i16>>()?;
                     let array = unsafe { array.as_array().to_owned() };
                     i16_arrays.push((name, array, dtype));
                 }
                 DataType::Int32 => {
-                    let array = value.extract::<&PyArrayDyn<i32>>()?;
+                    let array = value.downcast::<PyArrayDyn<i32>>()?;
                     let array = unsafe { array.as_array().to_owned() };
                     i32_arrays.push((name, array, dtype));
                 }
                 DataType::Int64 => {
-                    let array = value.extract::<&PyArrayDyn<i64>>()?;
+                    let array = value.downcast::<PyArrayDyn<i64>>()?;
                     let array = unsafe { array.as_array().to_owned() };
                     i64_arrays.push((name, array, dtype));
                 }
+                DataType::Float16 => {
+                    let array = value.downcast::<PyArrayDyn<f16>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    f16_arrays.push((name, array, dtype));
+                }
                 DataType::Float32 => {
-                    let array = value.extract::<&PyArrayDyn<f32>>()?;
+                    let array = value.downcast::<PyArrayDyn<f32>>()?;
                     let array = unsafe { array.as_array().to_owned() };
                     f32_arrays.push((name, array, dtype));
                 }
                 DataType::Float64 => {
-                    let array = value.extract::<&PyArrayDyn<f64>>()?;
+                    let array = value.downcast::<PyArrayDyn<f64>>()?;
                     let array = unsafe { array.as_array().to_owned() };
                     f64_arrays.push((name, array, dtype));
                 }
@@ -526,6 +546,9 @@ impl NumPack {
         }
         if !i64_arrays.is_empty() {
             self.io.save_arrays(&i64_arrays)?;
+        }
+        if !f16_arrays.is_empty() {
+            self.io.save_arrays(&f16_arrays)?;
         }
         if !f32_arrays.is_empty() {
             self.io.save_arrays(&f32_arrays)?;
@@ -573,7 +596,7 @@ impl NumPack {
                 modify_time: meta.last_modified,
             };
             
-            return Ok(lazy_array.into_py(py));
+            return Ok(Py::new(py, lazy_array)?.into());
         }
 
         let meta = self.io.get_array_metadata(array_name)?;
@@ -650,6 +673,13 @@ impl NumPack {
                 };
                 data.into_pyarray(py).into()
             }
+            DataType::Float16 => {
+                let data = unsafe {
+                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const f16, mmap.len() / 2);
+                    ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
+                };
+                data.into_pyarray(py).into()
+            }
             DataType::Float32 => {
                 let data = unsafe {
                     let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const f32, mmap.len() / 4);
@@ -675,8 +705,8 @@ impl NumPack {
     fn get_shape(&self, py: Python, array_name: &str) -> PyResult<Py<PyTuple>> {
         if let Some(meta) = self.io.get_array_meta(array_name) {
             let shape: Vec<i64> = meta.shape.iter().map(|&x| x as i64).collect();
-            let shape_tuple = PyTuple::new(py, &shape);
-            Ok(shape_tuple.into())
+            let shape_tuple = PyTuple::new(py, &shape)?;
+            Ok(shape_tuple.unbind())
         } else {
             Err(PyErr::new::<PyKeyError, _>(format!("Array {} not found", array_name)))
         }
@@ -702,13 +732,13 @@ impl NumPack {
         dict.set_item("base_dir", self.base_dir.to_string_lossy().as_ref())?;
         dict.set_item("total_arrays", self.io.list_arrays().len())?;
         
-        Ok(dict.into())
+        Ok(dict.unbind().into())
     }
 
     fn get_member_list(&self, py: Python) -> PyResult<Py<PyList>> {
         let names = self.io.list_arrays();
-        let list = PyList::new(py, names);
-        Ok(list.into())
+        let list = PyList::new(py, names)?;
+        Ok(list.unbind())
     }
 
     fn get_modify_time(&self, array_name: &str) -> PyResult<Option<u64>> {
@@ -720,12 +750,13 @@ impl NumPack {
         Ok(())
     }
 
-    pub fn append(&mut self, arrays: Vec<(&str, &PyAny)>) -> PyResult<()> {
+    pub fn append(&mut self, arrays: &Bound<'_, PyDict>) -> PyResult<()> {
         // Check if the array exists and get the existing array information
         let mut existing_arrays: Vec<(String, DataType, Vec<usize>)> = Vec::new();
         
-        for (name, array) in &arrays {
-            if let Some(meta) = self.io.get_array_meta(name) {
+        for (key, array) in arrays.iter() {
+            let name = key.extract::<String>()?;
+            if let Some(meta) = self.io.get_array_meta(&name) {
                 let shape: Vec<usize> = array.getattr("shape")?.extract()?;
                 if meta.shape.len() != shape.len() {
                     return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -751,8 +782,9 @@ impl NumPack {
         }
 
         // Start appending data
-        for (name, array) in arrays {
-            let meta = self.io.get_array_meta(name).unwrap();
+        for (key, array) in arrays.iter() {
+            let name = key.extract::<String>()?;
+            let meta = self.io.get_array_meta(&name).unwrap();
             let shape: Vec<usize> = array.getattr("shape")?.extract()?;
             
             // Append data to file
@@ -816,6 +848,12 @@ impl NumPack {
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
+                DataType::Float16 => {
+                    let py_array = array.downcast::<PyArrayDyn<f16>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    file.write_all(bytemuck::cast_slice(data))?;
+                }
                 DataType::Float32 => {
                     let py_array = array.downcast::<PyArrayDyn<f32>>()?;
                     let array_ref = unsafe { py_array.as_array() };
@@ -838,14 +876,14 @@ impl NumPack {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs();
-            self.io.update_array_metadata(name, new_meta)?;
+            self.io.update_array_metadata(&name, new_meta)?;
         }
         
         Ok(())
     }
 
     #[pyo3(signature = (array_names, indexes=None))]
-    fn drop(&self, array_names: &PyAny, indexes: Option<&PyAny>) -> PyResult<()> {
+    fn drop(&self, array_names: &Bound<'_, PyAny>, indexes: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
         let names = if let Ok(list) = array_names.downcast::<PyList>() {
             list.iter()
                 .map(|name| name.extract::<String>())
@@ -901,7 +939,7 @@ impl NumPack {
         self.base_dir.join(&self.io.get_array_metadata(array_name).unwrap().data_file)
     }
 
-    fn replace(&self, arrays: &PyDict, indexes: Option<&PyAny>) -> PyResult<()> {
+    fn replace(&self, arrays: &Bound<'_, PyDict>, indexes: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
         // Get the indices of the rows to replace
         let indices = if let Some(idx) = indexes {
             if let Ok(indices) = idx.extract::<Vec<i64>>() {
@@ -973,57 +1011,62 @@ impl NumPack {
             // Perform the replace operation
             match meta.dtype {
                 DataType::Bool => {
-                    let array = value.extract::<&PyArrayDyn<bool>>()?;
+                    let array = value.downcast::<PyArrayDyn<bool>>()?;
                     let array = unsafe { array.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Uint8 => {
-                    let array = value.extract::<&PyArrayDyn<u8>>()?;
+                    let array = value.downcast::<PyArrayDyn<u8>>()?;
                     let array = unsafe { array.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Uint16 => {
-                    let array = value.extract::<&PyArrayDyn<u16>>()?;
+                    let array = value.downcast::<PyArrayDyn<u16>>()?;
                     let array = unsafe { array.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Uint32 => {
-                    let array = value.extract::<&PyArrayDyn<u32>>()?;
+                    let array = value.downcast::<PyArrayDyn<u32>>()?;
                     let array = unsafe { array.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Uint64 => {
-                    let array = value.extract::<&PyArrayDyn<u64>>()?;
+                    let array = value.downcast::<PyArrayDyn<u64>>()?;
                     let array = unsafe { array.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Int8 => {
-                    let array = value.extract::<&PyArrayDyn<i8>>()?;
+                    let array = value.downcast::<PyArrayDyn<i8>>()?;
                     let array = unsafe { array.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Int16 => {
-                    let array = value.extract::<&PyArrayDyn<i16>>()?;
+                    let array = value.downcast::<PyArrayDyn<i16>>()?;
                     let array = unsafe { array.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Int32 => {
-                    let array = value.extract::<&PyArrayDyn<i32>>()?;
+                    let array = value.downcast::<PyArrayDyn<i32>>()?;
                     let array = unsafe { array.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Int64 => {
-                    let array = value.extract::<&PyArrayDyn<i64>>()?;
+                    let array = value.downcast::<PyArrayDyn<i64>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
+                }
+                DataType::Float16 => {
+                    let array = value.downcast::<PyArrayDyn<f16>>()?;
                     let array = unsafe { array.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Float32 => {
-                    let array = value.extract::<&PyArrayDyn<f32>>()?;
+                    let array = value.downcast::<PyArrayDyn<f32>>()?;
                     let array = unsafe { array.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Float64 => {
-                    let array = value.extract::<&PyArrayDyn<f64>>()?;
+                    let array = value.downcast::<PyArrayDyn<f64>>()?;
                     let array = unsafe { array.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
@@ -1033,7 +1076,7 @@ impl NumPack {
         Ok(())
     }
 
-    fn getitem(&self, py: Python, array_name: &str, indices: &PyAny) -> PyResult<PyObject> {
+    fn getitem(&self, py: Python, array_name: &str, indices: &Bound<'_, PyAny>) -> PyResult<PyObject> {
         let meta = self.io.get_array_meta(array_name)
             .ok_or_else(|| PyErr::new::<PyKeyError, _>(format!("Array {} not found", array_name)))?;
         
@@ -1127,6 +1170,13 @@ impl NumPack {
             DataType::Int64 => {
                 let array = unsafe {
                     let slice: &[i64] = bytemuck::cast_slice(&data);
+                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Float16 => {
+                let array = unsafe {
+                    let slice: &[f16] = bytemuck::cast_slice(&data);
                     ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
                 };
                 array.into_pyarray(py).into()
@@ -1245,7 +1295,7 @@ fn create_optimized_mmap(path: &Path, modify_time: u64, cache: &mut MutexGuard<H
 }
 
 #[pymodule]
-fn _lib_numpack(_py: Python, m: &PyModule) -> PyResult<()> {
+fn _lib_numpack(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NumPack>()?;
     m.add_class::<LazyArray>()?;
     m.add_class::<ArrayMetadata>()?;

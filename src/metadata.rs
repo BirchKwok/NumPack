@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use bitvec::prelude::*;
 use serde_bytes::ByteBuf;
+// use half::f16; // Will be used when f16 arrays are actually loaded
 
 use crate::error::{NpkError, NpkResult};
 
@@ -184,6 +185,7 @@ pub enum DataType {
     Int16,
     Int32,
     Int64,
+    Float16,
     Float32,
     Float64,
 }
@@ -200,6 +202,7 @@ impl DataType {
             DataType::Int16 => 2,
             DataType::Int32 => 4,
             DataType::Int64 => 8,
+            DataType::Float16 => 2,
             DataType::Float32 => 4,
             DataType::Float64 => 8,
         }

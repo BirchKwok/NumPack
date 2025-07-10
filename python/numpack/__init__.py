@@ -7,7 +7,7 @@ from ._lib_numpack import NumPack as _NumPack, LazyArray
 from .mmap import MmapMode
 
 
-__version__ = "0.1.6"
+__version__ = "0.1.7"
 
 
 class NumPack:
@@ -76,8 +76,7 @@ class NumPack:
         if not isinstance(arrays, dict):
             raise ValueError("arrays must be a dictionary")
         
-        array_tuples = [(name, array) for name, array in arrays.items()]
-        self._npk.append(array_tuples)
+        self._npk.append(arrays)
 
     def drop(self, array_name: Union[str, List[str]], indexes: Optional[Union[List[int], int, np.ndarray]] = None) -> None:
         """Drop arrays from NumPack file
