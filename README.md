@@ -189,45 +189,51 @@ The following benchmarks were performed on an MacBook Pro (Apple Silicon) with a
 
 | Operation | NumPack | NumPy NPZ | NumPy NPY |
 |-----------|---------|-----------|-----------|
-| Save | 0.014s (0.86x NPZ, 0.57x NPY) | 0.012s | 0.008s |
-| Full Load | 0.008s (1.63x NPZ, 0.88x NPY) | 0.013s | 0.007s |
-| Selective Load | 0.006s (1.50x NPZ, -) | 0.009s | - |
+| Save | 0.015s (0.93x NPZ, 0.53x NPY) | 0.014s | 0.008s |
+| Full Load | 0.008s (1.75x NPZ, 1.00x NPY) | 0.014s | 0.008s |
+| Selective Load | 0.006s (1.67x NPZ, -) | 0.010s | - |
 
 #### Data Modification Operations
 
 | Operation | NumPack | NumPy NPZ | NumPy NPY |
 |-----------|---------|-----------|-----------|
-| Single Row Replace | 0.000s (19.00x NPZ, 12.00x NPY) | 0.019s | 0.012s |
-| Continuous Rows (10K) | 0.001s (20.00x NPZ, 12.00x NPY) | 0.020s | 0.012s |
-| Random Rows (10K) | 0.015s (1.33x NPZ, 0.87x NPY) | 0.020s | 0.013s |
-| Large Data Replace (500K) | 0.019s (1.00x NPZ, 0.74x NPY) | 0.019s | 0.014s |
+| Single Row Replace | 0.000s (≥40x NPZ, ≥30x NPY) | 0.022s | 0.015s |
+| Continuous Rows (10K) | 0.001s (24.00x NPZ, 14.00x NPY) | 0.024s | 0.014s |
+| Random Rows (10K) | 0.015s (1.53x NPZ, 0.93x NPY) | 0.023s | 0.014s |
+| Large Data Replace (500K) | 0.020s (1.10x NPZ, 0.75x NPY) | 0.022s | 0.015s |
 
 #### Drop Operations
 
 | Operation (1M rows, float32) | NumPack | NumPy NPZ | NumPy NPY |
 |-----------|---------|-----------|-----------|
-| Drop Array | 0.001s (22.00x NPZ, 1.00x NPY) | 0.022s | 0.001s |
-| Drop First Row | 0.014s (3.21x NPZ, 1.93x NPY) | 0.045s | 0.027s |
-| Drop Last Row | 0.000s (∞x NPZ, ∞x NPY) | 0.045s | 0.027s |
-| Drop Middle Row | 0.014s (3.21x NPZ, 1.93x NPY) | 0.045s | 0.027s |
-| Drop Front Continuous (10K rows) | 0.016s (2.81x NPZ, 1.69x NPY) | 0.045s | 0.027s |
-| Drop Middle Continuous (10K rows) | 0.016s (2.81x NPZ, 1.69x NPY) | 0.045s | 0.027s |
-| Drop End Continuous (10K rows) | 0.001s (45.00x NPZ, 27.00x NPY) | 0.045s | 0.027s |
-| Drop Random Rows (10K rows) | 0.018s (2.50x NPZ, 1.50x NPY) | 0.045s | 0.027s |
-| Drop Near Non-continuous (10K rows) | 0.015s (3.00x NPZ, 1.80x NPY) | 0.045s | 0.027s |
+| Drop Array | 0.001s (24.00x NPZ, 1.00x NPY) | 0.024s | 0.001s |
+| Drop First Row | 0.014s (3.29x NPZ, 1.93x NPY) | 0.046s | 0.027s |
+| Drop Last Row | 0.000s (∞x NPZ, ∞x NPY) | 0.046s | 0.027s |
+| Drop Middle Row | 0.014s (3.29x NPZ, 1.93x NPY) | 0.046s | 0.027s |
+| Drop Front Continuous (10K rows) | 0.015s (3.07x NPZ, 1.80x NPY) | 0.046s | 0.027s |
+| Drop Middle Continuous (10K rows) | 0.015s (3.07x NPZ, 1.80x NPY) | 0.046s | 0.027s |
+| Drop End Continuous (10K rows) | 0.001s (46.00x NPZ, 27.00x NPY) | 0.046s | 0.027s |
+| Drop Random Rows (10K rows) | 0.018s (2.56x NPZ, 1.50x NPY) | 0.046s | 0.027s |
+| Drop Near Non-continuous (10K rows) | 0.015s (3.07x NPZ, 1.80x NPY) | 0.046s | 0.027s |
 
 #### Append Operations
 
 | Operation | NumPack | NumPy NPZ | NumPy NPY |
 |-----------|---------|-----------|-----------|
-| Small Append (1K rows) | 0.000s (22.00x NPZ, 18.00x NPY) | 0.022s | 0.018s |
-| Large Append (500K rows) | 0.003s (9.67x NPZ, 6.67x NPY) | 0.029s | 0.020s |
+| Small Append (1K rows) | 0.000s (≥80x NPZ, ≥60x NPY) | 0.025s | 0.017s |
+| Large Append (500K rows) | 0.003s (11.33x NPZ, 7.67x NPY) | 0.034s | 0.023s |
 
 #### Random Access Performance (10K indices)
 
 | Operation | NumPack | NumPy NPZ | NumPy NPY |
 |-----------|---------|-----------|-----------|
-| Random Access | 0.008s (2.00x NPZ, 1.38x NPY) | 0.016s | 0.011s |
+| Random Access | 0.008s (2.38x NPZ, 1.50x NPY) | 0.019s | 0.012s |
+
+#### Matrix Computation Performance (1M rows x 128 columns, Float32)
+
+| Operation | NumPack | NumPy NPZ | NumPy NPY | In-Memory |
+|-----------|---------|-----------|-----------|-----------|
+| Inner Product | 0.021s (6.62x NPZ, 1.05x NPY) | 0.139s | 0.022s | 0.011s |
 
 #### File Size Comparison
 
@@ -246,14 +252,7 @@ The following benchmarks were performed on an MacBook Pro (Apple Silicon) with a
 | Append | Zero-copy in-place addition | Memory exceeded | Memory exceeded |
 | Random Access | Near-hardware I/O speed | Memory exceeded | Memory exceeded |
 
-#### Matrix Computation Performance (1M rows x 128 columns, Float32)
-
-| Operation | NumPack | NumPy NPZ | NumPy NPY | In-Memory |
-|-----------|---------|-----------|-----------|-----------|
-| Inner Product | 0.019s (6.58x NPZ, 1.00x NPY) | 0.125s | 0.019s | 0.011s |
-| Other calculations are similar to the above case | ... | ... | ... | ... |
-
-> **Key Advantage**: NumPack achieves the same performance as NumPy's NPY mmap (0.019s) for matrix computations, with several implementation advantages:
+> **Key Advantage**: NumPack achieves the same performance as NumPy's NPY mmap (0.021s) for matrix computations, with several implementation advantages:
 > - Uses Arc<Mmap> for reference counting, ensuring automatic resource cleanup
 > - Implements MMAP_CACHE to avoid redundant data loading
 > - Linux-specific optimizations with huge pages and sequential access hints
@@ -263,37 +262,37 @@ The following benchmarks were performed on an MacBook Pro (Apple Silicon) with a
 ### Key Performance Highlights
 
 1. **Data Modification**:
-   - Single row replacement: NumPack is **19x faster** than NPZ and **12x faster** than NPY
-   - Continuous rows: NumPack is **20x faster** than NPZ and **12x faster** than NPY
-   - Random rows: NumPack is **1.33x faster** than NPZ but **0.87x slower** than NPY
-   - Large data replacement: NumPack is comparable to NPZ but **0.74x slower** than NPY
+   - Single row replacement: NumPack is **≥40x faster** than NPZ and **≥30x faster** than NPY
+   - Continuous rows: NumPack is **24x faster** than NPZ and **14x faster** than NPY
+   - Random rows: NumPack is **1.53x faster** than NPZ but **0.93x slower** than NPY
+   - Large data replacement: NumPack is **1.10x faster** than NPZ but **0.75x slower** than NPY
 
 2. **Drop Operations**:
-   - Drop array: NumPack is **22x faster** than NPZ and comparable to NPY
-   - Drop rows: NumPack is currently **0.61x slower** than NPZ and **0.41x slower** than NPY
-   - NumPack provides efficient in-place row deletion without full file rewrite
+   - Drop array: NumPack is **24x faster** than NPZ and comparable to NPY
+   - Drop rows: NumPack is now **~3x faster** than NPZ and **~2x faster** than NPY in typical scenarios
+   - NumPack continues to support efficient in-place row deletion without full file rewrite
 
 3. **Append Operations**:
-   - Small append (1K rows): NumPack is **22x faster** than NPZ and **18x faster** than NPY
-   - Large append (500K rows): NumPack is **9.67x faster** than NPZ and **6.67x faster** than NPY
-   - NumPack excels at both small and large append operations
+   - Small append (1K rows): NumPack is **≥80x faster** than NPZ and **≥60x faster** than NPY
+   - Large append (500K rows): NumPack is **11x faster** than NPZ and **8x faster** than NPY
+   - Performance improvements in append operations are attributed to optimized buffer management
 
 4. **Loading Performance**:
-   - Full load: NumPack is **1.63x faster** than NPZ but **0.88x slower** than NPY
-   - Memory-mapped load: NumPack is **2.00x faster** than NPZ but **0.67x slower** than NPY
-   - Selective load: NumPack is **1.50x faster** than NPZ
+   - Full load: NumPack is **1.75x faster** than NPZ and on par with NPY
+   - Lazy load (memory-mapped): NumPack is **~2.0x faster** than NPZ mmap and close to NPY mmap
+   - Selective load: NumPack is **1.67x faster** than NPZ
 
 5. **Random Access**:
-   - NumPack is **2.00x faster** than NPZ and **1.38x faster** than NPY for random index access
+   - NumPack is **2.38x faster** than NPZ and **1.50x faster** than NPY for random index access
 
 6. **Storage Efficiency**:
    - All formats achieve identical compression ratios (47.68 MB)
    - NumPack maintains high performance while keeping file sizes competitive
 
 7. **Matrix Computation**:
-   - NumPack matches NPY mmap performance while providing better resource management
-   - **6.58x faster** than NPZ mmap for matrix operations
-   - Only 1.72x slower than pure in-memory computation
+   - NumPack remains on par with NPY mmap performance while providing better resource management
+   - **6.62x faster** than NPZ mmap for matrix operations
+   - Only 1.91x slower than pure in-memory computation
    - Zero risk of file descriptor leaks or resource exhaustion
 
 > Note: All benchmarks were performed with float32 arrays. Performance may vary depending on data types, array sizes, and system configurations. Numbers greater than 1.0x indicate faster performance, while numbers less than 1.0x indicate slower performance.

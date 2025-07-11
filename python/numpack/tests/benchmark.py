@@ -272,13 +272,12 @@ def test_large_data(timing_stats: TimingStats):
         npy_load_time = time.time() - start_time
         timing_stats.add_time("NumPy npy load", npy_load_time)
         
-        # Test NumPack mmap load
+        # Test NumPack lazy load (mmap substitute)
         start_time = time.time()
-        with npk.mmap_mode() as mmap_npk:
-            lazy_arr1 = mmap_npk.load('array1')
-            lazy_arr2 = mmap_npk.load('array2')
+        lazy_arr1 = npk.load('array1', lazy=True)
+        lazy_arr2 = npk.load('array2', lazy=True)
         lazy_load_time = time.time() - start_time
-        timing_stats.add_time("NumPack mmap load", lazy_load_time)
+        timing_stats.add_time("NumPack lazy load", lazy_load_time)
         
         # Test NumPy npz mmap load
         start_time = time.time()
