@@ -176,8 +176,6 @@ lazy_array = npk.load("arr1", lazy=True)  # LazyArray Object
 similarity_scores = np.inner(a[0], npk.load("arr1", lazy=True))
 ```
 
-# (Memory Mapping Mode 章节已移除，推荐使用懒加载功能 `load(..., lazy=True)`)
-
 ## Performance
 
 NumPack offers significant performance improvements compared to traditional NumPy storage methods, especially in data modification operations and random access. Below are detailed benchmark results:
@@ -193,7 +191,6 @@ The following benchmarks were performed on an MacBook Pro (Apple Silicon) with a
 | Save | 0.014s (0.86x NPZ, 0.57x NPY) | 0.012s | 0.008s |
 | Full Load | 0.008s (1.63x NPZ, 0.88x NPY) | 0.013s | 0.007s |
 | Selective Load | 0.006s (1.50x NPZ, -) | 0.009s | - |
-# (Mmap Load 行已移除)
 
 #### Data Modification Operations
 
