@@ -69,35 +69,7 @@ def test_basic_save_load(numpack, dtype, test_values, ndim, shape):
     assert array1.shape == arr1.shape
     assert array2.shape == arr2.shape
 
-@pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
-@pytest.mark.parametrize("ndim,shape", ARRAY_DIMS)
-def test_mmap_load(numpack, dtype, test_values, ndim, shape):
-    """Test mmap load functionality for all data types and dimensions"""
-    array = create_test_array(dtype, shape)
-    numpack.save({'array': array})
-
-    with numpack.mmap_mode() as mmap_npk:
-        mmap_array = mmap_npk.load('array')
-        assert np.array_equal(array, mmap_array)
-        assert array.dtype == mmap_array.dtype
-
-@pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
-@pytest.mark.parametrize("ndim,shape", ARRAY_DIMS)
-def test_mmap_load_after_row_deletion(numpack, dtype, test_values, ndim, shape):
-    """Test mmap load functionality after row deletion for all data types and dimensions"""
-    array = create_test_array(dtype, shape)
-    numpack.save({'array': array})
-    
-    deleted_indices = [1, 2, 3]  # Delete the first 3 elements
-    numpack.drop('array', deleted_indices)
-    
-    with numpack.mmap_mode() as mmap_npk:
-        loaded = mmap_npk.load('array')
-        expected = np.delete(array, deleted_indices, axis=0)
-        
-        assert loaded.shape[0] == shape[0] - len(deleted_indices)
-        assert loaded.dtype == dtype
-        assert np.array_equal(loaded, expected)
+# mmap_mode 功能已移除，上述测试用例不再适用
 
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
 @pytest.mark.parametrize("ndim,shape", ARRAY_DIMS)

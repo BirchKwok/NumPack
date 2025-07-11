@@ -4,7 +4,7 @@ from typing import Any, Dict, Iterator, List, Tuple, Union, Optional
 import numpy as np
 
 from ._lib_numpack import NumPack as _NumPack, LazyArray
-from .mmap import MmapMode
+# Memory mapping mode (mmap_mode) 已删除，请改用懒加载（load(..., lazy=True)）。
 
 
 __version__ = "0.1.7"
@@ -137,9 +137,7 @@ class NumPack:
         """
         return self._npk.get_modify_time(array_name)
     
-    def mmap_mode(self) -> MmapMode:
-        """Get a memory mapped reader for the NumPack file"""
-        return MmapMode(self._npk)
+    # mmap_mode 已废弃，如仍需大文件按需加载，请使用 `load(array_name, lazy=True)`
     
     def reset(self) -> None:
         """Clear all arrays in NumPack file"""

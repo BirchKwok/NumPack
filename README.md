@@ -11,7 +11,7 @@ Key highlights:
 ## Features
 
 - **High Performance**: Optimized for both reading and writing large numerical arrays
-- **Memory Mapping Support**: Efficient memory usage through memory mapping capabilities
+- **Lazy Loading Support**: Efficient memory usage through on-demand data loading
 - **Selective Loading**: Load only the arrays you need, when you need them
 - **In-place Operations**: Support for in-place array modifications without full file rewrite
 - **Parallel I/O**: Utilizes parallel processing for improved performance
@@ -107,11 +107,7 @@ npk.save(arrays)
 # Normal mode
 loaded = npk.load("array1")
 
-# Memory mapping mode for large arrays
-with npk.mmap_mode() as mmap_npk:
-   # Access specific arrays
-   array1 = mmap_npk.load('array1')
-   array2 = mmap_npk.load('array2')
+# (Memory mapping mode 已废弃，示例已移除)
 ```
 
 ### Advanced Operations
@@ -180,20 +176,7 @@ lazy_array = npk.load("arr1", lazy=True)  # LazyArray Object
 similarity_scores = np.inner(a[0], npk.load("arr1", lazy=True))
 ```
 
-### Memory Mapping Mode
-
-For large arrays, memory mapping mode provides more efficient memory usage:
-
-```python
-# Using memory mapping mode
-with npk.mmap_mode() as mmap_npk:
-    # Access specific arrays
-    array1 = mmap_npk.load('array1')  # Array is not fully loaded into memory
-    array2 = mmap_npk.load('array2')
-    
-    # Perform operations on memory-mapped arrays
-    result = array1[0:1000] + array2[0:1000]
-```
+# (Memory Mapping Mode 章节已移除，推荐使用懒加载功能 `load(..., lazy=True)`)
 
 ## Performance
 
@@ -210,7 +193,7 @@ The following benchmarks were performed on an MacBook Pro (Apple Silicon) with a
 | Save | 0.014s (0.86x NPZ, 0.57x NPY) | 0.012s | 0.008s |
 | Full Load | 0.008s (1.63x NPZ, 0.88x NPY) | 0.013s | 0.007s |
 | Selective Load | 0.006s (1.50x NPZ, -) | 0.009s | - |
-| Mmap Load | 0.006s (2.00x NPZ, 0.67x NPY) | 0.012s | 0.004s |
+# (Mmap Load 行已移除)
 
 #### Data Modification Operations
 
