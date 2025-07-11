@@ -107,7 +107,8 @@ npk.save(arrays)
 # Normal mode
 loaded = npk.load("array1")
 
-# (Memory mapping mode 已废弃，示例已移除)
+# lazy load
+lazy_array = npk.load("arr1", lazy=True)
 ```
 
 ### Advanced Operations
