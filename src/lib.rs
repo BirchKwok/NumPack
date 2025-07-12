@@ -387,6 +387,56 @@ impl LazyArray {
     fn shape(&self) -> PyResult<Vec<usize>> {
         Ok(self.shape.clone())
     }
+
+    #[getter]
+    fn dtype(&self, py: Python) -> PyResult<PyObject> {
+        let numpy = py.import("numpy")?;
+        let dtype_str = match self.dtype {
+            DataType::Bool => "bool",
+            DataType::Uint8 => "uint8",
+            DataType::Uint16 => "uint16",
+            DataType::Uint32 => "uint32",
+            DataType::Uint64 => "uint64",
+            DataType::Int8 => "int8",
+            DataType::Int16 => "int16",
+            DataType::Int32 => "int32",
+            DataType::Int64 => "int64",
+            DataType::Float16 => "float16",
+            DataType::Float32 => "float32",
+            DataType::Float64 => "float64",
+        };
+        let dtype = numpy.getattr("dtype")?.call1((dtype_str,))?;
+        Ok(dtype.into())
+    }
+
+    #[getter]
+    fn size(&self) -> PyResult<usize> {
+        Ok(self.shape.iter().product())
+    }
+
+    #[getter]
+    fn itemsize(&self) -> PyResult<usize> {
+        Ok(self.itemsize)
+    }
+
+    #[getter]
+    fn ndim(&self) -> PyResult<usize> {
+        Ok(self.shape.len())
+    }
+
+    #[getter]
+    fn nbytes(&self) -> PyResult<usize> {
+        Ok(self.shape.iter().product::<usize>() * self.itemsize)
+    }
+
+    fn __len__(&self) -> PyResult<usize> {
+        if self.shape.is_empty() {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "len() of unsized object"
+            ));
+        }
+        Ok(self.shape[0])
+    }
 }
 
 fn get_array_dtype(array: &Bound<'_, PyAny>) -> PyResult<DataType> {

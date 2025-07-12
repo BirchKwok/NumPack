@@ -7,7 +7,7 @@ from ._lib_numpack import NumPack as _NumPack, LazyArray
 # Memory mapping mode (mmap_mode) 已删除，请改用懒加载（load(..., lazy=True)）。
 
 
-__version__ = "0.1.7"
+__version__ = "0.1.8"
 
 
 class NumPack:
