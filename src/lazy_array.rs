@@ -880,12 +880,28 @@ impl SIMDProcessor {
                                 
                                 if self.is_aligned(src_ptr) && self.is_aligned(dst_ptr) {
                                     // 对齐访问，使用AVX512指令
-                                    let zmm = std::arch::x86_64::_mm512_load_si512(src_ptr as *const _);
-                                    std::arch::x86_64::_mm512_store_si512(dst_ptr as *mut _, zmm);
+                                    #[cfg(all(feature = "avx512", target_feature = "avx512f"))]
+                                    {
+                                        let zmm = std::arch::x86_64::_mm512_load_si512(src_ptr as *const _);
+                                        std::arch::x86_64::_mm512_store_si512(dst_ptr as *mut _, zmm);
+                                    }
+                                    #[cfg(not(all(feature = "avx512", target_feature = "avx512f")))]
+                                    {
+                                        // 回退到 AVX2 或标准复制
+                                        std::ptr::copy_nonoverlapping(src_ptr, dst_ptr, item_size);
+                                    }
                                 } else {
                                     // 非对齐访问，使用非对齐指令
-                                    let zmm = std::arch::x86_64::_mm512_loadu_si512(src_ptr as *const _);
-                                    std::arch::x86_64::_mm512_storeu_si512(dst_ptr as *mut _, zmm);
+                                    #[cfg(all(feature = "avx512", target_feature = "avx512f"))]
+                                    {
+                                        let zmm = std::arch::x86_64::_mm512_loadu_si512(src_ptr as *const _);
+                                        std::arch::x86_64::_mm512_storeu_si512(dst_ptr as *mut _, zmm);
+                                    }
+                                    #[cfg(not(all(feature = "avx512", target_feature = "avx512f")))]
+                                    {
+                                        // 回退到 AVX2 或标准复制
+                                        std::ptr::copy_nonoverlapping(src_ptr, dst_ptr, item_size);
+                                    }
                                 }
                             }
                             32 => {
@@ -4331,7 +4347,7 @@ impl OptimizedLazyArray {
     }
     
     // 零拷贝布尔索引视图
-    pub fn boolean_index_view(&self, mask: &[bool]) -> Vec<Option<&[u8]>> {
+    pub fn boolean_index_view(&self, mask: &[bool]) -> Vec<&[u8]> {
         if mask.len() != self.shape[0] {
             return Vec::new();
         }
@@ -4342,10 +4358,10 @@ impl OptimizedLazyArray {
             if selected {
                 let offset = idx * row_size;
                 unsafe {
-                    Some(Some(std::slice::from_raw_parts(
+                    Some(std::slice::from_raw_parts(
                         self.mmap.as_ptr().add(offset),
                         row_size
-                    )))
+                    ))
                 }
             } else {
                 None
@@ -4436,6 +4452,7 @@ impl OptimizedLazyArray {
     fn avx512_boolean_filter(&self, mask: &[bool]) -> Vec<usize> {
         let mut selected = Vec::new();
         
+        // 首先检查是否支持 AVX-512 指令集
         if is_x86_feature_detected!("avx512f") {
             // 使用AVX-512指令处理64个布尔值
             let chunks = mask.chunks_exact(64);
@@ -4449,6 +4466,7 @@ impl OptimizedLazyArray {
                 }
                 
                 // 使用AVX-512指令快速找到设置的位
+                #[cfg(all(feature = "avx512", target_feature = "avx512f"))]
                 unsafe {
                     use std::arch::x86_64::*;
                     let mask_vec = _mm512_loadu_si512(avx512_mask.as_ptr() as *const i32);
@@ -4464,6 +4482,16 @@ impl OptimizedLazyArray {
                         }
                         temp_mask >>= 1;
                         bit_idx += 1;
+                    }
+                }
+                
+                // 不使用 AVX-512 指令时的标准实现
+                #[cfg(not(all(feature = "avx512", target_feature = "avx512f")))]
+                {
+                    for (i, &val) in chunk.iter().enumerate() {
+                        if val {
+                            selected.push(base_idx + i);
+                        }
                     }
                 }
                 
@@ -4492,6 +4520,8 @@ impl OptimizedLazyArray {
             let len = src.len().min(dst.len());
             let chunks = len / 64;
             
+            // 使用 AVX-512 指令进行复制
+            #[cfg(all(feature = "avx512", target_feature = "avx512f"))]
             unsafe {
                 use std::arch::x86_64::*;
                 let src_ptr = src.as_ptr();
@@ -4504,17 +4534,22 @@ impl OptimizedLazyArray {
                     let data = _mm512_loadu_si512(src_ptr.add(src_offset) as *const i32);
                     _mm512_storeu_si512(dst_ptr.add(dst_offset) as *mut i32, data);
                 }
-                
-                // 处理剩余字节
-                let remainder = len % 64;
-                if remainder > 0 {
-                    let start = chunks * 64;
-                    std::ptr::copy_nonoverlapping(
-                        src_ptr.add(start),
-                        dst_ptr.add(start),
-                        remainder
-                    );
+            }
+            
+            // 不支持 AVX-512 时的回退实现
+            #[cfg(not(all(feature = "avx512", target_feature = "avx512f")))]
+            {
+                // 使用标准拷贝
+                if chunks > 0 {
+                    dst[..chunks * 64].copy_from_slice(&src[..chunks * 64]);
                 }
+            }
+            
+            // 处理剩余字节
+            let remainder = len % 64;
+            if remainder > 0 {
+                let start = chunks * 64;
+                dst[start..len].copy_from_slice(&src[start..len]);
             }
         } else {
             // 回退到标准复制
@@ -6343,25 +6378,25 @@ impl LRUCache {
         }
     }
     
-         pub fn get(&mut self, key: usize) -> Option<Vec<u8>> {
-         if self.items.contains_key(&key) {
-             self.hit_count += 1;
-             
-             // 更新元数据
-             if let Some(meta) = self.metadata.get_mut(&key) {
-                 meta.access();
-             }
-             
-             // 移动到队列头部 (最近使用)
-             self.move_to_front(key);
-             
-             // 获取数据
-             self.items.get(&key).cloned()
-         } else {
-             self.miss_count += 1;
-             None
-         }
-     }
+    pub fn get(&mut self, key: usize) -> Option<Vec<u8>> {
+        if self.items.contains_key(&key) {
+            self.hit_count += 1;
+            
+            // 更新元数据
+            if let Some(meta) = self.metadata.get_mut(&key) {
+                meta.access();
+            }
+            
+            // 移动到队列头部 (最近使用)
+            self.move_to_front(key);
+            
+            // 获取数据
+            self.items.get(&key).cloned()
+        } else {
+            self.miss_count += 1;
+            None
+        }
+    }
     
     pub fn put(&mut self, key: usize, data: Vec<u8>) -> Option<(usize, Vec<u8>, CacheItemMetadata)> {
         let data_size = data.len();
@@ -6427,15 +6462,15 @@ impl LRUCache {
         self.metadata.get(&key)
     }
     
-         pub fn list_items_by_access_frequency(&self) -> Vec<(usize, f64)> {
-         self.metadata.iter()
-             .map(|(&key, meta)| (key, meta.access_frequency))
-             .collect()
-     }
-     
-     pub fn get_all_keys(&self) -> Vec<usize> {
-         self.metadata.keys().copied().collect()
-     }
+    pub fn list_items_by_access_frequency(&self) -> Vec<(usize, f64)> {
+        self.metadata.iter()
+            .map(|(&key, meta)| (key, meta.access_frequency))
+            .collect()
+    }
+    
+    pub fn get_all_keys(&self) -> Vec<usize> {
+        self.metadata.keys().copied().collect()
+    }
 }
 
 /// 自适应缓存实现 - L2层使用
@@ -6467,41 +6502,41 @@ pub struct AdaptiveCache {
          }
      }
      
-           pub fn get(&mut self, key: usize) -> Option<Vec<u8>> {
-          if self.items.contains_key(&key) {
-              self.hit_count += 1;
-              
-              // 获取旧频率
-              let old_freq = if let Some(meta) = self.metadata.get(&key) {
-                  self.get_frequency_bucket(meta.access_frequency)
-              } else {
-                  0
-              };
-              
-                             // 更新元数据并获取新访问频率
-               let new_access_freq = if let Some(meta) = self.metadata.get_mut(&key) {
-                   meta.access();
-                   meta.access_frequency
-               } else {
-                   0.0
-               };
-               
-               let new_freq = self.get_frequency_bucket(new_access_freq);
-               
-               // 更新频率桶
-               if old_freq != new_freq {
-                   if let Some(bucket) = self.frequency_buckets.get_mut(&old_freq) {
-                       bucket.remove(&key);
-                   }
-                   self.frequency_buckets.entry(new_freq).or_insert_with(std::collections::BTreeSet::new).insert(key);
-               }
-              
-              self.items.get(&key).cloned()
-          } else {
-              self.miss_count += 1;
-              None
-          }
-      }
+     pub fn get(&mut self, key: usize) -> Option<Vec<u8>> {
+         if self.items.contains_key(&key) {
+             self.hit_count += 1;
+             
+             // 获取旧频率
+             let old_freq = if let Some(meta) = self.metadata.get(&key) {
+                 self.get_frequency_bucket(meta.access_frequency)
+             } else {
+                 0
+             };
+             
+             // 更新元数据并获取新访问频率
+             let new_access_freq = if let Some(meta) = self.metadata.get_mut(&key) {
+                 meta.access();
+                 meta.access_frequency
+             } else {
+                 0.0
+             };
+             
+             let new_freq = self.get_frequency_bucket(new_access_freq);
+             
+             // 更新频率桶
+             if old_freq != new_freq {
+                 if let Some(bucket) = self.frequency_buckets.get_mut(&old_freq) {
+                     bucket.remove(&key);
+                 }
+                 self.frequency_buckets.entry(new_freq).or_insert_with(std::collections::BTreeSet::new).insert(key);
+             }
+             
+             self.items.get(&key).cloned()
+         } else {
+             self.miss_count += 1;
+             None
+         }
+     }
      
      pub fn put(&mut self, key: usize, data: Vec<u8>) -> Vec<(usize, Vec<u8>, CacheItemMetadata)> {
          let data_size = data.len();
@@ -6610,16 +6645,16 @@ pub struct AdaptiveCache {
          self.metadata.get(&key)
      }
      
-           pub fn clear(&mut self) {
-          self.items.clear();
-          self.metadata.clear();
-          self.frequency_buckets.clear();
-          self.current_size = 0;
-      }
-      
-      pub fn get_all_keys(&self) -> Vec<usize> {
-          self.metadata.keys().copied().collect()
-      }
+     pub fn clear(&mut self) {
+         self.items.clear();
+         self.metadata.clear();
+         self.frequency_buckets.clear();
+         self.current_size = 0;
+     }
+     
+     pub fn get_all_keys(&self) -> Vec<usize> {
+         self.metadata.keys().copied().collect()
+     }
  }
 
  /// 压缩缓存实现 - L3层使用
@@ -6823,16 +6858,16 @@ pub struct AdaptiveCache {
          self.metadata.get(&key)
      }
      
-           pub fn clear(&mut self) {
-          self.items.clear();
-          self.metadata.clear();
-          self.uncompressed_sizes.clear();
-          self.current_size = 0;
-      }
-      
-      pub fn get_all_keys(&self) -> Vec<usize> {
-          self.metadata.keys().copied().collect()
-      }
+     pub fn clear(&mut self) {
+         self.items.clear();
+         self.metadata.clear();
+         self.uncompressed_sizes.clear();
+         self.current_size = 0;
+     }
+     
+     pub fn get_all_keys(&self) -> Vec<usize> {
+         self.metadata.keys().copied().collect()
+     }
  }
 
  /// 多级缓存系统主结构

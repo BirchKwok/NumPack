@@ -999,7 +999,7 @@ impl LazyArray {
         }
         
         // 创建 NumPy 数组
-        let result_array = self.create_numpy_array(py, result_data, &final_shape)?;
+        let _result_array = self.create_numpy_array(py, result_data, &final_shape)?;
         
         // 返回一个特殊的索引结果，表示已经处理完成
         Ok(IndexResult {
@@ -1040,9 +1040,9 @@ impl LazyArray {
     // 新增：获取数组形状
     fn get_array_shape(&self, key: &Bound<'_, PyAny>) -> Result<Vec<usize>, PyErr> {
         if let Ok(shape_attr) = key.getattr("shape") {
-            if let Ok(shape) = shape_attr.extract::<Vec<usize>>() {
+            let _shape = if let Ok(shape) = shape_attr.extract::<Vec<usize>>() {
                 return Ok(shape);
-            }
+            };
         }
         Ok(vec![])
     }
@@ -1134,7 +1134,7 @@ impl LazyArray {
     // 新增：处理索引解析和广播
     fn process_indices(&self, index_types: Vec<IndexType>) -> Result<IndexResult, PyErr> {
         let mut indices = Vec::new();
-        let mut result_shape: Vec<usize> = Vec::new();
+        let mut result_shape: Vec<usize> = Vec::new(); // 结果数组的形状
         let mut needs_broadcasting = false;
         
         // 扩展索引到完整维度（添加省略号处理）
@@ -1157,7 +1157,7 @@ impl LazyArray {
         
         // 处理实际数组索引
         let mut array_dim = 0;
-        for (result_pos, index_type) in expanded_indices.iter().enumerate() {
+        for (_result_pos, index_type) in expanded_indices.iter().enumerate() {
             match index_type {
                 IndexType::NewAxis => {
                     // NewAxis不消耗原数组维度，只在结果中添加维度
@@ -1205,7 +1205,7 @@ impl LazyArray {
         let mut result_shape: Vec<usize> = Vec::new();
         let mut array_dim = 0;
         
-        for (pos, index_type) in expanded_indices.iter().enumerate() {
+        for (_pos, index_type) in expanded_indices.iter().enumerate() {
             match index_type {
                 IndexType::NewAxis => {
                     result_shape.push(1);
