@@ -46,6 +46,7 @@ pyo3-build-config = "0.25.0"
 [features]
 extension-module = ["pyo3/extension-module"]
 default = ["extension-module"]
+avx512 = []
 
 [package.metadata.maturin]
 python-source = "python"

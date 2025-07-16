@@ -1102,7 +1102,7 @@ impl LazyArray {
         if let Ok(numpy_array) = key.getattr("__array__") {
             if let Ok(array_func) = numpy_array.call0() {
                 // 尝试获取形状信息
-                let shape = if let Ok(shape_attr) = key.getattr("shape") {
+                let _shape = if let Ok(shape_attr) = key.getattr("shape") {
                     shape_attr.extract::<Vec<usize>>().unwrap_or_else(|_| vec![])
                 } else {
                     vec![]
@@ -1134,7 +1134,7 @@ impl LazyArray {
     // 新增：处理索引解析和广播
     fn process_indices(&self, index_types: Vec<IndexType>) -> Result<IndexResult, PyErr> {
         let mut indices = Vec::new();
-        let mut result_shape: Vec<usize> = Vec::new(); // 结果数组的形状
+        // 移除重复声明的变量，保留后面的使用
         let mut needs_broadcasting = false;
         
         // 扩展索引到完整维度（添加省略号处理）

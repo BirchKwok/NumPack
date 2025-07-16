@@ -290,16 +290,12 @@ impl ArrayView {
         };
 
         #[cfg(target_os = "macos")]
-        let temp_file = {
-            use std::os::unix::fs::OpenOptionsExt;
-            // macOS 不支持 O_DIRECT
-            OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(&temp_path)?
-        };
+        let temp_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&temp_path)?;
 
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         let temp_file = OpenOptions::new()
