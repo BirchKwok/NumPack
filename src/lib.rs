@@ -5,6 +5,31 @@ mod error;
 mod metadata;
 mod parallel_io;
 mod lazy_array;
+mod batch_access_engine;
+
+#[cfg(test)]
+mod fancy_index_tests;
+
+#[cfg(test)]
+mod fancy_index_integration_test;
+
+#[cfg(test)]
+mod simd_tests;
+
+#[cfg(test)]
+mod prefetch_tests;
+
+#[cfg(test)]
+mod batch_access_tests;
+
+#[cfg(test)]
+mod prefetch_benchmark;
+
+#[cfg(test)]
+mod zero_copy_tests;
+
+#[cfg(test)]
+mod multilevel_cache_tests;
 
 use std::path::{Path, PathBuf};
 use numpy::{IntoPyArray, PyArrayDyn, PyArrayMethods};
@@ -46,7 +71,7 @@ use windows_sys::Win32::System::Memory::VirtualLock;
 use windows_sys::Win32::Foundation::HANDLE;
 
 lazy_static! {
-    static ref MMAP_CACHE: Mutex<HashMap<String, (Arc<Mmap>, u64)>> = Mutex::new(HashMap::new());
+    static ref MMAP_CACHE: Mutex<HashMap<String, (Arc<Mmap>, i64)>> = Mutex::new(HashMap::new());
 }
 
 #[allow(dead_code)]
@@ -64,7 +89,40 @@ struct LazyArray {
     dtype: DataType,
     itemsize: usize,
     array_path: String,
-    modify_time: u64,
+    modify_time: i64,
+}
+
+/// Iterator for LazyArray that yields rows
+#[pyclass]
+pub struct LazyArrayIterator {
+    array: LazyArray,
+    current_index: usize,
+    total_rows: usize,
+}
+
+#[pymethods]
+impl LazyArrayIterator {
+    fn __iter__(slf: PyRef<Self>) -> PyRef<Self> {
+        slf
+    }
+
+    fn __next__(&mut self, py: Python) -> PyResult<Option<PyObject>> {
+        if self.current_index >= self.total_rows {
+            return Ok(None);
+        }
+
+        let row_data = self.array.get_row_data(self.current_index)?;
+        let row_shape = if self.array.shape.len() > 1 {
+            self.array.shape[1..].to_vec()
+        } else {
+            vec![1]
+        };
+
+        let row_array = self.array.create_numpy_array(py, row_data, &row_shape)?;
+        self.current_index += 1;
+        
+        Ok(Some(row_array))
+    }
 }
 
 // 新增：索引类型枚举
@@ -325,8 +383,9 @@ impl LazyArray {
     }
 
     #[getter]
-    fn shape(&self) -> PyResult<Vec<usize>> {
-        Ok(self.shape.clone())
+    fn shape(&self, py: Python) -> PyResult<PyObject> {
+        let shape_tuple = pyo3::types::PyTuple::new(py, &self.shape)?;
+        Ok(shape_tuple.into())
     }
 
     #[getter]
@@ -370,6 +429,143 @@ impl LazyArray {
         Ok(self.shape.iter().product::<usize>() * self.itemsize)
     }
 
+    /// Reshape the array to a new shape (view operation, no data copying)
+    /// 
+    /// Parameters:
+    ///     new_shape: Tuple, list, or integer representing the new shape
+    ///               Supports -1 for automatic dimension inference
+    /// 
+    /// Returns:
+    ///     A new LazyArray with the reshaped view
+    fn reshape(&self, py: Python, new_shape: &Bound<'_, PyAny>) -> PyResult<Py<LazyArray>> {
+        // Parse the new shape from different input types
+        let mut shape: Vec<i64> = if let Ok(tuple) = new_shape.downcast::<pyo3::types::PyTuple>() {
+            // Handle tuple input: (dim1, dim2, ...)
+            let mut shape = Vec::new();
+            for i in 0..tuple.len() {
+                let item = tuple.get_item(i)?;
+                if let Ok(dim) = item.extract::<i64>() {
+                    // Allow -1 for automatic inference, but reject other negative values
+                    if dim < -1 {
+                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Negative dimensions other than -1 are not supported in reshape"
+                        ));
+                    }
+                    shape.push(dim);
+                } else {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "All dimensions must be integers"
+                    ));
+                }
+            }
+            shape
+        } else if let Ok(list) = new_shape.downcast::<pyo3::types::PyList>() {
+            // Handle list input: [dim1, dim2, ...]
+            let mut shape = Vec::new();
+            for item in list.iter() {
+                if let Ok(dim) = item.extract::<i64>() {
+                    // Allow -1 for automatic inference, but reject other negative values
+                    if dim < -1 {
+                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Negative dimensions other than -1 are not supported in reshape"
+                        ));
+                    }
+                    shape.push(dim);
+                } else {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "All dimensions must be integers"
+                    ));
+                }
+            }
+            shape
+        } else if let Ok(dim) = new_shape.extract::<i64>() {
+            // Handle single integer input
+            if dim < -1 {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "Negative dimensions other than -1 are not supported in reshape"
+                ));
+            }
+            vec![dim]
+        } else {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Shape must be a tuple, list, or integer"
+            ));
+        };
+
+        // Handle -1 dimension inference
+        let original_size: usize = self.shape.iter().product();
+        let mut inferred_dim_index = None;
+        let mut known_size = 1usize;
+        
+        // Find -1 dimension and calculate known size
+        for (i, &dim) in shape.iter().enumerate() {
+            if dim == -1 {
+                if inferred_dim_index.is_some() {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "Only one dimension can be -1"
+                    ));
+                }
+                inferred_dim_index = Some(i);
+            } else {
+                known_size *= dim as usize;
+            }
+        }
+        
+        // Calculate inferred dimension
+        if let Some(infer_idx) = inferred_dim_index {
+            if known_size == 0 {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "Cannot infer dimension when other dimensions contain 0"
+                ));
+            }
+            if original_size % known_size != 0 {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    format!(
+                        "Cannot reshape array of size {} into shape with known size {}",
+                        original_size, known_size
+                    )
+                ));
+            }
+            shape[infer_idx] = (original_size / known_size) as i64;
+        }
+        
+        // Convert to usize and validate
+        let final_shape: Vec<usize> = shape.iter().map(|&dim| {
+            if dim < 0 {
+                // This should not happen after inference, but just in case
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "Invalid dimension after inference"
+                ));
+            }
+            Ok(dim as usize)
+        }).collect::<PyResult<Vec<_>>>()?;
+
+        // Validate that the total number of elements remains the same
+        let new_size: usize = final_shape.iter().product();
+        
+        if original_size != new_size {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                format!(
+                    "Cannot reshape array of size {} into shape {:?} (total size {})", 
+                    original_size, final_shape, new_size
+                )
+            ));
+        }
+
+        // Create a new LazyArray with the same underlying data but different shape
+        let reshaped_array = LazyArray {
+            mmap: Arc::clone(&self.mmap),
+            shape: final_shape,
+            dtype: self.dtype.clone(),
+            itemsize: self.itemsize,
+            array_path: self.array_path.clone(),
+            modify_time: self.modify_time,
+        };
+
+        // Return the new LazyArray as a Python object
+        Py::new(py, reshaped_array)
+    }
+
     // ===========================
     // 生产级性能优化方法
     // ===========================
@@ -391,19 +587,28 @@ impl LazyArray {
         Ok(results)
     }
 
-    fn get_row_view(&self, py: Python, row_idx: usize) -> PyResult<PyObject> {
-        // 返回单行数据
-        let row_data = self.get_row_data(row_idx)?;
-        self.bytes_to_numpy(py, row_data)
-    }
+
 
     // 阶段2：深度SIMD优化
     fn vectorized_gather(&self, py: Python, indices: Vec<usize>) -> PyResult<PyObject> {
+        // Handle empty indices case
+        if indices.is_empty() {
+            let mut empty_shape = self.shape.clone();
+            empty_shape[0] = 0;
+            return self.create_numpy_array(py, Vec::new(), &empty_shape);
+        }
+        
         // 批量收集数据
         let mut all_data = Vec::new();
         for &idx in &indices {
+            if idx < self.shape[0] {
             let row_data = self.get_row_data(idx)?;
             all_data.extend(row_data);
+            } else {
+                return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                    format!("Index {} is out of bounds for array with {} rows", idx, self.shape[0])
+                ));
+            }
         }
         
         let mut result_shape = self.shape.clone();
@@ -512,6 +717,15 @@ impl LazyArray {
     fn bytes_to_numpy(&self, py: Python, data: Vec<u8>) -> PyResult<PyObject> {
         let row_shape = vec![self.shape[1..].iter().product::<usize>()];
         self.create_numpy_array(py, data, &row_shape)
+    }
+
+    fn __len__(&self) -> PyResult<usize> {
+        if self.shape.is_empty() {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "len() of unsized object"
+            ));
+        }
+        Ok(self.shape[0])
     }
 
 }
@@ -1522,15 +1736,6 @@ impl LazyArray {
 
 
 
-    fn __len__(&self) -> PyResult<usize> {
-        if self.shape.is_empty() {
-            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                "len() of unsized object"
-            ));
-        }
-        Ok(self.shape[0])
-    }
-
     fn extract_indices_from_key(&self, key: &Bound<'_, PyAny>, total_rows: usize) -> PyResult<Vec<usize>> {
         // Try to extract as boolean mask
         if let Ok(bool_mask) = key.extract::<Vec<bool>>() {
@@ -2167,15 +2372,20 @@ impl HighPerformanceLazyArray {
     }
 
     fn choose_optimal_algorithm(&self, mask: Vec<bool>) -> PyResult<String> {
-        let algorithm = self.optimized_array.choose_optimal_algorithm(&mask);
-        let name = match algorithm {
-            crate::lazy_array::OptimizationAlgorithm::StandardSIMD => "StandardSIMD",
-            crate::lazy_array::OptimizationAlgorithm::AVX512 => "AVX512",
-            crate::lazy_array::OptimizationAlgorithm::AdaptivePrefetch => "AdaptivePrefetch",
-            crate::lazy_array::OptimizationAlgorithm::ZeroCopy => "ZeroCopy",
-            crate::lazy_array::OptimizationAlgorithm::Vectorized => "Vectorized",
+        let selected_count = mask.iter().filter(|&&x| x).count();
+        let selection_density = selected_count as f64 / mask.len() as f64;
+        
+        let algorithm = if selection_density < 0.01 {
+            "ZeroCopy"
+        } else if selection_density > 0.9 {
+            "Vectorized"
+        } else if selection_density > 0.5 {
+            "Parallel"
+        } else {
+            "Adaptive"
         };
-        Ok(name.to_string())
+        
+        Ok(algorithm.to_string())
     }
 
     // 性能分析方法
@@ -2243,6 +2453,12 @@ impl HighPerformanceLazyArray {
         
         Ok(dict.into())
     }
+
+    // ===========================
+    // NumPy 兼容性方法
+    // ===========================
+
+
 }
 
 // SIMD加速的内存复制实用函数
@@ -2458,13 +2674,13 @@ impl NumPack {
             
             let mut cache = MMAP_CACHE.lock().unwrap();
             let mmap = if let Some((cached_mmap, cached_time)) = cache.get(&array_path) {
-                if *cached_time == meta.last_modified {
+                if *cached_time == meta.last_modified as i64 {
                     Arc::clone(cached_mmap)
                 } else {
-                    create_optimized_mmap(&data_path, meta.last_modified, &mut cache)?
+                    create_optimized_mmap(&data_path, meta.last_modified as i64, &mut cache)?
                 }
             } else {
-                create_optimized_mmap(&data_path, meta.last_modified, &mut cache)?
+                create_optimized_mmap(&data_path, meta.last_modified as i64, &mut cache)?
             };
             
             let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
@@ -2476,7 +2692,7 @@ impl NumPack {
                 dtype: meta.dtype,
                 itemsize,
                 array_path,
-                modify_time: meta.last_modified,
+                modify_time: meta.last_modified as i64,
             };
             
             return Ok(Py::new(py, lazy_array)?.into());
@@ -2624,8 +2840,8 @@ impl NumPack {
         Ok(list.unbind())
     }
 
-    fn get_modify_time(&self, array_name: &str) -> PyResult<Option<u64>> {
-        Ok(self.io.get_array_meta(array_name).map(|meta| meta.last_modified))
+    fn get_modify_time(&self, array_name: &str) -> PyResult<Option<i64>> {
+        Ok(self.io.get_array_meta(array_name).map(|meta| meta.last_modified as i64))
     }
 
     fn reset(&self) -> PyResult<()> {
@@ -3128,7 +3344,7 @@ impl NumPack {
     }
 }
 
-fn create_optimized_mmap(path: &Path, modify_time: u64, cache: &mut MutexGuard<HashMap<String, (Arc<Mmap>, u64)>>) -> PyResult<Arc<Mmap>> {
+fn create_optimized_mmap(path: &Path, modify_time: i64, cache: &mut MutexGuard<HashMap<String, (Arc<Mmap>, i64)>>) -> PyResult<Arc<Mmap>> {
     let file = std::fs::File::open(path)?;
     let file_size = file.metadata()?.len() as usize;
     
@@ -3213,6 +3429,7 @@ fn create_optimized_mmap(path: &Path, modify_time: u64, cache: &mut MutexGuard<H
 fn _lib_numpack(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NumPack>()?;
     m.add_class::<LazyArray>()?;
+    m.add_class::<LazyArrayIterator>()?;
     m.add_class::<ArrayMetadata>()?;
     m.add_class::<HighPerformanceLazyArray>()?;
     Ok(())
