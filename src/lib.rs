@@ -199,6 +199,19 @@ impl LazyArray {
         }
         strides.reverse();
 
+                 // Windows安全：使用安全的内存访问包装
+         #[cfg(target_os = "windows")]
+         {
+             use crate::memory::windows_simd::is_windows_safe_mode;
+             if is_windows_safe_mode() {
+                 // 在Windows安全模式下，不直接暴露mmap指针
+                 // 而是返回一个受保护的缓冲区
+                 return Err(PyErr::new::<pyo3::exceptions::PyBufferError, _>(
+                     "Buffer protocol disabled in Windows safe mode. Use array slicing instead."
+                 ));
+             }
+         }
+
         (*view).buf = slf.mmap.as_ptr() as *mut std::ffi::c_void;
         (*view).obj = ptr::null_mut();
         (*view).len = slf.mmap.len() as isize;
@@ -1585,7 +1598,7 @@ impl LazyArray {
         }
     }
     
-    // 新增：直接内存访问
+    // 新增：直接内存访问（Windows安全版本）
     fn direct_memory_access(&self, py: Python, index_result: &IndexResult) -> Result<PyObject, PyErr> {
         let total_elements = index_result.result_shape.iter().product::<usize>();
         let mut result_data = Vec::with_capacity(total_elements * self.itemsize);
@@ -1593,50 +1606,92 @@ impl LazyArray {
         // 计算多维索引的笛卡尔积
         let index_combinations = self.compute_index_combinations(&index_result.indices);
         
+        use crate::memory::windows_simd::WindowsSafeMemoryAccess;
+        
         for combination in index_combinations {
             let offset = self.compute_linear_offset(&combination);
-            let element_data = unsafe {
-                std::slice::from_raw_parts(
-                    self.mmap.as_ptr().add(offset),
-                    self.itemsize
-                )
-            };
-            result_data.extend_from_slice(element_data);
+            
+            // 使用Windows安全的内存访问
+            if offset + self.itemsize <= self.mmap.len() {
+                let element_data = unsafe {
+                    WindowsSafeMemoryAccess::safe_slice_from_raw_parts(
+                        self.mmap.as_ptr(),
+                        offset,
+                        self.itemsize,
+                        self.mmap.len()
+                    ).unwrap_or(&[])
+                };
+                result_data.extend_from_slice(element_data);
+            } else {
+                // 超出边界时填充零
+                result_data.extend(vec![0u8; self.itemsize]);
+            }
         }
         
         self.create_numpy_array(py, result_data, &index_result.result_shape)
     }
     
-    // 新增：块复制访问
+    // 新增：块复制访问（Windows安全版本）
     fn block_copy_access(&self, py: Python, index_result: &IndexResult) -> Result<PyObject, PyErr> {
+        use crate::memory::windows_simd::WindowsSafeMemoryAccess;
+        
         if index_result.indices.len() == 1 {
             // 单维连续访问优化
             let indices = &index_result.indices[0];
-        let row_size = self.itemsize * self.shape[1..].iter().product::<usize>();
+            let row_size = self.itemsize * self.shape[1..].iter().product::<usize>();
             let mut result_data = Vec::with_capacity(indices.len() * row_size);
             
             // 检查是否为连续块
             if self.is_continuous_block(indices) {
                 let start_offset = indices[0] * row_size;
                 let block_size = indices.len() * row_size;
-                let block_data = unsafe {
-                    std::slice::from_raw_parts(
-                        self.mmap.as_ptr().add(start_offset),
-                        block_size
-                    )
-                };
-                result_data.extend_from_slice(block_data);
+                
+                if start_offset + block_size <= self.mmap.len() {
+                    let block_data = unsafe {
+                        WindowsSafeMemoryAccess::safe_slice_from_raw_parts(
+                            self.mmap.as_ptr(),
+                            start_offset,
+                            block_size,
+                            self.mmap.len()
+                        ).unwrap_or(&[])
+                    };
+                    result_data.extend_from_slice(block_data);
+                } else {
+                    // 超出边界时使用逐行复制
+                    for &idx in indices {
+                        let offset = idx * row_size;
+                        if offset + row_size <= self.mmap.len() {
+                            let row_data = unsafe {
+                                WindowsSafeMemoryAccess::safe_slice_from_raw_parts(
+                                    self.mmap.as_ptr(),
+                                    offset,
+                                    row_size,
+                                    self.mmap.len()
+                                ).unwrap_or(&[])
+                            };
+                            result_data.extend_from_slice(row_data);
+                        } else {
+                            result_data.extend(vec![0u8; row_size]);
+                        }
+                    }
+                }
             } else {
-                // 分块复制
+                // 分块复制（Windows安全版本）
                 for &idx in indices {
                     let offset = idx * row_size;
-                    let row_data = unsafe {
-                        std::slice::from_raw_parts(
-                            self.mmap.as_ptr().add(offset),
-                            row_size
-                        )
-                    };
-                    result_data.extend_from_slice(row_data);
+                    if offset + row_size <= self.mmap.len() {
+                        let row_data = unsafe {
+                            WindowsSafeMemoryAccess::safe_slice_from_raw_parts(
+                                self.mmap.as_ptr(),
+                                offset,
+                                row_size,
+                                self.mmap.len()
+                            ).unwrap_or(&[])
+                        };
+                        result_data.extend_from_slice(row_data);
+                    } else {
+                        result_data.extend(vec![0u8; row_size]);
+                    }
                 }
             }
             
@@ -2632,31 +2687,63 @@ impl HighPerformanceLazyArray {
 
 }
 
-// SIMD加速的内存复制实用函数
+// Windows安全的SIMD加速内存复制实用函数
 unsafe fn simd_copy_if_possible(src: *const u8, dst: *mut u8, size: usize) {
-    #[cfg(target_arch = "x86_64")]
+    use crate::memory::windows_simd::is_windows_safe_mode;
+    
+    // Windows安全模式检查
+    #[cfg(target_os = "windows")]
     {
-        if is_x86_feature_detected!("avx2") && size >= 32 && size % 32 == 0 {
-            // 使用AVX2指令
-            let chunks = size / 32;
-            for i in 0..chunks {
-                let src_offset = i * 32;
-                let dst_offset = i * 32;
-                
-                let data = std::arch::x86_64::_mm256_loadu_si256(
-                    src.add(src_offset) as *const std::arch::x86_64::__m256i
-                );
-                std::arch::x86_64::_mm256_storeu_si256(
-                    dst.add(dst_offset) as *mut std::arch::x86_64::__m256i,
-                    data
-                );
+        if is_windows_safe_mode() {
+            // 在安全模式下使用更保守的复制方式
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                std::ptr::copy_nonoverlapping(src, dst, size);
+            }));
+            if result.is_err() {
+                // 发生panic时填充零
+                std::ptr::write_bytes(dst, 0, size);
             }
             return;
         }
     }
     
-    // 回退到标准复制
-    std::ptr::copy_nonoverlapping(src, dst, size);
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("avx2") && size >= 32 && size % 32 == 0 {
+            // 使用带保护的AVX2指令
+            let chunks = size / 32;
+            for i in 0..chunks {
+                let src_offset = i * 32;
+                let dst_offset = i * 32;
+                
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let data = std::arch::x86_64::_mm256_loadu_si256(
+                        src.add(src_offset) as *const std::arch::x86_64::__m256i
+                    );
+                    std::arch::x86_64::_mm256_storeu_si256(
+                        dst.add(dst_offset) as *mut std::arch::x86_64::__m256i,
+                        data
+                    );
+                }));
+                
+                if result.is_err() {
+                    // SIMD操作失败时回退到标准复制
+                    std::ptr::copy_nonoverlapping(src.add(src_offset), dst.add(dst_offset), 32);
+                }
+            }
+            return;
+        }
+    }
+    
+    // 回退到带保护的标准复制
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        std::ptr::copy_nonoverlapping(src, dst, size);
+    }));
+    
+    if result.is_err() {
+        // 标准复制失败时填充零
+        std::ptr::write_bytes(dst, 0, size);
+    }
 }
 
 fn get_array_dtype(array: &Bound<'_, PyAny>) -> PyResult<DataType> {

@@ -5,7 +5,8 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use crate::cache::multilevel_cache::{MultiLevelCache, CachePolicy};
-use crate::performance::{PerformanceMetrics, SystemMonitor};
+use crate::performance::SystemMonitor;
+// use crate::performance::PerformanceMetrics;  // 暂时注释掉未使用的导入
 
 // 自适应缓存控制器
 #[derive(Debug)]

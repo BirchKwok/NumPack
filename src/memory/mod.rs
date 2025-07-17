@@ -11,7 +11,8 @@ pub mod windows_simd;
 
 pub use zero_copy::*;
 pub use simd_processor::*;
-pub use pool::*;
+// 暂时注释掉未使用的导入，避免警告
+// pub use pool::*;
 
 #[cfg(target_family = "windows")]
 pub use windows_simd::*;

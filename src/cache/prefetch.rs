@@ -4,7 +4,8 @@
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use crate::access_pattern::{AccessPatternPredictor, AccessPatternAnalysis};
+use crate::access_pattern::AccessPatternPredictor;
+// use crate::access_pattern::AccessPatternAnalysis;  // 暂时注释掉未使用的导入
 
 // 预取策略枚举
 #[derive(Debug, Clone, Copy, PartialEq)]

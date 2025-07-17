@@ -754,7 +754,7 @@ impl LazyArray {
     // 以下方法需要从indexing.rs中导入实现
     // 这里提供占位符实现，实际实现应该在indexing.rs中
 
-    fn parse_advanced_index(&self, py: Python, key: &Bound<'_, PyAny>) -> Result<IndexResult, PyErr> {
+    fn parse_advanced_index(&self, py: Python, _key: &Bound<'_, PyAny>) -> Result<IndexResult, PyErr> {
         // 这个方法应该从indexing.rs中导入
         // 这里提供简化的占位符实现
         Ok(IndexResult {
