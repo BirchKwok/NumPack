@@ -839,7 +839,7 @@ impl SIMDProcessor {
             let offset = idx * item_size;
             if offset < src.len() {
                 unsafe {
-                    let ptr = src.as_ptr().add(offset);
+                    let _ptr = src.as_ptr().add(offset);
                     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
                     {
                         std::arch::x86_64::_mm_prefetch(ptr as *const i8, std::arch::x86_64::_MM_HINT_T0);
@@ -4277,8 +4277,8 @@ impl OptimizedLazyArray {
                 // 批量预取内存
                 for &idx in batch {
                     if idx < self.shape[0] {
-                        let offset = idx * row_size;
-                        unsafe {
+                        let _offset = idx * row_size;
+                        {
                             // 预取指令
                             #[cfg(target_arch = "x86_64")]
                             {
@@ -4607,8 +4607,8 @@ impl OptimizedLazyArray {
                 // 批量预取
                 for &idx in chunk {
                     if idx < self.shape[0] {
-                        let offset = idx * row_size;
-                        unsafe {
+                        let _offset = idx * row_size;
+                        {
                             #[cfg(target_arch = "x86_64")]
                             {
                                 use std::arch::x86_64::_mm_prefetch;
@@ -5185,7 +5185,7 @@ impl OptimizedLazyArray {
             let base_idx = chunk_start * chunk_size;
             
             if chunk.len() == chunk_size {
-                unsafe {
+                {
                     let mut bit_masks: [u64; 4] = [0; 4]; // 256位 = 4 * 64位
                     
                     for (i, &val) in chunk.iter().enumerate() {
@@ -5279,8 +5279,8 @@ impl OptimizedLazyArray {
 
     // 微小数据量的零拷贝优化
     fn boolean_index_zero_copy_micro(&self, mask: &[bool]) -> Vec<Vec<u8>> {
-        let row_size = self.shape[1..].iter().product::<usize>() * self.itemsize;
-        let mut result = Vec::new();
+                     let row_size = self.shape[1..].iter().product::<usize>() * self.itemsize;
+             let mut result = Vec::new();
         
         // 对于小数据，直接遍历，避免复杂的SIMD开销
         for (row_idx, &selected) in mask.iter().enumerate() {
@@ -5502,7 +5502,7 @@ impl OptimizedLazyArray {
     // 新增：自适应预取布尔索引
     pub fn boolean_index_adaptive_prefetch(&self, mask: &[bool]) -> Vec<Vec<u8>> {
         let selected_indices = self.extreme_simd_boolean_filter(mask);
-        let row_size = self.shape[1..].iter().product::<usize>() * self.itemsize;
+        let _row_size = self.shape[1..].iter().product::<usize>() * self.itemsize;
         
         // 分析访问模式
         let access_pattern = self.analyze_access_pattern(&selected_indices);
@@ -5656,7 +5656,7 @@ impl OptimizedLazyArray {
 
         // 对于简单的行切片，使用优化路径
         if ranges.len() == 1 {
-            let row_size = self.shape[1..].iter().product::<usize>() * self.itemsize;
+            let _row_size = self.shape[1..].iter().product::<usize>() * self.itemsize;
             for row_idx in ranges[0].start..ranges[0].end.min(self.shape[0]) {
                 let row_data = self.get_row(row_idx);
                 result.extend(row_data);
@@ -6564,7 +6564,7 @@ pub struct AdaptiveCache {
      
      fn perform_adaptive_eviction(&mut self) {
          // 识别并移除过期项目
-         let now = Instant::now();
+         let _now = Instant::now();
          let expired_keys: Vec<usize> = self.metadata.iter()
              .filter(|(_, meta)| meta.age().as_secs() > 3600) // 1小时过期
              .map(|(&key, _)| key)
@@ -6794,7 +6794,7 @@ pub struct AdaptiveCache {
          
          if let Some(key) = oldest_key {
              if let (Some(compressed_data), Some(meta)) = (self.items.remove(&key), self.metadata.remove(&key)) {
-                 let original_size = self.uncompressed_sizes.remove(&key).unwrap_or(0);
+                 let _original_size = self.uncompressed_sizes.remove(&key).unwrap_or(0);
                  self.current_size -= compressed_data.len();
                  let decompressed_data = self.decompress_data(&compressed_data);
                  return Some((key, decompressed_data, meta));
@@ -7627,7 +7627,7 @@ pub struct AdaptiveCache {
      /// 选择淘汰目标
      pub fn select_eviction_targets(&mut self, 
                                    cache_items: &HashMap<usize, CacheItemMetadata>,
-                                   memory_pressure: f64,
+                                   _memory_pressure: f64,
                                    target_count: usize) -> Vec<usize> {
          if !self.enabled {
              return Vec::new();
@@ -7645,7 +7645,7 @@ pub struct AdaptiveCache {
          };
          
          // 更新统计信息
-         let eviction_time = start_time.elapsed();
+                   let _eviction_time = start_time.elapsed();
          self.eviction_stats.total_evictions += targets.len() as u64;
          
          targets
@@ -7812,7 +7812,7 @@ pub struct AdaptiveCache {
      }
      
      /// 记录缓存操作
-     pub fn record_cache_operation(&mut self, operation_type: CacheOperationType, duration: Duration, bytes: usize, hit: bool) {
+     pub fn record_cache_operation(&mut self, _operation_type: CacheOperationType, duration: Duration, bytes: usize, hit: bool) {
          self.total_requests += 1;
          
          if hit {

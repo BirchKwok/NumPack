@@ -15,9 +15,8 @@ use pyo3::PyResult;
 // 添加 Windows 平台需要的 trait 导入
 #[cfg(target_family = "windows")]
 use std::os::windows::fs::OpenOptionsExt;
-// 移除未使用的导入
-// #[cfg(target_family = "windows")]
-// use std::os::windows::io::AsRawHandle;
+#[cfg(target_family = "windows")]
+use std::os::windows::io::AsRawHandle;
 
 // Windows系统API类型别名
 #[cfg(target_family = "windows")]
