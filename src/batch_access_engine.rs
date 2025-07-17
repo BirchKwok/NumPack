@@ -1734,7 +1734,7 @@ impl StrategySelector {
         }
     }
 
-    pub fn select_strategy(&self, request: &BatchAccessRequest, data_size: usize) -> BatchAccessStrategy {
+    pub fn select_strategy(&self, request: &BatchAccessRequest, _data_size: usize) -> BatchAccessStrategy {
         match request {
             BatchAccessRequest::Rows(indices) => {
                 if indices.len() < 100 {
@@ -1843,7 +1843,7 @@ impl BatchAccessEngine {
             BatchAccessRequest::Range(start, end) => {
                 // 对于范围访问，使用范围优化
                 let ranges = vec![(start, end)];
-                let range_request = RangeAccessRequest {
+                let _range_request = RangeAccessRequest {
                     ranges,
                     total_size: end - start,
                     expected_sequentiality: 1.0,

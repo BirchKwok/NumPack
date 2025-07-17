@@ -310,7 +310,7 @@ impl LazyArray {
         Ok(result)
     }
 
-    fn get_element(&self, py: Python, row: usize, col: usize) -> PyResult<String> {
+    fn get_element(&self, _py: Python, row: usize, col: usize) -> PyResult<String> {
         let offset = (row * self.shape[1] + col) * self.itemsize;
         let value = match self.dtype {
             DataType::Bool => {
@@ -839,7 +839,7 @@ impl LazyArray {
     fn check_for_broadcasting(&self, tuple: &Bound<'_, PyTuple>) -> Result<bool, PyErr> {
         for i in 0..tuple.len() {
             let item = tuple.get_item(i)?;
-            if let Ok(numpy_array) = item.getattr("__array__") {
+            if let Ok(_numpy_array) = item.getattr("__array__") {
                 if let Ok(shape_attr) = item.getattr("shape") {
                     if let Ok(shape) = shape_attr.extract::<Vec<usize>>() {
                         if shape.len() > 1 {
