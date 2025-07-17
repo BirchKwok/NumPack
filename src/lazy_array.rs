@@ -4283,10 +4283,12 @@ impl OptimizedLazyArray {
                             #[cfg(target_arch = "x86_64")]
                             {
                                 use std::arch::x86_64::_mm_prefetch;
-                                _mm_prefetch(
-                                    self.mmap.as_ptr().add(offset) as *const i8,
-                                    std::arch::x86_64::_MM_HINT_T0
-                                );
+                                unsafe {
+                                    _mm_prefetch(
+                                        self.mmap.as_ptr().add(offset) as *const i8,
+                                        std::arch::x86_64::_MM_HINT_T0
+                                    );
+                                }
                             }
                         }
                     }
@@ -4612,10 +4614,12 @@ impl OptimizedLazyArray {
                             #[cfg(target_arch = "x86_64")]
                             {
                                 use std::arch::x86_64::_mm_prefetch;
-                                _mm_prefetch(
-                                    self.mmap.as_ptr().add(offset) as *const i8,
-                                    std::arch::x86_64::_MM_HINT_T0
-                                );
+                                unsafe {
+                                    _mm_prefetch(
+                                        self.mmap.as_ptr().add(offset) as *const i8,
+                                        std::arch::x86_64::_MM_HINT_T0
+                                    );
+                                }
                             }
                         }
                     }
