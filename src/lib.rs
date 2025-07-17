@@ -43,6 +43,8 @@ use half::f16;
 
 use crate::parallel_io::ParallelIO;
 use crate::metadata::DataType;
+use crate::memory::windows_simd::{WindowsSafeMemoryAccess, WindowsSIMDError};
+
 use crate::lazy_array::{OptimizedLazyArray, FastTypeConversion};
 use rayon::prelude::*;
 
@@ -3612,5 +3614,27 @@ fn _lib_numpack(m: &Bound<'_, PyModule>) -> PyResult<()> {
 fn release_windows_file_handle(path: &Path) {
     // 使用智能系统处理文件解锁和清理
     crate::windows_mapping::execute_full_cleanup(path);
+}
+
+/// 安全创建内存 slice 的辅助函数 - 防止 Windows 内存访问冲突
+fn safe_slice_from_mmap(mmap: &Mmap, offset: usize, size: usize) -> Result<&[u8], PyErr> {
+    if offset + size > mmap.len() {
+        return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>("Data offset out of bounds"));
+    }
+    Ok(unsafe { std::slice::from_raw_parts(mmap.as_ptr().add(offset), size) })
+}
+
+/// 安全复制内存数据的辅助函数 - 防止 Windows 内存访问冲突
+fn safe_copy_from_mmap(mmap: &Mmap, offset: usize, size: usize) -> Result<Vec<u8>, PyErr> {
+    if offset + size > mmap.len() {
+        return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>("Data offset out of bounds"));
+    }
+    
+    let mut result = Vec::with_capacity(size);
+    unsafe {
+        std::ptr::copy_nonoverlapping(mmap.as_ptr().add(offset), result.as_mut_ptr(), size);
+        result.set_len(size);
+    }
+    Ok(result)
 }
 

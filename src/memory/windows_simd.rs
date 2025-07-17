@@ -5,6 +5,43 @@
 use std::alloc;
 use std::sync::Mutex;
 
+/// 安全内存访问宏 - 防止 Windows 访问冲突
+#[macro_export]
+macro_rules! safe_slice_from_mmap {
+    ($mmap:expr, $offset:expr, $size:expr) => {{
+        if $offset + $size > $mmap.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>("Data offset out of bounds"));
+        }
+        unsafe {
+            $crate::memory::windows_simd::WindowsSafeMemoryAccess::safe_slice_from_raw_parts(
+                $mmap.as_ptr(),
+                $offset,
+                $size,
+                $mmap.len()
+            ).unwrap_or(&[])
+        }
+    }};
+}
+
+/// 安全内存复制宏 - 防止 Windows 访问冲突  
+#[macro_export]
+macro_rules! safe_copy_from_mmap {
+    ($mmap:expr, $offset:expr, $size:expr) => {{
+        if $offset + $size > $mmap.len() {
+            vec![0; $size]
+        } else {
+            unsafe {
+                $crate::memory::windows_simd::WindowsSafeMemoryAccess::safe_copy_to_vec(
+                    $mmap.as_ptr(),
+                    $offset,
+                    $size,
+                    $mmap.len()
+                ).unwrap_or_else(|_| vec![0; $size])
+            }
+        }
+    }};
+}
+
 /// Windows平台SIMD错误类型
 #[cfg(target_os = "windows")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -338,6 +375,32 @@ impl WindowsSafeMemoryAccess {
         std::ptr::copy_nonoverlapping(ptr.add(offset), bytes.as_mut_ptr(), 8);
         Ok(u64::from_le_bytes(bytes))
     }
+    
+    /// 安全创建 slice - 替代 std::slice::from_raw_parts
+    pub unsafe fn safe_slice_from_raw_parts(ptr: *const u8, offset: usize, len: usize, total_len: usize) -> Result<&'static [u8], WindowsSIMDError> {
+        if offset + len > total_len {
+            return Err(WindowsSIMDError::InvalidMemoryAccess);
+        }
+        if ptr.is_null() {
+            return Err(WindowsSIMDError::InvalidMemoryAccess);
+        }
+        Ok(std::slice::from_raw_parts(ptr.add(offset), len))
+    }
+    
+    /// 安全复制内存块 - 用于复制数据到向量
+    pub unsafe fn safe_copy_to_vec(ptr: *const u8, offset: usize, len: usize, total_len: usize) -> Result<Vec<u8>, WindowsSIMDError> {
+        if offset + len > total_len {
+            return Err(WindowsSIMDError::InvalidMemoryAccess);
+        }
+        if ptr.is_null() {
+            return Err(WindowsSIMDError::InvalidMemoryAccess);
+        }
+        
+        let mut result = Vec::with_capacity(len);
+        std::ptr::copy_nonoverlapping(ptr.add(offset), result.as_mut_ptr(), len);
+        result.set_len(len);
+        Ok(result)
+    }
 }
 
 // 非Windows平台的空实现
@@ -396,5 +459,18 @@ impl WindowsSafeMemoryAccess {
     
     pub unsafe fn safe_read_unaligned_u64(ptr: *const u8, offset: usize, _len: usize) -> Result<u64, WindowsSIMDError> {
         Ok(*(ptr.add(offset) as *const u64))
+    }
+    
+    /// 安全创建 slice - 替代 std::slice::from_raw_parts
+    pub unsafe fn safe_slice_from_raw_parts(ptr: *const u8, offset: usize, len: usize, _total_len: usize) -> Result<&'static [u8], WindowsSIMDError> {
+        Ok(std::slice::from_raw_parts(ptr.add(offset), len))
+    }
+    
+    /// 安全复制内存块 - 用于复制数据到向量
+    pub unsafe fn safe_copy_to_vec(ptr: *const u8, offset: usize, len: usize, _total_len: usize) -> Result<Vec<u8>, WindowsSIMDError> {
+        let mut result = Vec::with_capacity(len);
+        std::ptr::copy_nonoverlapping(ptr.add(offset), result.as_mut_ptr(), len);
+        result.set_len(len);
+        Ok(result)
     }
 }

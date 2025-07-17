@@ -14,7 +14,7 @@ ndarray = "0.16"
 tempfile = "3.8.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-rayon = "1.8"
+rayon = { version = "1.8", optional = true }
 memmap2 = "0.5.10"
 half = { version = "2.6.0", features = ["bytemuck"] }
 bitvec = "1.0.1"
@@ -49,8 +49,9 @@ pyo3-build-config = "0.25.0"
 
 [features]
 extension-module = ["pyo3/extension-module"]
-default = ["extension-module"]
+default = ["extension-module", "rayon"]
 avx512 = []
+rayon = ["dep:rayon"]
 
 [package.metadata.maturin]
 python-source = "python"
