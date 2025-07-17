@@ -6,6 +6,7 @@ mod metadata;
 mod parallel_io;
 mod lazy_array;
 mod batch_access_engine;
+mod windows_mapping; // 添加Windows平台特有的内存映射管理系统
 
 #[cfg(test)]
 mod fancy_index_tests;
@@ -752,32 +753,28 @@ impl LazyArray {
 #[cfg(target_family = "windows")]
 impl Drop for LazyArray {
     fn drop(&mut self) {
-        // 在Windows上，使用Arc克隆和drop以确保内存映射被释放
-        // 这会确保文件句柄关闭，避免"Access is denied"错误
+        // 使用智能系统处理文件解锁和清理
+        // Arc将处理引用计数，最终引用释放时将自动处理清理
+        let path = std::path::Path::new(&self.array_path);
+        
+        // 触发Arc的drop，可能是最后一个引用
         let _temp = Arc::clone(&self.mmap);
         drop(_temp);
         
-        // 此操作会确保在LazyArray被Drop时及时释放文件锁
-        unsafe {
-            // 刷新文件缓冲并强制关闭句柄
-            let path_str = self.array_path.clone();
-            if let Ok(file) = std::fs::File::open(path_str) {
-                use std::os::windows::io::AsRawHandle;
-                let handle = file.as_raw_handle();
-                if !handle.is_null() {
-                    // 强制刷新和解锁
-                    windows_sys::Win32::Storage::FileSystem::FlushFileBuffers(handle as isize);
-                }
-            }
+        // 如果存在明显的文件问题，使用主动清理
+        if self.array_path.contains("temp") || self.array_path.contains("tmp") {
+            // 临时文件使用立即清理策略
+            release_windows_file_handle(path);
         }
     }
 }
 
-// HighPerformanceLazyArray的Drop实现
+// HighPerformanceLazyArray的更智能Drop实现
 #[cfg(target_family = "windows")]
 impl Drop for HighPerformanceLazyArray {
     fn drop(&mut self) {
-        // 确保在Windows平台上释放OptimizedLazyArray中的内存映射
+        // OptimizedLazyArray处理将由其自己的Drop实现负责
+        // 这里触发Drop但不需要额外处理
         drop(&self.optimized_array);
     }
 }
@@ -3397,95 +3394,83 @@ impl NumPack {
 }
 
 fn create_optimized_mmap(path: &Path, modify_time: i64, cache: &mut MutexGuard<HashMap<String, (Arc<Mmap>, i64)>>) -> PyResult<Arc<Mmap>> {
-    let file = std::fs::File::open(path)?;
-    let file_size = file.metadata()?.len() as usize;
-    
-    // Unix
-    #[cfg(all(target_family = "unix", target_os = "linux"))]
-    unsafe {
-        use std::os::unix::io::AsRawFd;
-        let addr = libc::mmap(
-            std::ptr::null_mut(),
-            file_size,
-            libc::PROT_READ,
-            libc::MAP_PRIVATE | libc::MAP_HUGETLB,
-            file.as_raw_fd(),
-            0
-        );
+    // Windows平台使用智能映射系统
+    #[cfg(target_family = "windows")]
+    {
+        use crate::windows_mapping::create_intelligent_mmap;
         
-        if addr != libc::MAP_FAILED {
-            libc::madvise(
-                addr,
+        // 使用智能映射系统
+        let enhanced_mapping = create_intelligent_mmap(path)?;
+        let mmap = enhanced_mapping.mmap.clone();
+        
+        // 缓存映射结果
+        let path_str = path.to_string_lossy().to_string();
+        cache.insert(path_str, (mmap.clone(), modify_time));
+        
+        return Ok(mmap);
+    }
+    
+    // 非Windows平台使用原始逻辑
+    #[cfg(not(target_family = "windows"))]
+    {
+        let file = std::fs::File::open(path)?;
+        let file_size = file.metadata()?.len() as usize;
+        
+        // Unix Linux
+        #[cfg(all(target_family = "unix", target_os = "linux"))]
+        unsafe {
+            use std::os::unix::io::AsRawFd;
+            let addr = libc::mmap(
+                std::ptr::null_mut(),
                 file_size,
-                libc::MADV_HUGEPAGE
+                libc::PROT_READ,
+                libc::MAP_PRIVATE | libc::MAP_HUGETLB,
+                file.as_raw_fd(),
+                0
             );
             
-            libc::madvise(
-                addr,
-                file_size,
-                libc::MADV_SEQUENTIAL | libc::MADV_WILLNEED
-            );
+            if addr != libc::MAP_FAILED {
+                libc::madvise(
+                    addr,
+                    file_size,
+                    libc::MADV_HUGEPAGE
+                );
+                
+                libc::madvise(
+                    addr,
+                    file_size,
+                    libc::MADV_SEQUENTIAL | libc::MADV_WILLNEED
+                );
+            }
+            
+            libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_SEQUENTIAL);
+            libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_WILLNEED);
         }
         
-        libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_SEQUENTIAL);
-        libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_WILLNEED);
-    }
-    
-    // macOS
-    #[cfg(all(target_family = "unix", target_os = "macos"))]
-    unsafe {
-        use std::os::unix::io::AsRawFd;
-        let radv = libc::radvisory {
-            ra_offset: 0,
-            ra_count: file_size as i32,
-        };
-        libc::fcntl(file.as_raw_fd(), libc::F_RDADVISE, &radv);
-        libc::fcntl(file.as_raw_fd(), libc::F_RDAHEAD, 1);
-    }
-
-    // Windows - 使用不同的映射选项，确保文件可以正常关闭
-    #[cfg(target_family = "windows")]
-    unsafe {
-        // Windows平台特殊处理：使用更兼容的映射选项
-        if let Ok(mmap_view) = memmap2::MmapOptions::new()
-            .populate() 
-            .map_copy(&file) // 使用map_copy减少文件锁定
-        {
-            // 锁定内存但允许共享
-            let _ = VirtualLock(
-                mmap_view.as_ptr() as *mut _,
-                mmap_view.len()
-            );
+        // macOS
+        #[cfg(all(target_family = "unix", target_os = "macos"))]
+        unsafe {
+            use std::os::unix::io::AsRawFd;
+            let radv = libc::radvisory {
+                ra_offset: 0,
+                ra_count: file_size as i32,
+            };
+            libc::fcntl(file.as_raw_fd(), libc::F_RDADVISE, &radv);
+            libc::fcntl(file.as_raw_fd(), libc::F_RDAHEAD, 1);
         }
-
-        // 设置文件IO重叠范围但不锁定
-        let handle = file.as_handle();
-        let raw_handle = handle.as_raw_handle() as HANDLE;
-        let _ = SetFileIoOverlappedRange(
-            raw_handle as isize,
-            std::ptr::null(),
-            file_size.min(u32::MAX as usize) as u32
-        );
+        
+        // 创建标准映射
+        let mmap = unsafe { 
+            memmap2::MmapOptions::new()
+                .populate()
+                .map(&file)?
+        };
+        
+        let mmap = Arc::new(mmap);
+        cache.insert(path.to_string_lossy().to_string(), (Arc::clone(&mmap), modify_time));
+        
+        Ok(mmap)
     }
-    
-    let mmap = unsafe { 
-        #[cfg(not(target_family = "windows"))]
-        let mmap = memmap2::MmapOptions::new()
-            .populate()
-            .map(&file)?;
-
-        #[cfg(target_family = "windows")]
-        let mmap = memmap2::MmapOptions::new()
-            .populate()
-            .map_copy(&file)?; // Windows平台使用map_copy减少文件锁定
-
-        mmap
-    };
-    
-    let mmap = Arc::new(mmap);
-    cache.insert(path.to_string_lossy().to_string(), (Arc::clone(&mmap), modify_time));
-    
-    Ok(mmap)
 }
 
 #[pymodule]
@@ -3496,5 +3481,11 @@ fn _lib_numpack(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ArrayMetadata>()?;
     m.add_class::<HighPerformanceLazyArray>()?;
     Ok(())
+}
+
+#[cfg(target_family = "windows")]
+fn release_windows_file_handle(path: &Path) {
+    // 使用智能系统处理文件解锁和清理
+    crate::windows_mapping::execute_full_cleanup(path);
 }
 

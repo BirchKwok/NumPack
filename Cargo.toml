@@ -34,7 +34,12 @@ rand = "0.8"
 libc = "0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.52", features = ["Win32_Storage_FileSystem", "Win32_Foundation", "Win32_System_Memory"] }
+windows-sys = { version = "0.52", features = [
+    "Win32_Storage_FileSystem", 
+    "Win32_Foundation", 
+    "Win32_System_Memory",
+    "Win32_System_IO"
+]}
 
 [build-dependencies]
 pyo3-build-config = "0.25.0"

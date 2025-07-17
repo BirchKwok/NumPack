@@ -3493,14 +3493,25 @@ struct AccessStats {
 #[cfg(target_family = "windows")]
 impl Drop for OptimizedLazyArray {
     fn drop(&mut self) {
-        // 在Windows上，明确释放内存映射，确保文件句柄被关闭
+        // 先触发Arc的drop可能是最后一个引用
         let _temp = Arc::clone(&self.mmap);
         drop(_temp);
         
-        // 尝试重新打开和关闭文件以确保解锁
-        if let Ok(path_str) = self.file_path.to_str() {
-            if let Ok(file) = std::fs::File::open(path_str) {
-                drop(file); // 立即关闭文件
+        // 智能清理系统 - 导入辅助函数
+        extern crate self as numpack;
+        
+        // 如果确认是临时文件或测试文件，使用立即清理
+        let path_str = self.file_path.to_string_lossy();
+        if path_str.contains("temp") || path_str.contains("tmp") || path_str.contains("test") {
+            // 确保立即清理
+            numpack::windows_mapping::execute_full_cleanup(&self.file_path);
+        } else if let Ok(file_size) = std::fs::metadata(&self.file_path).map(|meta| meta.len() as usize) {
+            // 对于小文件也使用立即清理
+            if file_size < 1024 * 1024 { // 小于1MB
+                numpack::windows_mapping::execute_full_cleanup(&self.file_path);
+            } else {
+                // 大文件使用延迟清理
+                numpack::windows_mapping::submit_delayed_cleanup(&self.file_path);
             }
         }
     }
