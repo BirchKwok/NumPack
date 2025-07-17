@@ -368,18 +368,28 @@ class TestLazyArrayAPI:
         # 创建小数组便于测试迭代
         data = np.array([[1, 2], [3, 4], [5, 6]], dtype=np.float32)
         numpack.save({'small_array': data})
-        lazy_arr = numpack.load('small_array', lazy=True)
         
-        # 测试迭代
-        rows = []
-        for i, row in enumerate(lazy_arr):
-            rows.append(row)
-            if i >= 2:  # 只测试前几行
-                break
+        # 使用with语句和上下文管理器
+        with numpack.load('small_array', lazy=True) as lazy_arr:
+            # 测试迭代
+            rows = []
+            for i, row in enumerate(lazy_arr):
+                rows.append(row)
+                if i >= 2:  # 只测试前几行
+                    break
+            
+            assert len(rows) == 3
+            for i, row in enumerate(rows):
+                assert np.allclose(row, data[i])
         
-        assert len(rows) == 3
-        for i, row in enumerate(rows):
-            assert np.allclose(row, data[i])
+        # 强制垃圾回收
+        import gc
+        gc.collect()
+        
+        # Windows平台上特殊处理
+        import os, time
+        if os.name == 'nt':
+            time.sleep(0.1)
 
     def test_lazy_array_context_manager(self, lazy_array_2d):
         """测试 LazyArray 上下文管理器功能"""
@@ -403,19 +413,29 @@ class TestLazyArrayAPI:
         # 创建测试数据
         data = np.random.rand(100, 10).astype(np.float32)
         numpack.save({'bool_test': data})
-        lazy_arr = numpack.load('bool_test', lazy=True)
         
         # 创建布尔掩码
         mask = np.array([True, False] * 50)  # 交替的布尔值
         
-        # 测试布尔索引（如果支持的话）
-        try:
-            result = lazy_arr[mask]
-            expected = data[mask]
-            assert np.allclose(result, expected)
-        except (NotImplementedError, TypeError):
-            # 不跳过测试，让测试失败
-            raise
+        # 使用上下文管理器
+        with numpack.load('bool_test', lazy=True) as lazy_arr:
+            # 测试布尔索引（如果支持的话）
+            try:
+                result = lazy_arr[mask]
+                expected = data[mask]
+                assert np.allclose(result, expected)
+            except (NotImplementedError, TypeError):
+                # 不跳过测试，让测试失败
+                raise
+        
+        # 强制垃圾回收
+        import gc
+        gc.collect()
+        
+        # Windows平台上特殊处理
+        import os, time
+        if os.name == 'nt':
+            time.sleep(0.1)
 
     def test_lazy_array_multidimensional_indexing(self, lazy_array_3d):
         """测试 LazyArray 多维索引"""

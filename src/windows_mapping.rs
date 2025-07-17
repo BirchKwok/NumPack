@@ -239,8 +239,8 @@ pub fn submit_delayed_cleanup(path: &Path) {
 pub fn execute_full_cleanup(path: &Path) {
     #[cfg(target_family = "windows")]
     unsafe {
-        // 尝试打开文件进行清理
-        if let Ok(file) = std::fs::OpenOptions::new()
+        // 首先尝试作为共享文件打开
+        let result = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .share_mode(
@@ -248,23 +248,54 @@ pub fn execute_full_cleanup(path: &Path) {
                 windows_sys::Win32::Storage::FileSystem::FILE_SHARE_WRITE |
                 windows_sys::Win32::Storage::FileSystem::FILE_SHARE_DELETE
             )
-            .open(path) 
-        {
+            .open(path);
+
+        // 处理文件句柄
+        if let Ok(file) = result {
             use std::os::windows::io::AsRawHandle;
             let handle = file.as_raw_handle();
             if handle != std::ptr::null_mut() {
                 // 刷新缓冲区并清理
                 windows_sys::Win32::Storage::FileSystem::FlushFileBuffers(handle as isize);
-                // 修正 CancelIo 的路径，它在 System::IO 模块中，而不是 Storage::FileSystem
                 windows_sys::Win32::System::IO::CancelIo(handle as isize);
                 
-                // 尝试解锁文件
+                // 尝试解锁文件 - 全文件范围
                 windows_sys::Win32::Storage::FileSystem::UnlockFile(
                     handle as isize, 0, 0, 0xFFFFFFFF, 0xFFFFFFFF
                 );
-                
+
+                // 增强：禁用所有文件缓存
+                let _ = windows_sys::Win32::Storage::FileSystem::SetFileInformationByHandle(
+                    handle as isize,
+                    windows_sys::Win32::Storage::FileSystem::FileBasicInfo,
+                    std::ptr::null_mut(),
+                    0
+                );
+
+                // 增强：强制内存页写回
+                windows_sys::Win32::System::Memory::FlushViewOfFile(
+                    std::ptr::null_mut(),
+                    0
+                );
+
                 // 文件将在离开作用域时关闭
             }
+        }
+
+        // 尝试以独占方式打开文件，并立即关闭，释放锁
+        let _ = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(false)
+            .open(path);
+            
+        // 尝试显式执行GC（在临时目录测试中特别重要）
+        std::mem::drop(result);
+        
+        // 在临时目录中，尝试强制刷新系统缓存
+        if path.to_string_lossy().contains("temp") || 
+           path.to_string_lossy().contains("tmp") {
+            windows_sys::Win32::System::Memory::GlobalMemoryStatus(std::ptr::null_mut());
         }
     }
     

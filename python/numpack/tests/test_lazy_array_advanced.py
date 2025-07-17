@@ -338,21 +338,31 @@ class TestLazyArrayDataTypes:
         else:
             data = np.random.rand(100, 50).astype(dtype)
         
-        numpack.save({'dtype_test': data})
-        lazy_arr = numpack.load('dtype_test', lazy=True)
+        numpack.save({'data_dtype_test': data})
         
-        # 测试基本属性
-        assert lazy_arr.dtype == dtype
-        assert lazy_arr.shape == data.shape
+        # 使用with语句确保资源释放
+        with numpack.load('data_dtype_test', lazy=True) as lazy_arr:
+            # 测试基本属性
+            assert lazy_arr.dtype == dtype
+            assert lazy_arr.shape == data.shape
+            
+            # 测试数据访问
+            row = lazy_arr[0]
+            assert np.allclose(row, data[0])
+            
+            # 测试 reshape (不使用-1维度)
+            total_size = data.size
+            reshaped = lazy_arr.reshape(total_size)
+            assert reshaped.size == data.size
         
-        # 测试数据访问
-        row = lazy_arr[0]
-        assert np.allclose(row, data[0])
+        # 强制垃圾回收以确保资源释放
+        import gc
+        gc.collect()
         
-        # 测试 reshape (不使用-1维度)
-        total_size = data.size
-        reshaped = lazy_arr.reshape(total_size)
-        assert reshaped.size == data.size
+        # Windows平台上特殊处理，等待文件句柄完全释放
+        import os, time
+        if os.name == 'nt':
+            time.sleep(0.1)
 
 
 if __name__ == '__main__':
