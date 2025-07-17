@@ -839,7 +839,7 @@ impl SIMDProcessor {
             let offset = idx * item_size;
             if offset < src.len() {
                 unsafe {
-                    let _ptr = src.as_ptr().add(offset);
+                    let ptr = src.as_ptr().add(offset);
                     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
                     {
                         std::arch::x86_64::_mm_prefetch(ptr as *const i8, std::arch::x86_64::_MM_HINT_T0);
@@ -4277,7 +4277,7 @@ impl OptimizedLazyArray {
                 // 批量预取内存
                 for &idx in batch {
                     if idx < self.shape[0] {
-                        let _offset = idx * row_size;
+                        let offset = idx * row_size;
                         {
                             // 预取指令
                             #[cfg(target_arch = "x86_64")]
@@ -4607,7 +4607,7 @@ impl OptimizedLazyArray {
                 // 批量预取
                 for &idx in chunk {
                     if idx < self.shape[0] {
-                        let _offset = idx * row_size;
+                        let offset = idx * row_size;
                         {
                             #[cfg(target_arch = "x86_64")]
                             {
