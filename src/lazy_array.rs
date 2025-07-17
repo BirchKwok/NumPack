@@ -982,7 +982,7 @@ impl SIMDProcessor {
                     // 使用SIMD复制 - 此时确保内存已正确对齐和检查过
                     if self.supports_avx2 && copy_size >= 32 {
                         // 使用AVX2复制大块数据
-                        self.simd_processor.avx2_vectorized_copy(
+                        self.avx2_vectorized_copy(
                             &temp_buffer[..copy_size],
                             &mut dst[..copy_size],
                             &[],
@@ -5730,7 +5730,7 @@ impl OptimizedLazyArray {
                 if is_x86_feature_detected!("avx2") {
                     // Windows平台需要特殊处理
                     #[cfg(target_os = "windows")]
-                    if self.simd_processor.win_safe_simd {
+                    if self.win_safe_simd {
                         self.avx2_memory_copy_windows(src, dst, size);
                         return;
                     }
@@ -6044,9 +6044,9 @@ impl OptimizedLazyArray {
                 
                 if dst_offset + block_size <= total_size && src_offset + block_size <= self.mmap.len() {
                     unsafe {
-                        // 大块连续复制
-                        if block_size >= 256 {
-                            self.simd_processor.avx2_vectorized_copy(
+                                                  // 大块连续复制
+                          if block_size >= 256 {
+                             self.simd_processor.avx2_vectorized_copy(
                                 &self.mmap[src_offset..src_offset + block_size],
                                 &mut result_buffer[dst_offset..dst_offset + block_size],
                                 &[],
