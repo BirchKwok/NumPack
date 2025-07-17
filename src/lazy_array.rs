@@ -5730,7 +5730,7 @@ impl OptimizedLazyArray {
                 if is_x86_feature_detected!("avx2") {
                     // Windows平台需要特殊处理
                     #[cfg(target_os = "windows")]
-                    if self.win_safe_simd {
+                    if self.simd_processor.win_safe_simd {
                         self.avx2_memory_copy_windows(src, dst, size);
                         return;
                     }
