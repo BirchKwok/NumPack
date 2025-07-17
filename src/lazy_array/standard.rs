@@ -502,7 +502,7 @@ impl LazyArray {
     }
 
     /// 获取元素值（用于__repr__）
-    fn get_element(&self, py: Python, row: usize, col: usize) -> PyResult<String> {
+    fn get_element(&self, _py: Python, row: usize, col: usize) -> PyResult<String> {
         if row >= self.shape[0] {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>("Row index out of bounds"));
         }
@@ -518,92 +518,30 @@ impl LazyArray {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>("Data offset out of bounds"));
         }
 
-        use crate::memory::windows_simd::{WindowsSafeMemoryAccess, WindowsSIMDError};
-        
         let value_str = match self.dtype {
             DataType::Bool => {
-                let value = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_u8(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0)
-                };
+                let value = unsafe { *self.mmap.as_ptr().add(offset) };
                 (value != 0).to_string()
             }
-            DataType::Uint8 => {
-                let value = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_u8(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0)
-                };
-                value.to_string()
-            }
-            DataType::Uint16 => {
-                let value = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_unaligned_u16(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0)
-                };
-                value.to_string()
-            }
-            DataType::Uint32 => {
-                let value = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_unaligned_u32(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0)
-                };
-                value.to_string()
-            }
-            DataType::Uint64 => {
-                let value = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_unaligned_u64(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0)
-                };
-                value.to_string()
-            }
-            DataType::Int8 => {
-                let value = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_i8(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0)
-                };
-                value.to_string()
-            }
-            DataType::Int16 => {
-                let value = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_i16(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0)
-                };
-                value.to_string()
-            }
-            DataType::Int32 => {
-                let value = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_i32(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0)
-                };
-                value.to_string()
-            }
-            DataType::Int64 => {
-                let value = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_i64(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0)
-                };
-                value.to_string()
-            }
+            DataType::Uint8 => unsafe { *self.mmap.as_ptr().add(offset) }.to_string(),
+            DataType::Uint16 => unsafe { *(self.mmap.as_ptr().add(offset) as *const u16) }.to_string(),
+            DataType::Uint32 => unsafe { *(self.mmap.as_ptr().add(offset) as *const u32) }.to_string(),
+            DataType::Uint64 => unsafe { *(self.mmap.as_ptr().add(offset) as *const u64) }.to_string(),
+            DataType::Int8 => unsafe { *(self.mmap.as_ptr().add(offset) as *const i8) }.to_string(),
+            DataType::Int16 => unsafe { *(self.mmap.as_ptr().add(offset) as *const i16) }.to_string(),
+            DataType::Int32 => unsafe { *(self.mmap.as_ptr().add(offset) as *const i32) }.to_string(),
+            DataType::Int64 => unsafe { *(self.mmap.as_ptr().add(offset) as *const i64) }.to_string(),
             DataType::Float16 => {
-                let raw_value = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_unaligned_u16(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0)
-                };
+                let raw_value = unsafe { *(self.mmap.as_ptr().add(offset) as *const u16) };
                 let value = half::f16::from_bits(raw_value);
                 format!("{:.3}", value)
             }
             DataType::Float32 => {
-                let value = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_f32(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0.0)
-                };
+                let value = unsafe { *(self.mmap.as_ptr().add(offset) as *const f32) };
                 format!("{:.3}", value)
             }
             DataType::Float64 => {
-                let value = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_f64(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0.0)
-                };
+                let value = unsafe { *(self.mmap.as_ptr().add(offset) as *const f64) };
                 format!("{:.3}", value)
             }
         };
@@ -754,7 +692,7 @@ impl LazyArray {
     // 以下方法需要从indexing.rs中导入实现
     // 这里提供占位符实现，实际实现应该在indexing.rs中
 
-    fn parse_advanced_index(&self, py: Python, _key: &Bound<'_, PyAny>) -> Result<IndexResult, PyErr> {
+    fn parse_advanced_index(&self, _py: Python, _key: &Bound<'_, PyAny>) -> Result<IndexResult, PyErr> {
         // 这个方法应该从indexing.rs中导入
         // 这里提供简化的占位符实现
         Ok(IndexResult {
@@ -807,7 +745,7 @@ impl LazyArray {
 }
 
 #[cfg(target_family = "windows")]
-fn release_windows_file_handle(path: &Path) {
-    // 委托给windows_mapping模块
-    crate::windows_mapping::execute_full_cleanup(path);
+fn release_windows_file_handle(_path: &Path) {
+    // Windows简化版本，无需特殊清理
+    // 依赖Rust的自动资源管理
 }

@@ -6,7 +6,8 @@ mod error;
 mod metadata;
 mod parallel_io;
 mod batch_access_engine;
-mod windows_mapping; // Windows平台特有的内存映射管理
+// Windows映射模块暂时禁用，使用简化方案
+// mod windows_mapping;
 
 // 新的模块化结构
 mod access_pattern;
@@ -43,8 +44,6 @@ use half::f16;
 
 use crate::parallel_io::ParallelIO;
 use crate::metadata::DataType;
-use crate::memory::windows_simd::{WindowsSafeMemoryAccess, WindowsSIMDError};
-
 use crate::lazy_array::{OptimizedLazyArray, FastTypeConversion};
 use rayon::prelude::*;
 
@@ -318,92 +317,30 @@ impl LazyArray {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>("Data offset out of bounds"));
         }
         
-        use crate::memory::windows_simd::{WindowsSafeMemoryAccess, WindowsSIMDError};
-        
         let value = match self.dtype {
             DataType::Bool => {
-                let val = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_u8(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0)
-                };
+                let val = unsafe { *self.mmap.as_ptr().add(offset) };
                 if val == 0 { "False" } else { "True" }.to_string()
             }
-            DataType::Uint8 => {
-                let val = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_u8(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0)
-                };
-                val.to_string()
-            }
-            DataType::Uint16 => {
-                let val = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_unaligned_u16(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0)
-                };
-                val.to_string()
-            }
-            DataType::Uint32 => {
-                let val = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_unaligned_u32(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0)
-                };
-                val.to_string()
-            }
-            DataType::Uint64 => {
-                let val = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_unaligned_u64(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0)
-                };
-                val.to_string()
-            }
-            DataType::Int8 => {
-                let val = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_i8(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0)
-                };
-                val.to_string()
-            }
-            DataType::Int16 => {
-                let val = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_i16(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0)
-                };
-                val.to_string()
-            }
-            DataType::Int32 => {
-                let val = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_i32(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0)
-                };
-                val.to_string()
-            }
-            DataType::Int64 => {
-                let val = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_i64(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0)
-                };
-                val.to_string()
-            }
+            DataType::Uint8 => unsafe { *self.mmap.as_ptr().add(offset) as u8 }.to_string(),
+            DataType::Uint16 => unsafe { *(self.mmap.as_ptr().add(offset) as *const u16) }.to_string(),
+            DataType::Uint32 => unsafe { *(self.mmap.as_ptr().add(offset) as *const u32) }.to_string(),
+            DataType::Uint64 => unsafe { *(self.mmap.as_ptr().add(offset) as *const u64) }.to_string(),
+            DataType::Int8 => unsafe { *self.mmap.as_ptr().add(offset) as i8 }.to_string(),
+            DataType::Int16 => unsafe { *(self.mmap.as_ptr().add(offset) as *const i16) }.to_string(),
+            DataType::Int32 => unsafe { *(self.mmap.as_ptr().add(offset) as *const i32) }.to_string(),
+            DataType::Int64 => unsafe { *(self.mmap.as_ptr().add(offset) as *const i64) }.to_string(),
             DataType::Float16 => {
-                let raw_val = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_unaligned_u16(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0)
-                };
+                let raw_val = unsafe { *(self.mmap.as_ptr().add(offset) as *const u16) };
                 let val = half::f16::from_bits(raw_val);
                 format!("{:.6}", val)
             }
             DataType::Float32 => {
-                let val = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_f32(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0.0)
-                };
+                let val = unsafe { *(self.mmap.as_ptr().add(offset) as *const f32) };
                 format!("{:.6}", val)
             }
             DataType::Float64 => {
-                let val = unsafe { 
-                    WindowsSafeMemoryAccess::safe_read_f64(self.mmap.as_ptr(), offset, self.mmap.len())
-                        .unwrap_or(0.0)
-                };
+                let val = unsafe { *(self.mmap.as_ptr().add(offset) as *const f64) };
                 format!("{:.6}", val)
             }
         };
@@ -1606,20 +1543,16 @@ impl LazyArray {
         // 计算多维索引的笛卡尔积
         let index_combinations = self.compute_index_combinations(&index_result.indices);
         
-        use crate::memory::windows_simd::WindowsSafeMemoryAccess;
-        
         for combination in index_combinations {
             let offset = self.compute_linear_offset(&combination);
             
-            // 使用Windows安全的内存访问
+            // 简化的内存访问
             if offset + self.itemsize <= self.mmap.len() {
                 let element_data = unsafe {
-                    WindowsSafeMemoryAccess::safe_slice_from_raw_parts(
-                        self.mmap.as_ptr(),
-                        offset,
-                        self.itemsize,
-                        self.mmap.len()
-                    ).unwrap_or(&[])
+                    std::slice::from_raw_parts(
+                        self.mmap.as_ptr().add(offset),
+                        self.itemsize
+                    )
                 };
                 result_data.extend_from_slice(element_data);
             } else {
@@ -1633,8 +1566,6 @@ impl LazyArray {
     
     // 新增：块复制访问（Windows安全版本）
     fn block_copy_access(&self, py: Python, index_result: &IndexResult) -> Result<PyObject, PyErr> {
-        use crate::memory::windows_simd::WindowsSafeMemoryAccess;
-        
         if index_result.indices.len() == 1 {
             // 单维连续访问优化
             let indices = &index_result.indices[0];
@@ -1648,12 +1579,10 @@ impl LazyArray {
                 
                 if start_offset + block_size <= self.mmap.len() {
                     let block_data = unsafe {
-                        WindowsSafeMemoryAccess::safe_slice_from_raw_parts(
-                            self.mmap.as_ptr(),
-                            start_offset,
-                            block_size,
-                            self.mmap.len()
-                        ).unwrap_or(&[])
+                        std::slice::from_raw_parts(
+                            self.mmap.as_ptr().add(start_offset),
+                            block_size
+                        )
                     };
                     result_data.extend_from_slice(block_data);
                 } else {
@@ -1662,12 +1591,10 @@ impl LazyArray {
                         let offset = idx * row_size;
                         if offset + row_size <= self.mmap.len() {
                             let row_data = unsafe {
-                                WindowsSafeMemoryAccess::safe_slice_from_raw_parts(
-                                    self.mmap.as_ptr(),
-                                    offset,
-                                    row_size,
-                                    self.mmap.len()
-                                ).unwrap_or(&[])
+                                std::slice::from_raw_parts(
+                                    self.mmap.as_ptr().add(offset),
+                                    row_size
+                                )
                             };
                             result_data.extend_from_slice(row_data);
                         } else {
@@ -1681,12 +1608,10 @@ impl LazyArray {
                     let offset = idx * row_size;
                     if offset + row_size <= self.mmap.len() {
                         let row_data = unsafe {
-                            WindowsSafeMemoryAccess::safe_slice_from_raw_parts(
-                                self.mmap.as_ptr(),
-                                offset,
-                                row_size,
-                                self.mmap.len()
-                            ).unwrap_or(&[])
+                            std::slice::from_raw_parts(
+                                self.mmap.as_ptr().add(offset),
+                                row_size
+                            )
                         };
                         result_data.extend_from_slice(row_data);
                     } else {
@@ -2349,7 +2274,7 @@ impl HighPerformanceLazyArray {
                     if offset + row_data.len() <= total_size {
                         // 对于大块数据使用优化的内存复制
                         if row_data.len() >= 64 {
-                            simd_copy_if_possible(
+                            safe_memory_copy(
                                 row_data.as_ptr(),
                                 combined_data.as_mut_ptr().add(offset),
                                 row_data.len()
@@ -2687,63 +2612,38 @@ impl HighPerformanceLazyArray {
 
 }
 
-// Windows安全的SIMD加速内存复制实用函数
-unsafe fn simd_copy_if_possible(src: *const u8, dst: *mut u8, size: usize) {
-    use crate::memory::windows_simd::is_windows_safe_mode;
-    
-    // Windows安全模式检查
+// 简化的内存复制函数
+unsafe fn safe_memory_copy(src: *const u8, dst: *mut u8, size: usize) {
+    // Windows平台使用简单的安全复制
     #[cfg(target_os = "windows")]
     {
-        if is_windows_safe_mode() {
-            // 在安全模式下使用更保守的复制方式
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                std::ptr::copy_nonoverlapping(src, dst, size);
-            }));
-            if result.is_err() {
-                // 发生panic时填充零
-                std::ptr::write_bytes(dst, 0, size);
-            }
-            return;
-        }
+        std::ptr::copy_nonoverlapping(src, dst, size);
+        return;
     }
     
-    #[cfg(target_arch = "x86_64")]
+    // 非Windows平台可以使用SIMD优化
+    #[cfg(all(target_arch = "x86_64", not(target_os = "windows")))]
     {
         if is_x86_feature_detected!("avx2") && size >= 32 && size % 32 == 0 {
-            // 使用带保护的AVX2指令
             let chunks = size / 32;
             for i in 0..chunks {
                 let src_offset = i * 32;
                 let dst_offset = i * 32;
                 
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let data = std::arch::x86_64::_mm256_loadu_si256(
-                        src.add(src_offset) as *const std::arch::x86_64::__m256i
-                    );
-                    std::arch::x86_64::_mm256_storeu_si256(
-                        dst.add(dst_offset) as *mut std::arch::x86_64::__m256i,
-                        data
-                    );
-                }));
-                
-                if result.is_err() {
-                    // SIMD操作失败时回退到标准复制
-                    std::ptr::copy_nonoverlapping(src.add(src_offset), dst.add(dst_offset), 32);
-                }
+                let data = std::arch::x86_64::_mm256_loadu_si256(
+                    src.add(src_offset) as *const std::arch::x86_64::__m256i
+                );
+                std::arch::x86_64::_mm256_storeu_si256(
+                    dst.add(dst_offset) as *mut std::arch::x86_64::__m256i,
+                    data
+                );
             }
             return;
         }
     }
     
-    // 回退到带保护的标准复制
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        std::ptr::copy_nonoverlapping(src, dst, size);
-    }));
-    
-    if result.is_err() {
-        // 标准复制失败时填充零
-        std::ptr::write_bytes(dst, 0, size);
-    }
+    // 标准复制
+    std::ptr::copy_nonoverlapping(src, dst, size);
 }
 
 fn get_array_dtype(array: &Bound<'_, PyAny>) -> PyResult<DataType> {
@@ -3603,83 +3503,89 @@ impl NumPack {
 }
 
 fn create_optimized_mmap(path: &Path, modify_time: i64, cache: &mut MutexGuard<HashMap<String, (Arc<Mmap>, i64)>>) -> PyResult<Arc<Mmap>> {
-    // Windows平台使用智能映射系统
-    #[cfg(target_family = "windows")]
-    {
-        use crate::windows_mapping::create_intelligent_mmap;
-        
-        // 使用智能映射系统
-        let enhanced_mapping = create_intelligent_mmap(path)?;
-        let mmap = enhanced_mapping.mmap.clone();
-        
-        // 缓存映射结果
-        let path_str = path.to_string_lossy().to_string();
-        cache.insert(path_str, (mmap.clone(), modify_time));
-        
-        return Ok(mmap);
-    }
+    let file = std::fs::File::open(path)?;
+    let file_size = file.metadata()?.len() as usize;
     
-    // 非Windows平台使用原始逻辑
-    #[cfg(not(target_family = "windows"))]
-    {
-        let file = std::fs::File::open(path)?;
-        let file_size = file.metadata()?.len() as usize;
+    // Unix Linux
+    #[cfg(all(target_family = "unix", target_os = "linux"))]
+    unsafe {
+        use std::os::unix::io::AsRawFd;
+        let addr = libc::mmap(
+            std::ptr::null_mut(),
+            file_size,
+            libc::PROT_READ,
+            libc::MAP_PRIVATE | libc::MAP_HUGETLB,
+            file.as_raw_fd(),
+            0
+        );
         
-        // Unix Linux
-        #[cfg(all(target_family = "unix", target_os = "linux"))]
-        unsafe {
-            use std::os::unix::io::AsRawFd;
-            let addr = libc::mmap(
-                std::ptr::null_mut(),
+        if addr != libc::MAP_FAILED {
+            libc::madvise(
+                addr,
                 file_size,
-                libc::PROT_READ,
-                libc::MAP_PRIVATE | libc::MAP_HUGETLB,
-                file.as_raw_fd(),
-                0
+                libc::MADV_HUGEPAGE
             );
             
-            if addr != libc::MAP_FAILED {
-                libc::madvise(
-                    addr,
-                    file_size,
-                    libc::MADV_HUGEPAGE
-                );
-                
-                libc::madvise(
-                    addr,
-                    file_size,
-                    libc::MADV_SEQUENTIAL | libc::MADV_WILLNEED
-                );
-            }
-            
-            libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_SEQUENTIAL);
-            libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_WILLNEED);
+            libc::madvise(
+                addr,
+                file_size,
+                libc::MADV_SEQUENTIAL | libc::MADV_WILLNEED
+            );
         }
         
-        // macOS
-        #[cfg(all(target_family = "unix", target_os = "macos"))]
-        unsafe {
-            use std::os::unix::io::AsRawFd;
-            let radv = libc::radvisory {
-                ra_offset: 0,
-                ra_count: file_size as i32,
-            };
-            libc::fcntl(file.as_raw_fd(), libc::F_RDADVISE, &radv);
-            libc::fcntl(file.as_raw_fd(), libc::F_RDAHEAD, 1);
-        }
-        
-        // 创建标准映射
-        let mmap = unsafe { 
-            memmap2::MmapOptions::new()
-                .populate()
-                .map(&file)?
-        };
-        
-        let mmap = Arc::new(mmap);
-        cache.insert(path.to_string_lossy().to_string(), (Arc::clone(&mmap), modify_time));
-        
-        Ok(mmap)
+        libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_SEQUENTIAL);
+        libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_WILLNEED);
     }
+    
+    // macOS
+    #[cfg(all(target_family = "unix", target_os = "macos"))]
+    unsafe {
+        use std::os::unix::io::AsRawFd;
+        let radv = libc::radvisory {
+            ra_offset: 0,
+            ra_count: file_size as i32,
+        };
+        libc::fcntl(file.as_raw_fd(), libc::F_RDADVISE, &radv);
+        libc::fcntl(file.as_raw_fd(), libc::F_RDAHEAD, 1);
+    }
+
+    // Windows - 使用简化的安全版本
+    #[cfg(target_family = "windows")]
+    unsafe {
+        use std::os::windows::io::{AsHandle, AsRawHandle};
+        use windows_sys::Win32::Storage::FileSystem::SetFileIoOverlappedRange;
+        use windows_sys::Win32::System::Memory::VirtualLock;
+        use windows_sys::Win32::Foundation::HANDLE;
+        
+        if let Ok(mmap_view) = memmap2::MmapOptions::new()
+            .populate() 
+            .map(&file) 
+        {
+            let _ = VirtualLock(
+                mmap_view.as_ptr() as *mut _,
+                mmap_view.len()
+            );
+        }
+
+        let handle = file.as_handle();
+        let raw_handle = handle.as_raw_handle() as HANDLE;
+        let _ = SetFileIoOverlappedRange(
+            raw_handle as isize,
+            std::ptr::null(),
+            file_size.min(u32::MAX as usize) as u32
+        );
+    }
+    
+    let mmap = unsafe { 
+        memmap2::MmapOptions::new()
+            .populate()
+            .map(&file)?
+    };
+    
+    let mmap = Arc::new(mmap);
+    cache.insert(path.to_string_lossy().to_string(), (Arc::clone(&mmap), modify_time));
+    
+    Ok(mmap)
 }
 
 #[pymodule]
@@ -3698,9 +3604,9 @@ fn _lib_numpack(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 #[cfg(target_family = "windows")]
-fn release_windows_file_handle(path: &Path) {
-    // 使用智能系统处理文件解锁和清理
-    crate::windows_mapping::execute_full_cleanup(path);
+fn release_windows_file_handle(_path: &Path) {
+    // Windows简化版本，无需特殊清理
+    // 依赖Rust的自动资源管理
 }
 
 /// 安全创建内存 slice 的辅助函数 - 防止 Windows 内存访问冲突

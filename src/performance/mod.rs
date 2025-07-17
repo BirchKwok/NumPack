@@ -7,8 +7,9 @@ pub mod profiler;
 pub mod monitor;
 pub mod algorithm_selector;
 
-pub use metrics::*;
+// 只导出实际使用的模块
 pub use monitor::*;
 // 暂时注释掉未使用的导入，避免警告
+// pub use metrics::*;
 // pub use profiler::*;
 // pub use algorithm_selector::*; 

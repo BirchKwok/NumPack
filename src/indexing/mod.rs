@@ -30,18 +30,6 @@ pub use optimizations::{
     IndexOptimizationManager, OptimizationReport,
 };
 
-pub use fancy_index::{
-    FancyIndexEngine, FancyIndexEngineStats,
-};
-
-pub use boolean_index::{
-    BooleanIndexEngine,
-};
-
-pub use smart_router::{
-    SmartIndexRouter,
-};
-
 /// 索引系统主控制器
 pub struct IndexingSystem {
     algorithm_executor: IndexAlgorithmExecutor,

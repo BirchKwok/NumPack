@@ -19,4 +19,6 @@ pub use windows_simd::*;
 
 // 为非Windows平台提供类型别名
 #[cfg(not(target_family = "windows"))]
-pub use windows_simd::{WindowsSIMDError, WindowsSafeMemoryAccess}; 
+pub type WindowsSIMDError = ();
+#[cfg(not(target_family = "windows"))]
+pub type WindowsSafeMemoryAccess = (); 

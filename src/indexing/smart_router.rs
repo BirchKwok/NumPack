@@ -10,7 +10,8 @@ use crate::lazy_array::core::OptimizedLazyArray;
 // use crate::cache::prefetch::PrefetchManager; // 暂时未使用
 use crate::cache::smart_cache::SmartCache;
 use crate::indexing::fancy_index::FancyIndexEngine;
-use crate::indexing::boolean_index::BooleanIndexEngine;
+// 暂时注释掉未使用的导入，避免警告
+// use crate::indexing::boolean_index::BooleanIndexEngine;
 use crate::performance::algorithm_selector::AlgorithmSelector;
 use crate::performance::profiler::PerformanceProfiler;
 use crate::performance::metrics::IndexAlgorithm;
