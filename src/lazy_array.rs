@@ -4555,7 +4555,9 @@ impl OptimizedLazyArray {
             }
         } else {
             // 回退到标准复制
-            dst[..src.len().min(dst.len())].copy_from_slice(&src[..src.len().min(dst.len())]);
+            // 先计算目标长度，避免在同一表达式中同时可变和不可变借用dst
+            let copy_len = src.len().min(dst.len());
+            dst[..copy_len].copy_from_slice(&src[..copy_len]);
         }
     }
     

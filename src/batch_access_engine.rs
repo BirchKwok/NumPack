@@ -1,8 +1,6 @@
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use std::collections::HashMap;
-// 只导入实际使用的 par_iter 模块，而不是整个 prelude
-use rayon::prelude::ParallelIterator;
 
 // 批量访问策略
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
