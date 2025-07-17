@@ -208,7 +208,8 @@ impl ParallelExecutor {
         let data_size = data.len();
         
         // 预分配结果向量以减少重新分配
-        let mut result = Vec::with_capacity(data_size);
+        // 注意：由于后面直接替换结果，这个预分配不再需要
+        // let mut result = Vec::with_capacity(data_size);
         
         let execution_result = match self.load_balancing_strategy {
             LoadBalancingStrategy::RoundRobin => {
@@ -225,7 +226,7 @@ impl ParallelExecutor {
             }
         };
 
-        result = execution_result;
+        let result = execution_result;
         let execution_time = start_time.elapsed();
         
         // 更新性能指标和工作负载历史
@@ -473,7 +474,7 @@ impl ParallelExecutor {
         T: Send,
         R: Send,
     {
-        let start_time = Instant::now();
+        let _start_time = Instant::now();
         let data_size = data.len();
         
         // 获取内存池缓冲区

@@ -5020,7 +5020,7 @@ impl OptimizedLazyArray {
         let data_size = selected_count * self.shape[1..].iter().product::<usize>() * self.itemsize;
         
         // 分析访问模式
-        let mut consecutive_count = 0;
+        let mut _consecutive_count = 0;
         let mut max_consecutive = 0;
         let mut current_consecutive = 0;
         
@@ -5030,7 +5030,7 @@ impl OptimizedLazyArray {
                 max_consecutive = max_consecutive.max(current_consecutive);
             } else {
                 if current_consecutive > 0 {
-                    consecutive_count += 1;
+                    _consecutive_count += 1;
                     current_consecutive = 0;
                 }
             }
@@ -5158,7 +5158,7 @@ impl OptimizedLazyArray {
 
     // 极限SIMD位操作滤波器
     fn extreme_simd_boolean_filter(&self, mask: &[bool]) -> Vec<usize> {
-        let mut selected: Vec<usize> = Vec::with_capacity(mask.len() / 4); // 预估25%选择率
+        let _selected: Vec<usize> = Vec::with_capacity(mask.len() / 4); // 预估25%选择率
         
         // 使用AVX-512指令（如果可用）
         #[cfg(target_arch = "x86_64")]
@@ -8107,14 +8107,14 @@ pub struct AdaptiveCache {
      }
      
      /// 分析访问模式并预取数据
-     pub fn analyze_and_prefetch(&mut self, 
+           pub fn analyze_and_prefetch(&mut self, 
                                 recent_accesses: &[usize], 
                                 cache: &MultiLevelCache) -> Vec<usize> {
          if !self.enabled {
              return Vec::new();
          }
          
-         let start_time = Instant::now();
+         let _start_time = Instant::now();
          
          // 分析访问模式
          let mut predicted_keys = Vec::new();

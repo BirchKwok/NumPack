@@ -64,10 +64,6 @@ use std::os::unix::io::AsRawFd;
 #[allow(unused_imports)]
 use std::os::windows::io::AsRawHandle;
 
-// 确保 System::IO 模块导入（CancelIo 在该模块中）
-#[cfg(target_family = "windows")]
-use windows_sys::Win32::System::IO;
-
 lazy_static! {
     static ref MMAP_CACHE: Mutex<HashMap<String, (Arc<Mmap>, i64)>> = Mutex::new(HashMap::new());
 }

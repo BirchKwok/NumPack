@@ -40,7 +40,8 @@ windows-sys = { version = "0.52", features = [
     "Win32_System_Memory",
     "Win32_System_IO",
     "Win32_System_WindowsProgramming",
-    "Win32_System_LibraryLoader"
+    "Win32_System_LibraryLoader",
+    "Win32_System_SystemInformation"
 ]}
 
 [build-dependencies]
