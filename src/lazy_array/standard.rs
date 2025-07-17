@@ -518,54 +518,92 @@ impl LazyArray {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>("Data offset out of bounds"));
         }
 
+        use crate::memory::windows_simd::{WindowsSafeMemoryAccess, WindowsSIMDError};
+        
         let value_str = match self.dtype {
             DataType::Bool => {
-                let value = unsafe { *self.mmap.as_ptr().add(offset) };
+                let value = unsafe { 
+                    WindowsSafeMemoryAccess::safe_read_u8(self.mmap.as_ptr(), offset, self.mmap.len())
+                        .unwrap_or(0)
+                };
                 (value != 0).to_string()
             }
             DataType::Uint8 => {
-                let value = unsafe { *self.mmap.as_ptr().add(offset) };
+                let value = unsafe { 
+                    WindowsSafeMemoryAccess::safe_read_u8(self.mmap.as_ptr(), offset, self.mmap.len())
+                        .unwrap_or(0)
+                };
                 value.to_string()
             }
             DataType::Uint16 => {
-                let value = unsafe { *(self.mmap.as_ptr().add(offset) as *const u16) };
+                let value = unsafe { 
+                    WindowsSafeMemoryAccess::safe_read_unaligned_u16(self.mmap.as_ptr(), offset, self.mmap.len())
+                        .unwrap_or(0)
+                };
                 value.to_string()
             }
             DataType::Uint32 => {
-                let value = unsafe { *(self.mmap.as_ptr().add(offset) as *const u32) };
+                let value = unsafe { 
+                    WindowsSafeMemoryAccess::safe_read_unaligned_u32(self.mmap.as_ptr(), offset, self.mmap.len())
+                        .unwrap_or(0)
+                };
                 value.to_string()
             }
             DataType::Uint64 => {
-                let value = unsafe { *(self.mmap.as_ptr().add(offset) as *const u64) };
+                let value = unsafe { 
+                    WindowsSafeMemoryAccess::safe_read_unaligned_u64(self.mmap.as_ptr(), offset, self.mmap.len())
+                        .unwrap_or(0)
+                };
                 value.to_string()
             }
             DataType::Int8 => {
-                let value = unsafe { *(self.mmap.as_ptr().add(offset) as *const i8) };
+                let value = unsafe { 
+                    WindowsSafeMemoryAccess::safe_read_i8(self.mmap.as_ptr(), offset, self.mmap.len())
+                        .unwrap_or(0)
+                };
                 value.to_string()
             }
             DataType::Int16 => {
-                let value = unsafe { *(self.mmap.as_ptr().add(offset) as *const i16) };
+                let value = unsafe { 
+                    WindowsSafeMemoryAccess::safe_read_i16(self.mmap.as_ptr(), offset, self.mmap.len())
+                        .unwrap_or(0)
+                };
                 value.to_string()
             }
             DataType::Int32 => {
-                let value = unsafe { *(self.mmap.as_ptr().add(offset) as *const i32) };
+                let value = unsafe { 
+                    WindowsSafeMemoryAccess::safe_read_i32(self.mmap.as_ptr(), offset, self.mmap.len())
+                        .unwrap_or(0)
+                };
                 value.to_string()
             }
             DataType::Int64 => {
-                let value = unsafe { *(self.mmap.as_ptr().add(offset) as *const i64) };
+                let value = unsafe { 
+                    WindowsSafeMemoryAccess::safe_read_i64(self.mmap.as_ptr(), offset, self.mmap.len())
+                        .unwrap_or(0)
+                };
                 value.to_string()
             }
             DataType::Float16 => {
-                let raw_value = unsafe { *(self.mmap.as_ptr().add(offset) as *const u16) };
+                let raw_value = unsafe { 
+                    WindowsSafeMemoryAccess::safe_read_unaligned_u16(self.mmap.as_ptr(), offset, self.mmap.len())
+                        .unwrap_or(0)
+                };
                 let value = half::f16::from_bits(raw_value);
                 format!("{:.3}", value)
             }
             DataType::Float32 => {
-                let value = unsafe { *(self.mmap.as_ptr().add(offset) as *const f32) };
+                let value = unsafe { 
+                    WindowsSafeMemoryAccess::safe_read_f32(self.mmap.as_ptr(), offset, self.mmap.len())
+                        .unwrap_or(0.0)
+                };
                 format!("{:.3}", value)
             }
             DataType::Float64 => {
-                let value = unsafe { *(self.mmap.as_ptr().add(offset) as *const f64) };
+                let value = unsafe { 
+                    WindowsSafeMemoryAccess::safe_read_f64(self.mmap.as_ptr(), offset, self.mmap.len())
+                        .unwrap_or(0.0)
+                };
                 format!("{:.3}", value)
             }
         };

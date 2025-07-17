@@ -749,6 +749,7 @@ fn create_optimized_mmap(
     }
     
     // 针对Unix系统的预读优化
+    #[cfg(target_os = "macos")]
     unsafe {
         use std::os::unix::io::AsRawFd;
         let radv = libc::radvisory {
@@ -757,6 +758,25 @@ fn create_optimized_mmap(
         };
         libc::fcntl(file.as_raw_fd(), libc::F_RDADVISE, &radv);
         libc::fcntl(file.as_raw_fd(), libc::F_RDAHEAD, 1);
+    }
+    
+    // 针对Linux系统的预读优化
+    #[cfg(target_os = "linux")]
+    unsafe {
+        use std::os::unix::io::AsRawFd;
+        // Linux使用posix_fadvise进行预读优化
+        libc::posix_fadvise(
+            file.as_raw_fd(),
+            0,
+            file_size as i64,
+            libc::POSIX_FADV_WILLNEED
+        );
+        libc::posix_fadvise(
+            file.as_raw_fd(),
+            0,
+            file_size as i64,
+            libc::POSIX_FADV_SEQUENTIAL
+        );
     }
     
     // 创建标准映射

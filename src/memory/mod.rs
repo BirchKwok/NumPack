@@ -7,12 +7,15 @@ pub mod pool;
 pub mod simd_processor;
 pub mod zero_copy;
 
-#[cfg(target_family = "windows")]
 pub mod windows_simd;
 
-pub use pool::*;
-pub use simd_processor::*;
 pub use zero_copy::*;
+pub use simd_processor::*;
+pub use pool::*;
 
 #[cfg(target_family = "windows")]
-pub use windows_simd::*; 
+pub use windows_simd::*;
+
+// 为非Windows平台提供类型别名
+#[cfg(not(target_family = "windows"))]
+pub use windows_simd::{WindowsSIMDError, WindowsSafeMemoryAccess}; 

@@ -201,3 +201,200 @@ pub enum WindowsSIMDError {
     InvalidInstructionSet,
     InvalidMemoryAccess,
 }
+
+/// Windows平台安全内存访问工具
+#[cfg(target_os = "windows")]
+pub struct WindowsSafeMemoryAccess;
+
+#[cfg(target_os = "windows")]
+impl WindowsSafeMemoryAccess {
+    /// 安全读取不同类型的数据，避免访问冲突
+    pub unsafe fn safe_read_u8(ptr: *const u8, offset: usize, len: usize) -> Result<u8, WindowsSIMDError> {
+        if offset >= len {
+            return Err(WindowsSIMDError::InvalidMemoryAccess);
+        }
+        Ok(std::ptr::read_volatile(ptr.add(offset)))
+    }
+    
+    pub unsafe fn safe_read_u16(ptr: *const u8, offset: usize, len: usize) -> Result<u16, WindowsSIMDError> {
+        if offset + 2 > len {
+            return Err(WindowsSIMDError::InvalidMemoryAccess);
+        }
+        let aligned_ptr = ptr.add(offset);
+        if (aligned_ptr as usize) % 2 != 0 {
+            return Err(WindowsSIMDError::UnalignedPointer);
+        }
+        Ok(std::ptr::read_volatile(aligned_ptr as *const u16))
+    }
+    
+    pub unsafe fn safe_read_u32(ptr: *const u8, offset: usize, len: usize) -> Result<u32, WindowsSIMDError> {
+        if offset + 4 > len {
+            return Err(WindowsSIMDError::InvalidMemoryAccess);
+        }
+        let aligned_ptr = ptr.add(offset);
+        if (aligned_ptr as usize) % 4 != 0 {
+            return Err(WindowsSIMDError::UnalignedPointer);
+        }
+        Ok(std::ptr::read_volatile(aligned_ptr as *const u32))
+    }
+    
+    pub unsafe fn safe_read_u64(ptr: *const u8, offset: usize, len: usize) -> Result<u64, WindowsSIMDError> {
+        if offset + 8 > len {
+            return Err(WindowsSIMDError::InvalidMemoryAccess);
+        }
+        let aligned_ptr = ptr.add(offset);
+        if (aligned_ptr as usize) % 8 != 0 {
+            return Err(WindowsSIMDError::UnalignedPointer);
+        }
+        Ok(std::ptr::read_volatile(aligned_ptr as *const u64))
+    }
+    
+    pub unsafe fn safe_read_i8(ptr: *const u8, offset: usize, len: usize) -> Result<i8, WindowsSIMDError> {
+        if offset >= len {
+            return Err(WindowsSIMDError::InvalidMemoryAccess);
+        }
+        Ok(std::ptr::read_volatile(ptr.add(offset) as *const i8))
+    }
+    
+    pub unsafe fn safe_read_i16(ptr: *const u8, offset: usize, len: usize) -> Result<i16, WindowsSIMDError> {
+        if offset + 2 > len {
+            return Err(WindowsSIMDError::InvalidMemoryAccess);
+        }
+        let aligned_ptr = ptr.add(offset);
+        if (aligned_ptr as usize) % 2 != 0 {
+            return Err(WindowsSIMDError::UnalignedPointer);
+        }
+        Ok(std::ptr::read_volatile(aligned_ptr as *const i16))
+    }
+    
+    pub unsafe fn safe_read_i32(ptr: *const u8, offset: usize, len: usize) -> Result<i32, WindowsSIMDError> {
+        if offset + 4 > len {
+            return Err(WindowsSIMDError::InvalidMemoryAccess);
+        }
+        let aligned_ptr = ptr.add(offset);
+        if (aligned_ptr as usize) % 4 != 0 {
+            return Err(WindowsSIMDError::UnalignedPointer);
+        }
+        Ok(std::ptr::read_volatile(aligned_ptr as *const i32))
+    }
+    
+    pub unsafe fn safe_read_i64(ptr: *const u8, offset: usize, len: usize) -> Result<i64, WindowsSIMDError> {
+        if offset + 8 > len {
+            return Err(WindowsSIMDError::InvalidMemoryAccess);
+        }
+        let aligned_ptr = ptr.add(offset);
+        if (aligned_ptr as usize) % 8 != 0 {
+            return Err(WindowsSIMDError::UnalignedPointer);
+        }
+        Ok(std::ptr::read_volatile(aligned_ptr as *const i64))
+    }
+    
+    pub unsafe fn safe_read_f32(ptr: *const u8, offset: usize, len: usize) -> Result<f32, WindowsSIMDError> {
+        if offset + 4 > len {
+            return Err(WindowsSIMDError::InvalidMemoryAccess);
+        }
+        let aligned_ptr = ptr.add(offset);
+        if (aligned_ptr as usize) % 4 != 0 {
+            return Err(WindowsSIMDError::UnalignedPointer);
+        }
+        Ok(std::ptr::read_volatile(aligned_ptr as *const f32))
+    }
+    
+    pub unsafe fn safe_read_f64(ptr: *const u8, offset: usize, len: usize) -> Result<f64, WindowsSIMDError> {
+        if offset + 8 > len {
+            return Err(WindowsSIMDError::InvalidMemoryAccess);
+        }
+        let aligned_ptr = ptr.add(offset);
+        if (aligned_ptr as usize) % 8 != 0 {
+            return Err(WindowsSIMDError::UnalignedPointer);
+        }
+        Ok(std::ptr::read_volatile(aligned_ptr as *const f64))
+    }
+    
+    /// 安全的未对齐读取 - 通过复制避免对齐问题
+    pub unsafe fn safe_read_unaligned_u16(ptr: *const u8, offset: usize, len: usize) -> Result<u16, WindowsSIMDError> {
+        if offset + 2 > len {
+            return Err(WindowsSIMDError::InvalidMemoryAccess);
+        }
+        let mut bytes = [0u8; 2];
+        std::ptr::copy_nonoverlapping(ptr.add(offset), bytes.as_mut_ptr(), 2);
+        Ok(u16::from_le_bytes(bytes))
+    }
+    
+    pub unsafe fn safe_read_unaligned_u32(ptr: *const u8, offset: usize, len: usize) -> Result<u32, WindowsSIMDError> {
+        if offset + 4 > len {
+            return Err(WindowsSIMDError::InvalidMemoryAccess);
+        }
+        let mut bytes = [0u8; 4];
+        std::ptr::copy_nonoverlapping(ptr.add(offset), bytes.as_mut_ptr(), 4);
+        Ok(u32::from_le_bytes(bytes))
+    }
+    
+    pub unsafe fn safe_read_unaligned_u64(ptr: *const u8, offset: usize, len: usize) -> Result<u64, WindowsSIMDError> {
+        if offset + 8 > len {
+            return Err(WindowsSIMDError::InvalidMemoryAccess);
+        }
+        let mut bytes = [0u8; 8];
+        std::ptr::copy_nonoverlapping(ptr.add(offset), bytes.as_mut_ptr(), 8);
+        Ok(u64::from_le_bytes(bytes))
+    }
+}
+
+// 非Windows平台的空实现
+#[cfg(not(target_os = "windows"))]
+pub struct WindowsSafeMemoryAccess;
+
+#[cfg(not(target_os = "windows"))]
+impl WindowsSafeMemoryAccess {
+    pub unsafe fn safe_read_u8(ptr: *const u8, offset: usize, _len: usize) -> Result<u8, WindowsSIMDError> {
+        Ok(*ptr.add(offset))
+    }
+    
+    pub unsafe fn safe_read_u16(ptr: *const u8, offset: usize, _len: usize) -> Result<u16, WindowsSIMDError> {
+        Ok(*(ptr.add(offset) as *const u16))
+    }
+    
+    pub unsafe fn safe_read_u32(ptr: *const u8, offset: usize, _len: usize) -> Result<u32, WindowsSIMDError> {
+        Ok(*(ptr.add(offset) as *const u32))
+    }
+    
+    pub unsafe fn safe_read_u64(ptr: *const u8, offset: usize, _len: usize) -> Result<u64, WindowsSIMDError> {
+        Ok(*(ptr.add(offset) as *const u64))
+    }
+    
+    pub unsafe fn safe_read_i8(ptr: *const u8, offset: usize, _len: usize) -> Result<i8, WindowsSIMDError> {
+        Ok(*(ptr.add(offset) as *const i8))
+    }
+    
+    pub unsafe fn safe_read_i16(ptr: *const u8, offset: usize, _len: usize) -> Result<i16, WindowsSIMDError> {
+        Ok(*(ptr.add(offset) as *const i16))
+    }
+    
+    pub unsafe fn safe_read_i32(ptr: *const u8, offset: usize, _len: usize) -> Result<i32, WindowsSIMDError> {
+        Ok(*(ptr.add(offset) as *const i32))
+    }
+    
+    pub unsafe fn safe_read_i64(ptr: *const u8, offset: usize, _len: usize) -> Result<i64, WindowsSIMDError> {
+        Ok(*(ptr.add(offset) as *const i64))
+    }
+    
+    pub unsafe fn safe_read_f32(ptr: *const u8, offset: usize, _len: usize) -> Result<f32, WindowsSIMDError> {
+        Ok(*(ptr.add(offset) as *const f32))
+    }
+    
+    pub unsafe fn safe_read_f64(ptr: *const u8, offset: usize, _len: usize) -> Result<f64, WindowsSIMDError> {
+        Ok(*(ptr.add(offset) as *const f64))
+    }
+    
+    pub unsafe fn safe_read_unaligned_u16(ptr: *const u8, offset: usize, _len: usize) -> Result<u16, WindowsSIMDError> {
+        Ok(*(ptr.add(offset) as *const u16))
+    }
+    
+    pub unsafe fn safe_read_unaligned_u32(ptr: *const u8, offset: usize, _len: usize) -> Result<u32, WindowsSIMDError> {
+        Ok(*(ptr.add(offset) as *const u32))
+    }
+    
+    pub unsafe fn safe_read_unaligned_u64(ptr: *const u8, offset: usize, _len: usize) -> Result<u64, WindowsSIMDError> {
+        Ok(*(ptr.add(offset) as *const u64))
+    }
+}
