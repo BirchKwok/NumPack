@@ -982,7 +982,12 @@ impl SIMDProcessor {
                     // 使用SIMD复制 - 此时确保内存已正确对齐和检查过
                     if self.supports_avx2 && copy_size >= 32 {
                         // 使用AVX2复制大块数据
-                        self.avx2_memory_copy(temp_buffer.as_ptr(), dst.as_mut_ptr(), copy_size);
+                        self.simd_processor.avx2_vectorized_copy(
+                            &temp_buffer[..copy_size],
+                            &mut dst[..copy_size],
+                            &[],
+                            1
+                        );
                     } else if self.supports_sse2 && copy_size >= 16 {
                         // 使用SSE2复制
                         let chunks = copy_size / 16;
@@ -4049,6 +4054,7 @@ pub struct OptimizedLazyArray {
     cache: Arc<SmartCache>,
     stats: Arc<Mutex<AccessStats>>,
     batch_engine: crate::batch_access_engine::BatchAccessEngine,
+    simd_processor: SIMDProcessor,
 }
 
 #[derive(Debug, Default)]
@@ -4106,6 +4112,7 @@ impl OptimizedLazyArray {
         let itemsize = dtype.size_bytes() as usize;
         let cache = Arc::new(SmartCache::new());
         let stats = Arc::new(Mutex::new(AccessStats::default()));
+        let simd_processor = SIMDProcessor::new();
 
         Ok(Self {
             mmap: Arc::new(mmap),
@@ -4116,7 +4123,15 @@ impl OptimizedLazyArray {
             cache,
             stats,
             batch_engine: crate::batch_access_engine::BatchAccessEngine::new(),
+            simd_processor,
         })
+    }
+
+    // NUMA 感知读取（仅在 Linux 上）
+    #[cfg(target_os = "linux")]
+    pub fn numa_aware_read(&self, offset: usize, size: usize) -> Vec<u8> {
+        // 简单实现，使用标准读取
+        self.read_data(offset, size)
     }
 
     // 智能预取
@@ -5715,12 +5730,12 @@ impl OptimizedLazyArray {
                 if is_x86_feature_detected!("avx2") {
                     // Windows平台需要特殊处理
                     #[cfg(target_os = "windows")]
-                    if self.win_safe_simd {
+                    if self.simd_processor.win_safe_simd {
                         self.avx2_memory_copy_windows(src, dst, size);
                         return;
                     }
                     
-                    self.avx2_memory_copy(src, dst, size);
+                    unsafe { self.avx2_memory_copy(src, dst, size); }
                     return;
                 }
             }
@@ -5774,7 +5789,28 @@ impl OptimizedLazyArray {
         }
         
         // 释放临时缓冲区
-        self.windows_aligned_free(temp_buf, size);
+        unsafe { self.windows_aligned_free(temp_buf, size); }
+    }
+
+    // Windows特定的内存对齐函数
+    #[cfg(target_os = "windows")]
+    fn windows_aligned_alloc(&self, size: usize) -> *mut u8 {
+        unsafe {
+            // Windows上使用_aligned_malloc确保正确对齐
+            let aligned_ptr = std::alloc::alloc_zeroed(
+                std::alloc::Layout::from_size_align(size, 64).unwrap()
+            );
+            aligned_ptr
+        }
+    }
+
+    // Windows特定的内存释放函数
+    #[cfg(target_os = "windows")]
+    unsafe fn windows_aligned_free(&self, ptr: *mut u8, size: usize) {
+        if !ptr.is_null() {
+            let layout = std::alloc::Layout::from_size_align(size, 64).unwrap();
+            std::alloc::dealloc(ptr, layout);
+        }
     }
 
     // 非Windows平台的常规AVX2内存复制函数
@@ -6010,10 +6046,11 @@ impl OptimizedLazyArray {
                     unsafe {
                         // 大块连续复制
                         if block_size >= 256 {
-                            self.simd_memory_copy(
-                                self.mmap.as_ptr().add(src_offset),
-                                result_buffer.as_mut_ptr().add(dst_offset),
-                                block_size
+                            self.simd_processor.avx2_vectorized_copy(
+                                &self.mmap[src_offset..src_offset + block_size],
+                                &mut result_buffer[dst_offset..dst_offset + block_size],
+                                &[],
+                                self.itemsize
                             );
                         } else {
                             std::ptr::copy_nonoverlapping(
