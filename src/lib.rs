@@ -2440,9 +2440,10 @@ impl HighPerformanceLazyArray {
     }
 
     fn intelligent_warmup(&self, workload_hint: &str) -> PyResult<()> {
-        use crate::lazy_array::WorkloadHint;
+        use crate::lazy_array::{WorkloadHint, AccessHint};
         
-        let hint = match workload_hint {
+        // 首先获取WorkloadHint
+        let workload = match workload_hint {
             "sequential" => WorkloadHint::SequentialRead,
             "random" => WorkloadHint::RandomRead,
             "boolean" => WorkloadHint::BooleanFiltering,
@@ -2450,7 +2451,15 @@ impl HighPerformanceLazyArray {
             _ => return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid workload hint")),
         };
         
-        self.optimized_array.intelligent_warmup(&hint);
+        // 将WorkloadHint转换为AccessHint
+        let hint = match workload {
+            WorkloadHint::SequentialRead => AccessHint::WillAccessAll,
+            WorkloadHint::RandomRead => AccessHint::WillAccessSparse(0.5),
+            WorkloadHint::BooleanFiltering => AccessHint::WillAccessSparse(0.8),
+            WorkloadHint::HeavyComputation => AccessHint::WillAccessAll,
+        };
+        
+        self.optimized_array.warmup_intelligent(&hint);
         Ok(())
     }
 

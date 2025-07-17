@@ -769,18 +769,57 @@ pub struct SIMDProcessor {
     alignment_size: usize,
     cache_line_size: usize,
     prefetch_distance: usize,
+    // 新增: Windows平台SIMD特定属性
+    win_safe_simd: bool,         // 是否使用Windows安全SIMD模式
+    win_memory_alignment: usize, // Windows平台内存对齐要求
+    error_handler: ErrorHandlingStrategy, // 错误处理策略
+}
+
+// 错误处理策略枚举
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ErrorHandlingStrategy {
+    Fallback,  // 出错时回退到安全实现
+    Panic,     // 出错时崩溃（仅用于测试）
+    Ignore,    // 忽略错误（不推荐）
 }
 
 impl SIMDProcessor {
     pub fn new() -> Self {
+        // 检测CPU特性
+        let supports_sse2 = Self::detect_sse2();
+        let supports_avx2 = Self::detect_avx2();
+        let supports_avx512 = Self::detect_avx512();
+        
+        // Windows平台使用更严格的内存对齐要求
+        #[cfg(target_os = "windows")]
+        let (win_safe_simd, win_memory_alignment) = (true, 64);
+        
+        #[cfg(not(target_os = "windows"))]
+        let (win_safe_simd, win_memory_alignment) = (false, 0);
+        
         Self {
-            supports_avx2: Self::detect_avx2(),
-            supports_avx512: Self::detect_avx512(),
-            supports_sse2: Self::detect_sse2(),
+            supports_avx2,
+            supports_avx512,
+            supports_sse2,
             alignment_size: 64, // 64字节对齐，适配现代CPU缓存行
             cache_line_size: 64,
             prefetch_distance: 512, // 预取距离
+            win_safe_simd,
+            win_memory_alignment,
+            error_handler: ErrorHandlingStrategy::Fallback,
         }
+    }
+    
+    // 设置错误处理策略
+    pub fn with_error_strategy(mut self, strategy: ErrorHandlingStrategy) -> Self {
+        self.error_handler = strategy;
+        self
+    }
+
+    // 设置是否使用Windows安全SIMD模式
+    pub fn with_win_safe_simd(mut self, enabled: bool) -> Self {
+        self.win_safe_simd = enabled;
+        self
     }
     
     fn detect_avx2() -> bool {
@@ -821,6 +860,12 @@ impl SIMDProcessor {
         // 预取源数据以提高缓存命中率
         self.prefetch_data(src, indices, item_size);
         
+        // Windows平台特殊处理 - 使用安全SIMD实现
+        #[cfg(target_os = "windows")]
+        if self.win_safe_simd {
+            return self.windows_safe_vectorized_copy(src, dst, indices, item_size);
+        }
+        
         // 根据CPU支持的指令集和数据规模选择最优实现
         if self.supports_avx512 && indices.len() >= 8 && item_size >= 32 {
             self.avx512_vectorized_copy(src, dst, indices, item_size);
@@ -835,7 +880,14 @@ impl SIMDProcessor {
     
     /// 预取数据到缓存中
     fn prefetch_data(&self, src: &[u8], indices: &[usize], item_size: usize) {
-        // Windows平台跳过预取操作，避免段错误
+        // Windows平台安全预取操作
+        #[cfg(target_os = "windows")]
+        if self.win_safe_simd {
+            self.windows_safe_prefetch(src, indices, item_size);
+            return;
+        }
+        
+        // 非Windows平台或禁用安全模式时的标准预取
         #[cfg(not(target_os = "windows"))]
         for &idx in indices.iter().take(8) { // 只预取前8个，避免过度预取
             let offset = idx * item_size;
@@ -850,15 +902,306 @@ impl SIMDProcessor {
             }
         }
     }
+
+    // Windows平台安全预取实现
+    #[cfg(target_os = "windows")]
+    fn windows_safe_prefetch(&self, src: &[u8], indices: &[usize], item_size: usize) {
+        // 只预取少量元素，避免过度预取导致的问题
+        for &idx in indices.iter().take(4) {
+            let offset = idx * item_size;
+            if offset + item_size <= src.len() {
+                // 使用volatile读取代替预取，实现类似的效果但更安全
+                unsafe {
+                    // 读取首字节和尾字节来触发页面加载
+                    let _ = std::ptr::read_volatile(src.as_ptr().add(offset));
+                    let _ = std::ptr::read_volatile(src.as_ptr().add(offset + item_size - 1));
+                }
+            }
+        }
+    }
+    
+    // Windows平台安全SIMD复制实现
+    #[cfg(target_os = "windows")]
+    fn windows_safe_vectorized_copy(&self, src: &[u8], dst: &mut [u8], indices: &[usize], item_size: usize) {
+        let mut dst_offset = 0;
+        
+        // 创建一个临时缓冲池，用于安全的内存访问
+        let buffer_pool = WindowsSIMDBufferPool::new(self.win_memory_alignment);
+        
+        // 根据数据大小分配对齐缓冲区
+        let total_size = indices.len() * item_size;
+        let temp_buffer = if total_size > 0 {
+            unsafe {
+                let buf = buffer_pool.get_buffer(total_size);
+                if buf.is_null() {
+                    // 分配失败时使用最安全的方法
+                    self.windows_safe_scalar_copy(src, dst, indices, item_size, &mut dst_offset);
+                    return;
+                }
+                std::slice::from_raw_parts_mut(buf, total_size)
+            }
+        } else {
+            // 空数据情况，直接返回
+            return;
+        };
+        
+        // 第一步：从源数据复制到临时缓冲区
+        let mut temp_offset = 0;
+        for &idx in indices {
+            let src_offset = idx * item_size;
+            
+            // 严格边界检查
+            if src_offset + item_size > src.len() {
+                match self.error_handler {
+                    ErrorHandlingStrategy::Fallback => continue,
+                    ErrorHandlingStrategy::Panic => panic!("Windows SIMD安全: 源数据索引越界"),
+                    ErrorHandlingStrategy::Ignore => { temp_offset += item_size; continue; }
+                }
+            }
+            
+            // 安全复制到临时缓冲区
+            if temp_offset + item_size <= temp_buffer.len() {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        src.as_ptr().add(src_offset),
+                        temp_buffer.as_mut_ptr().add(temp_offset),
+                        item_size
+                    );
+                }
+                temp_offset += item_size;
+            }
+        }
+        
+        // 第二步：从临时缓冲区复制到目标
+        // 使用可用的最高级别SIMD指令，但保证安全
+        let copy_size = std::cmp::min(temp_offset, dst.len());
+        if copy_size > 0 {
+            unsafe {
+                // 检查SIMD安全性
+                if let Ok(_) = self.check_simd_safety(temp_buffer.as_ptr(), copy_size) {
+                    // 使用SIMD复制 - 此时确保内存已正确对齐和检查过
+                    if self.supports_avx2 && copy_size >= 32 {
+                        // 使用AVX2复制大块数据
+                        self.avx2_memory_copy(temp_buffer.as_ptr(), dst.as_mut_ptr(), copy_size);
+                    } else if self.supports_sse2 && copy_size >= 16 {
+                        // 使用SSE2复制
+                        let chunks = copy_size / 16;
+                        for i in 0..chunks {
+                            let offset = i * 16;
+                            let src_ptr = temp_buffer.as_ptr().add(offset);
+                            let dst_ptr = dst.as_mut_ptr().add(offset);
+                            
+                            let xmm = std::arch::x86_64::_mm_loadu_si128(src_ptr as *const _);
+                            std::arch::x86_64::_mm_storeu_si128(dst_ptr as *mut _, xmm);
+                        }
+                        
+                        // 处理剩余部分
+                        let remaining = copy_size % 16;
+                        if remaining > 0 {
+                            let offset = copy_size - remaining;
+                            std::ptr::copy_nonoverlapping(
+                                temp_buffer.as_ptr().add(offset),
+                                dst.as_mut_ptr().add(offset),
+                                remaining
+                            );
+                        }
+                    } else {
+                        // 回退到标准复制
+                        std::ptr::copy_nonoverlapping(
+                            temp_buffer.as_ptr(),
+                            dst.as_mut_ptr(),
+                            copy_size
+                        );
+                    }
+                } else {
+                    // SIMD不安全，使用标准复制
+                    std::ptr::copy_nonoverlapping(
+                        temp_buffer.as_ptr(),
+                        dst.as_mut_ptr(),
+                        copy_size
+                    );
+                }
+            }
+        }
+        
+        // 清理临时缓冲区
+        unsafe {
+            buffer_pool.return_buffer(temp_buffer.as_mut_ptr(), temp_buffer.len());
+        }
+        
+        // 更新目标偏移量
+        dst_offset = copy_size;
+    }
+    
+    // Windows平台AVX2安全实现
+    #[cfg(all(target_os = "windows", any(target_arch = "x86", target_arch = "x86_64")))]
+    fn windows_avx2_copy(&self, src: &[u8], dst: &mut [u8], indices: &[usize], item_size: usize, dst_offset: &mut usize) {
+        for &idx in indices {
+            let src_offset = idx * item_size;
+            
+            // 严格的边界检查
+            if src_offset + item_size > src.len() || *dst_offset + item_size > dst.len() {
+                // 根据错误处理策略执行
+                match self.error_handler {
+                    ErrorHandlingStrategy::Fallback => {
+                        // 跳过这个元素，继续处理
+                        continue;
+                    },
+                    ErrorHandlingStrategy::Panic => {
+                        panic!("Windows安全SIMD: 索引越界");
+                    },
+                    ErrorHandlingStrategy::Ignore => {
+                        // 继续执行，但可能导致未定义行为
+                        *dst_offset += item_size;
+                        continue;
+                    }
+                }
+            }
+            
+            unsafe {
+                match item_size {
+                    32 => {
+                        // 对齐要求更严格
+                        let src_ptr = src.as_ptr().add(src_offset);
+                        let dst_ptr = dst.as_mut_ptr().add(*dst_offset);
+                        
+                        // 检查内存对齐
+                        if (src_ptr as usize) % self.win_memory_alignment == 0 && 
+                           (dst_ptr as usize) % self.win_memory_alignment == 0 {
+                            // 使用对齐加载/存储
+                            let ymm = std::arch::x86_64::_mm256_load_si256(src_ptr as *const _);
+                            std::arch::x86_64::_mm256_store_si256(dst_ptr as *mut _, ymm);
+                        } else {
+                            // 使用非对齐版本
+                            let ymm = std::arch::x86_64::_mm256_loadu_si256(src_ptr as *const _);
+                            std::arch::x86_64::_mm256_storeu_si256(dst_ptr as *mut _, ymm);
+                        }
+                    },
+                    16 => {
+                        let src_ptr = src.as_ptr().add(src_offset);
+                        let dst_ptr = dst.as_mut_ptr().add(*dst_offset);
+                        
+                        // 使用SSE指令，更加安全
+                        let xmm = std::arch::x86_64::_mm_loadu_si128(src_ptr as *const _);
+                        std::arch::x86_64::_mm_storeu_si128(dst_ptr as *mut _, xmm);
+                    },
+                    8 => {
+                        let src_ptr = src.as_ptr().add(src_offset) as *const u64;
+                        let dst_ptr = dst.as_mut_ptr().add(*dst_offset) as *mut u64;
+                        *dst_ptr = *src_ptr;
+                    },
+                    _ => {
+                        // 使用分块复制以提高性能
+                        std::ptr::copy_nonoverlapping(
+                            src.as_ptr().add(src_offset),
+                            dst.as_mut_ptr().add(*dst_offset),
+                            item_size
+                        );
+                    }
+                }
+            }
+            *dst_offset += item_size;
+        }
+    }
+    
+    // Windows平台SSE2安全实现
+    #[cfg(all(target_os = "windows", any(target_arch = "x86", target_arch = "x86_64")))]
+    fn windows_sse2_copy(&self, src: &[u8], dst: &mut [u8], indices: &[usize], item_size: usize, dst_offset: &mut usize) {
+        for &idx in indices {
+            let src_offset = idx * item_size;
+            
+            // 边界检查
+            if src_offset + item_size > src.len() || *dst_offset + item_size > dst.len() {
+                if self.error_handler == ErrorHandlingStrategy::Fallback {
+                    continue;
+                } else if self.error_handler == ErrorHandlingStrategy::Panic {
+                    panic!("Windows安全SIMD: 索引越界");
+                }
+                // Ignore策略下继续执行
+                *dst_offset += item_size;
+                continue;
+            }
+            
+            unsafe {
+                if item_size >= 16 {
+                    // 分块使用SSE2指令复制
+                    let mut local_src_offset = src_offset;
+                    let mut local_dst_offset = *dst_offset;
+                    let mut remaining = item_size;
+                    
+                    while remaining >= 16 {
+                        let src_ptr = src.as_ptr().add(local_src_offset);
+                        let dst_ptr = dst.as_mut_ptr().add(local_dst_offset);
+                        
+                        // 使用非对齐版本，更安全
+                        let xmm = std::arch::x86_64::_mm_loadu_si128(src_ptr as *const _);
+                        std::arch::x86_64::_mm_storeu_si128(dst_ptr as *mut _, xmm);
+                        
+                        local_src_offset += 16;
+                        local_dst_offset += 16;
+                        remaining -= 16;
+                    }
+                    
+                    if remaining > 0 {
+                        // 复制剩余部分
+                        std::ptr::copy_nonoverlapping(
+                            src.as_ptr().add(local_src_offset),
+                            dst.as_mut_ptr().add(local_dst_offset),
+                            remaining
+                        );
+                    }
+                } else {
+                    // 小型数据使用标准复制
+                    std::ptr::copy_nonoverlapping(
+                        src.as_ptr().add(src_offset),
+                        dst.as_mut_ptr().add(*dst_offset),
+                        item_size
+                    );
+                }
+            }
+            *dst_offset += item_size;
+        }
+    }
+    
+         // Windows平台标量安全复制
+    #[cfg(target_os = "windows")]
+    fn windows_safe_scalar_copy(&self, src: &[u8], dst: &mut [u8], indices: &[usize], item_size: usize, dst_offset: &mut usize) {
+        for &idx in indices {
+            let src_offset = idx * item_size;
+            
+            // 边界检查
+            if src_offset + item_size > src.len() || *dst_offset + item_size > dst.len() {
+                if self.error_handler == ErrorHandlingStrategy::Fallback {
+                    continue;
+                } else if self.error_handler == ErrorHandlingStrategy::Panic {
+                    panic!("Windows安全SIMD: 索引越界");
+                }
+                // Ignore策略下继续执行
+                *dst_offset += item_size;
+                continue;
+            }
+            
+            unsafe {
+                // 使用标准复制
+                std::ptr::copy_nonoverlapping(
+                    src.as_ptr().add(src_offset),
+                    dst.as_mut_ptr().add(*dst_offset),
+                    item_size
+                );
+            }
+            *dst_offset += item_size;
+        }
+    }
     
     /// AVX512优化的向量化复制 - 真正的SIMD实现
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn avx512_vectorized_copy(&self, src: &[u8], dst: &mut [u8], indices: &[usize], item_size: usize) {
-        // Windows平台直接跳过AVX512，使用更基础的方法
+        // Windows平台在启用安全模式时已经在vectorized_copy函数中处理过
         #[cfg(target_os = "windows")]
-        return self.optimized_scalar_copy(src, dst, indices, item_size);
+        if self.win_safe_simd {
+            return self.optimized_scalar_copy(src, dst, indices, item_size);
+        }
         
-        #[cfg(not(target_os = "windows"))]
         if !self.supports_avx512 {
             return self.avx2_vectorized_copy(src, dst, indices, item_size);
         }
@@ -952,11 +1295,12 @@ impl SIMDProcessor {
     /// AVX2优化的向量化复制
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn avx2_vectorized_copy(&self, src: &[u8], dst: &mut [u8], indices: &[usize], item_size: usize) {
-        // Windows平台直接跳过AVX2，使用更基础的方法
+        // Windows平台在启用安全模式时已经在vectorized_copy函数中处理过
         #[cfg(target_os = "windows")]
-        return self.optimized_scalar_copy(src, dst, indices, item_size);
+        if self.win_safe_simd {
+            return self.optimized_scalar_copy(src, dst, indices, item_size);
+        }
         
-        #[cfg(not(target_os = "windows"))]
         if !self.supports_avx2 {
             return self.sse2_vectorized_copy(src, dst, indices, item_size);
         }
@@ -1038,78 +1382,82 @@ impl SIMDProcessor {
     /// SSE2优化的向量化复制
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn sse2_vectorized_copy(&self, src: &[u8], dst: &mut [u8], indices: &[usize], item_size: usize) {
-        // Windows平台直接跳过SSE2，使用标准复制方法
+        // Windows平台在启用安全模式时已经在vectorized_copy函数中处理过
         #[cfg(target_os = "windows")]
-        return self.optimized_scalar_copy(src, dst, indices, item_size);
+        if self.win_safe_simd {
+            return self.optimized_scalar_copy(src, dst, indices, item_size);
+        }
         
-        #[cfg(not(target_os = "windows"))]
         if !self.supports_sse2 {
             return self.optimized_scalar_copy(src, dst, indices, item_size);
         }
         
         unsafe {
             let mut dst_offset = 0;
+            let chunk_size = 4; // 处理4个元素为一组，提高循环效率
             
-            for &idx in indices {
-                let src_offset = idx * item_size;
-                if src_offset + item_size <= src.len() && dst_offset + item_size <= dst.len() {
-                    match item_size {
-                        16 => {
-                            // 16字节 - 使用SSE2指令
-                            let src_ptr = src.as_ptr().add(src_offset);
-                            let dst_ptr = dst.as_mut_ptr().add(dst_offset);
-                            
-                            let xmm = std::arch::x86_64::_mm_loadu_si128(src_ptr as *const _);
-                            std::arch::x86_64::_mm_storeu_si128(dst_ptr as *mut _, xmm);
-                        }
-                        8 => {
-                            // 8字节 - 使用64位复制
-                            let src_ptr = src.as_ptr().add(src_offset) as *const u64;
-                            let dst_ptr = dst.as_mut_ptr().add(dst_offset) as *mut u64;
-                            *dst_ptr = *src_ptr;
-                        }
-                        _ if item_size >= 16 => {
-                            // 大于16字节，分块使用SSE2
-                            let mut remaining = item_size;
-                            let mut local_src_offset = src_offset;
-                            let mut local_dst_offset = dst_offset;
-                            
-                            while remaining >= 16 {
-                                let src_ptr = src.as_ptr().add(local_src_offset);
-                                let dst_ptr = dst.as_mut_ptr().add(local_dst_offset);
+            for chunk in indices.chunks(chunk_size) {
+                for &idx in chunk {
+                    let src_offset = idx * item_size;
+                    if src_offset + item_size <= src.len() && dst_offset + item_size <= dst.len() {
+                        match item_size {
+                            16 => {
+                                // 16字节 - 使用SSE2指令
+                                let src_ptr = src.as_ptr().add(src_offset);
+                                let dst_ptr = dst.as_mut_ptr().add(dst_offset);
                                 
                                 let xmm = std::arch::x86_64::_mm_loadu_si128(src_ptr as *const _);
                                 std::arch::x86_64::_mm_storeu_si128(dst_ptr as *mut _, xmm);
-                                
-                                local_src_offset += 16;
-                                local_dst_offset += 16;
-                                remaining -= 16;
                             }
-                            
-                            // 处理剩余字节
-                            if remaining > 0 {
+                            8 => {
+                                // 8字节 - 使用64位复制
+                                let src_ptr = src.as_ptr().add(src_offset) as *const u64;
+                                let dst_ptr = dst.as_mut_ptr().add(dst_offset) as *mut u64;
+                                *dst_ptr = *src_ptr;
+                            }
+                            _ if item_size >= 16 => {
+                                // 大于16字节，分块使用SSE2
+                                let mut remaining = item_size;
+                                let mut local_src_offset = src_offset;
+                                let mut local_dst_offset = dst_offset;
+                                
+                                while remaining >= 16 {
+                                    let src_ptr = src.as_ptr().add(local_src_offset);
+                                    let dst_ptr = dst.as_mut_ptr().add(local_dst_offset);
+                                    
+                                    let xmm = std::arch::x86_64::_mm_loadu_si128(src_ptr as *const _);
+                                    std::arch::x86_64::_mm_storeu_si128(dst_ptr as *mut _, xmm);
+                                    
+                                    local_src_offset += 16;
+                                    local_dst_offset += 16;
+                                    remaining -= 16;
+                                }
+                                
+                                // 处理剩余字节
+                                if remaining > 0 {
+                                    std::ptr::copy_nonoverlapping(
+                                        src.as_ptr().add(local_src_offset),
+                                        dst.as_mut_ptr().add(local_dst_offset),
+                                        remaining
+                                    );
+                                }
+                            }
+                            _ => {
+                                // 小于16字节，使用标量复制
                                 std::ptr::copy_nonoverlapping(
-                                    src.as_ptr().add(local_src_offset),
-                                    dst.as_mut_ptr().add(local_dst_offset),
-                                    remaining
+                                    src.as_ptr().add(src_offset),
+                                    dst.as_mut_ptr().add(dst_offset),
+                                    item_size
                                 );
                             }
                         }
-                        _ => {
-                            // 小于16字节，使用标量复制
-                            std::ptr::copy_nonoverlapping(
-                                src.as_ptr().add(src_offset),
-                                dst.as_mut_ptr().add(dst_offset),
-                                item_size
-                            );
-                        }
+                        dst_offset += item_size;
                     }
-                    dst_offset += item_size;
                 }
             }
-        }
-    }
-    
+                 }
+     }
+                     
     /// 非x86架构的向量化复制实现
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
     fn avx512_vectorized_copy(&self, src: &[u8], dst: &mut [u8], indices: &[usize], item_size: usize) {
@@ -1279,6 +1627,210 @@ pub struct SIMDCapabilities {
 impl SIMDProcessor {
     pub fn is_aligned(&self, ptr: *const u8) -> bool {
         (ptr as usize) % self.alignment_size == 0
+    }
+    
+    /// 安全检查SIMD操作
+    /// 返回是否安全执行SIMD操作，如果不安全则返回错误代码
+    #[cfg(target_os = "windows")]
+    fn check_simd_safety(&self, ptr: *const u8, size: usize) -> Result<bool, WindowsSIMDError> {
+        // 检查指针对齐
+        if (ptr as usize) % self.win_memory_alignment != 0 {
+            return Err(WindowsSIMDError::UnalignedPointer);
+        }
+        
+        // 检查页面跨越（Windows对此特别敏感）
+        let page_size = 4096; // Windows标准页大小
+        let start_page = (ptr as usize) / page_size;
+        let end_page = ((ptr as usize) + size - 1) / page_size;
+        
+        if start_page != end_page {
+            // 数据跨页，在Windows上可能导致问题
+            return Err(WindowsSIMDError::PageBoundaryCrossing);
+        }
+        
+        // 所有检查通过
+        Ok(true)
+    }
+    
+    // Windows特定的内存对齐函数
+    #[cfg(target_os = "windows")]
+    fn windows_aligned_alloc(&self, size: usize) -> *mut u8 {
+        unsafe {
+            // Windows上使用_aligned_malloc确保正确对齐
+            let aligned_ptr = std::alloc::alloc_zeroed(
+                std::alloc::Layout::from_size_align(size, self.win_memory_alignment).unwrap()
+            );
+            
+            aligned_ptr
+        }
+    }
+    
+    // Windows特定的内存释放函数
+    #[cfg(target_os = "windows")]
+    unsafe fn windows_aligned_free(&self, ptr: *mut u8, size: usize) {
+        std::alloc::dealloc(
+            ptr, 
+            std::alloc::Layout::from_size_align(size, self.win_memory_alignment).unwrap()
+        );
+    }
+}
+
+/// Windows平台SIMD错误类型
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowsSIMDError {
+    UnalignedPointer,       // 指针未对齐
+    PageBoundaryCrossing,   // 跨页操作
+    InvalidInstructionSet,  // 指令集不可用
+    InvalidMemoryAccess,    // 无效内存访问
+}
+
+/// Windows平台安全对象池，提高内存利用效率
+#[cfg(target_os = "windows")]
+pub struct WindowsSIMDBufferPool {
+    small_buffers: Mutex<Vec<(*mut u8, usize)>>,  // 小缓冲区池 (<1KB)
+    medium_buffers: Mutex<Vec<(*mut u8, usize)>>, // 中缓冲区池 (1KB-16KB)
+    large_buffers: Mutex<Vec<(*mut u8, usize)>>,  // 大缓冲区池 (>16KB)
+    alignment: usize,
+}
+
+#[cfg(target_os = "windows")]
+impl WindowsSIMDBufferPool {
+    pub fn new(alignment: usize) -> Self {
+        Self {
+            small_buffers: Mutex::new(Vec::new()),
+            medium_buffers: Mutex::new(Vec::new()),
+            large_buffers: Mutex::new(Vec::new()),
+            alignment,
+        }
+    }
+    
+    pub fn get_buffer(&self, size: usize) -> *mut u8 {
+        unsafe {
+            // 根据大小选择合适的池
+            if size < 1024 {
+                let mut pool = self.small_buffers.lock().unwrap();
+                
+                // 查找匹配大小的缓冲区
+                for i in 0..pool.len() {
+                    let (ptr, buf_size) = pool[i];
+                    if buf_size >= size {
+                        let buffer = ptr;
+                        pool.remove(i);
+                        return buffer;
+                    }
+                }
+                
+                // 没有找到匹配的，创建新的
+                std::alloc::alloc_zeroed(
+                    std::alloc::Layout::from_size_align(size, self.alignment).unwrap()
+                )
+            } else if size < 16384 {
+                let mut pool = self.medium_buffers.lock().unwrap();
+                
+                for i in 0..pool.len() {
+                    let (ptr, buf_size) = pool[i];
+                    if buf_size >= size {
+                        let buffer = ptr;
+                        pool.remove(i);
+                        return buffer;
+                    }
+                }
+                
+                std::alloc::alloc_zeroed(
+                    std::alloc::Layout::from_size_align(size, self.alignment).unwrap()
+                )
+            } else {
+                let mut pool = self.large_buffers.lock().unwrap();
+                
+                for i in 0..pool.len() {
+                    let (ptr, buf_size) = pool[i];
+                    if buf_size >= size {
+                        let buffer = ptr;
+                        pool.remove(i);
+                        return buffer;
+                    }
+                }
+                
+                std::alloc::alloc_zeroed(
+                    std::alloc::Layout::from_size_align(size, self.alignment).unwrap()
+                )
+            }
+        }
+    }
+    
+    pub unsafe fn return_buffer(&self, ptr: *mut u8, size: usize) {
+        // 根据大小选择合适的池
+        if size < 1024 {
+            let mut pool = self.small_buffers.lock().unwrap();
+            if pool.len() < 32 { // 限制池大小
+                pool.push((ptr, size));
+            } else {
+                std::alloc::dealloc(
+                    ptr, 
+                    std::alloc::Layout::from_size_align(size, self.alignment).unwrap()
+                );
+            }
+        } else if size < 16384 {
+            let mut pool = self.medium_buffers.lock().unwrap();
+            if pool.len() < 16 { // 限制池大小
+                pool.push((ptr, size));
+            } else {
+                std::alloc::dealloc(
+                    ptr, 
+                    std::alloc::Layout::from_size_align(size, self.alignment).unwrap()
+                );
+            }
+        } else {
+            let mut pool = self.large_buffers.lock().unwrap();
+            if pool.len() < 8 { // 限制池大小
+                pool.push((ptr, size));
+            } else {
+                std::alloc::dealloc(
+                    ptr, 
+                    std::alloc::Layout::from_size_align(size, self.alignment).unwrap()
+                );
+            }
+        }
+    }
+    
+    // 清理所有缓冲区
+    pub fn cleanup(&self) {
+        unsafe {
+            // 清理小缓冲区
+            let mut small_pool = self.small_buffers.lock().unwrap();
+            for (ptr, size) in small_pool.drain(..) {
+                std::alloc::dealloc(
+                    ptr, 
+                    std::alloc::Layout::from_size_align(size, self.alignment).unwrap()
+                );
+            }
+            
+            // 清理中缓冲区
+            let mut medium_pool = self.medium_buffers.lock().unwrap();
+            for (ptr, size) in medium_pool.drain(..) {
+                std::alloc::dealloc(
+                    ptr, 
+                    std::alloc::Layout::from_size_align(size, self.alignment).unwrap()
+                );
+            }
+            
+            // 清理大缓冲区
+            let mut large_pool = self.large_buffers.lock().unwrap();
+            for (ptr, size) in large_pool.drain(..) {
+                std::alloc::dealloc(
+                    ptr, 
+                    std::alloc::Layout::from_size_align(size, self.alignment).unwrap()
+                );
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for WindowsSIMDBufferPool {
+    fn drop(&mut self) {
+        self.cleanup();
     }
 }
 
@@ -2400,10 +2952,10 @@ impl ZeroCopyHandler {
     
     /// 新增：智能的拷贝vs零拷贝决策引擎
     pub fn smart_copy_decision(&self, 
-                              indices: &[usize], 
-                              item_size: usize,
-                              access_frequency: f64,
-                              memory_pressure: f64) -> ZeroCopyDecision {
+                             indices: &[usize], 
+                             item_size: usize,
+                             access_frequency: f64,
+                             memory_pressure: f64) -> ZeroCopyDecision {
         let total_size = indices.len() * item_size;
         
         // 基础条件检查
@@ -2452,9 +3004,9 @@ impl ZeroCopyHandler {
     }
     
     pub fn should_copy_vs_zero_copy(&self, 
-                                   indices: &[usize], 
-                                   item_size: usize,
-                                   access_frequency: f64) -> bool {
+                                    indices: &[usize], 
+                                    item_size: usize,
+                                    access_frequency: f64) -> bool {
         let decision = self.smart_copy_decision(indices, item_size, access_frequency, 0.5);
         matches!(decision, ZeroCopyDecision::PreferCopy(_) | ZeroCopyDecision::ForceCopy(_))
     }
@@ -4418,6 +4970,8 @@ impl OptimizedLazyArray {
     }
     
     // 1.3 智能缓存预取
+
+    
     pub fn prefetch_pattern(&self, pattern: &AccessPattern) {
         match pattern {
             AccessPattern::Sequential(start, end) => {
@@ -4717,96 +5271,6 @@ impl OptimizedLazyArray {
         indices_list.par_iter().map(|indices| {
             self.vectorized_gather(indices)
         }).collect()
-    }
-    
-    // ===========================
-    // 阶段3：内存管理优化
-    // ===========================
-    
-    // 3.1 内存池管理
-    pub fn with_memory_pool(&self) -> MemoryPoolLazyArray {
-        MemoryPoolLazyArray {
-            inner: self,
-            pool: MemoryPool::new(),
-        }
-    }
-    
-    // 3.2 NUMA感知分配
-    #[cfg(target_os = "linux")]
-    pub fn numa_aware_read(&self, offset: usize, size: usize) -> Vec<u8> {
-        // 检查当前NUMA节点
-        let current_node = self.get_current_numa_node();
-        
-        // 如果数据在本地NUMA节点，使用快速路径
-        if self.is_numa_local(offset, size, current_node) {
-            return self.read_data_fast(offset, size);
-        }
-        
-        // 否则使用标准路径
-        self.read_data(offset, size)
-    }
-    
-    #[cfg(target_os = "linux")]
-    fn get_current_numa_node(&self) -> usize {
-        // 简化实现，实际应使用libnuma
-        0
-    }
-    
-    #[cfg(target_os = "linux")]
-    fn is_numa_local(&self, _offset: usize, _size: usize, _node: usize) -> bool {
-        // 简化实现，实际应检查内存页的NUMA位置
-        true
-    }
-    
-    // 3.3 智能缓存预热策略
-    pub fn intelligent_warmup(&self, workload_hint: &WorkloadHint) {
-        match workload_hint {
-            WorkloadHint::SequentialRead => {
-                // 顺序读取预热
-                self.warmup_cache(0.1); // 预热10%
-            }
-            WorkloadHint::RandomRead => {
-                // 随机读取预热
-                self.warmup_random_blocks(100); // 预热100个随机块
-            }
-            WorkloadHint::BooleanFiltering => {
-                // 布尔过滤预热
-                self.warmup_boolean_index_cache();
-            }
-            WorkloadHint::HeavyComputation => {
-                // 重度计算预热
-                self.warmup_cache(0.5); // 预热50%
-            }
-        }
-    }
-    
-    // 随机块预热
-    fn warmup_random_blocks(&self, num_blocks: usize) {
-        let row_size = self.shape[1..].iter().product::<usize>() * self.itemsize;
-        let max_blocks = self.shape[0] / (CACHE_BLOCK_SIZE / row_size).max(1);
-        let blocks_to_warm = num_blocks.min(max_blocks);
-        
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
-        
-        for _ in 0..blocks_to_warm {
-            let random_row = rng.gen_range(0..self.shape[0]);
-            let offset = random_row * row_size;
-            self.read_data(offset, row_size);
-        }
-    }
-    
-    // 布尔索引缓存预热
-    fn warmup_boolean_index_cache(&self) {
-        // 预热布尔索引相关的缓存结构
-        let sample_size = 1000.min(self.shape[0]);
-        let step = self.shape[0] / sample_size;
-        
-        for i in (0..self.shape[0]).step_by(step) {
-            let row_size = self.shape[1..].iter().product::<usize>() * self.itemsize;
-            let offset = i * row_size;
-            self.read_data(offset, row_size);
-        }
     }
     
     // ===========================
@@ -5249,6 +5713,13 @@ impl OptimizedLazyArray {
             #[cfg(target_arch = "x86_64")]
             {
                 if is_x86_feature_detected!("avx2") {
+                    // Windows平台需要特殊处理
+                    #[cfg(target_os = "windows")]
+                    if self.win_safe_simd {
+                        self.avx2_memory_copy_windows(src, dst, size);
+                        return;
+                    }
+                    
                     self.avx2_memory_copy(src, dst, size);
                     return;
                 }
@@ -5259,7 +5730,54 @@ impl OptimizedLazyArray {
         std::ptr::copy_nonoverlapping(src, dst, size);
     }
 
-    // AVX2内存复制
+    // Windows平台专用的AVX2内存复制函数，增加了额外的安全检查
+    #[cfg(all(target_arch = "x86_64", target_os = "windows"))]
+    unsafe fn avx2_memory_copy_windows(&self, src: *const u8, dst: *mut u8, size: usize) {
+        // 创建一个临时缓冲区来确保对齐
+        let temp_buf = self.windows_aligned_alloc(size);
+        if temp_buf.is_null() {
+            // 分配失败，回退到标准复制
+            std::ptr::copy_nonoverlapping(src, dst, size);
+            return;
+        }
+        
+        // 第一步：从源复制到对齐的临时缓冲区
+        std::ptr::copy_nonoverlapping(src, temp_buf, size);
+        
+        // 第二步：使用AVX2从临时缓冲区复制到目标
+        let chunks = size / 32;
+        for i in 0..chunks {
+            let offset = i * 32;
+            
+            // 额外的边界检查
+            if offset + 32 > size {
+                break;
+            }
+            
+            let src_ptr = temp_buf.add(offset) as *const std::arch::x86_64::__m256i;
+            let dst_ptr = dst.add(offset) as *mut std::arch::x86_64::__m256i;
+            
+            // 使用AVX2指令进行安全复制
+            let data = std::arch::x86_64::_mm256_load_si256(src_ptr);
+            std::arch::x86_64::_mm256_storeu_si256(dst_ptr, data);
+        }
+        
+        // 处理剩余字节
+        let remaining = size % 32;
+        if remaining > 0 {
+            let offset = chunks * 32;
+            std::ptr::copy_nonoverlapping(
+                temp_buf.add(offset),
+                dst.add(offset),
+                remaining
+            );
+        }
+        
+        // 释放临时缓冲区
+        self.windows_aligned_free(temp_buf, size);
+    }
+
+    // 非Windows平台的常规AVX2内存复制函数
     #[cfg(target_arch = "x86_64")]
     unsafe fn avx2_memory_copy(&self, src: *const u8, dst: *mut u8, size: usize) {
         let chunks = size / 32; // AVX2一次处理32字节
