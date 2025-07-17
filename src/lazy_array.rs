@@ -835,6 +835,8 @@ impl SIMDProcessor {
     
     /// 预取数据到缓存中
     fn prefetch_data(&self, src: &[u8], indices: &[usize], item_size: usize) {
+        // Windows平台跳过预取操作，避免段错误
+        #[cfg(not(target_os = "windows"))]
         for &idx in indices.iter().take(8) { // 只预取前8个，避免过度预取
             let offset = idx * item_size;
             if offset < src.len() {
@@ -852,6 +854,11 @@ impl SIMDProcessor {
     /// AVX512优化的向量化复制 - 真正的SIMD实现
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn avx512_vectorized_copy(&self, src: &[u8], dst: &mut [u8], indices: &[usize], item_size: usize) {
+        // Windows平台直接跳过AVX512，使用更基础的方法
+        #[cfg(target_os = "windows")]
+        return self.optimized_scalar_copy(src, dst, indices, item_size);
+        
+        #[cfg(not(target_os = "windows"))]
         if !self.supports_avx512 {
             return self.avx2_vectorized_copy(src, dst, indices, item_size);
         }
@@ -945,6 +952,11 @@ impl SIMDProcessor {
     /// AVX2优化的向量化复制
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn avx2_vectorized_copy(&self, src: &[u8], dst: &mut [u8], indices: &[usize], item_size: usize) {
+        // Windows平台直接跳过AVX2，使用更基础的方法
+        #[cfg(target_os = "windows")]
+        return self.optimized_scalar_copy(src, dst, indices, item_size);
+        
+        #[cfg(not(target_os = "windows"))]
         if !self.supports_avx2 {
             return self.sse2_vectorized_copy(src, dst, indices, item_size);
         }
@@ -1026,6 +1038,11 @@ impl SIMDProcessor {
     /// SSE2优化的向量化复制
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn sse2_vectorized_copy(&self, src: &[u8], dst: &mut [u8], indices: &[usize], item_size: usize) {
+        // Windows平台直接跳过SSE2，使用标准复制方法
+        #[cfg(target_os = "windows")]
+        return self.optimized_scalar_copy(src, dst, indices, item_size);
+        
+        #[cfg(not(target_os = "windows"))]
         if !self.supports_sse2 {
             return self.optimized_scalar_copy(src, dst, indices, item_size);
         }
