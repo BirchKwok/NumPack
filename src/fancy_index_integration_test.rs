@@ -2,7 +2,10 @@
 //! 
 //! 这个模块包含了FancyIndexEngine与OptimizedLazyArray的集成测试
 
-use crate::lazy_array::{FancyIndexEngine, OptimizedLazyArray};
+use crate::{
+    indexing::fancy_index::FancyIndexEngine, 
+    lazy_array::core::OptimizedLazyArray
+};
 use crate::metadata::DataType;
 use std::path::PathBuf;
 use std::fs::File;

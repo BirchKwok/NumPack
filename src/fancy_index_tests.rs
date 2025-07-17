@@ -2,9 +2,10 @@
 //! 
 //! 这个模块包含了FancyIndexEngine的全面测试，验证各种访问方法的正确性和性能
 
-use crate::lazy_array::{
-    FancyIndexEngine, OptimizedLazyArray, AccessPatternAnalysis, 
-    AccessPatternType, SizeCategory, AccessFrequency
+use crate::{
+    indexing::fancy_index::FancyIndexEngine, 
+    lazy_array::core::OptimizedLazyArray, 
+    access_pattern::{AccessPatternAnalysis, AccessPatternType, SizeCategory, AccessFrequency}
 };
 use crate::metadata::DataType;
 use std::path::PathBuf;

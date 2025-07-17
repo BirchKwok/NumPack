@@ -174,7 +174,7 @@ impl WalWriter {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum DataType {
     Bool,
     Uint8,

@@ -684,7 +684,7 @@ fn test_intelligent_eviction_manager_basic() {
     // 添加一些测试数据
     for i in 0..10 {
         let mut meta = CacheItemMetadata::new(i, 100);
-        meta.access_count = (i % 3) + 1; // 模拟不同的访问频率
+        meta.access_count = ((i % 3) + 1) as u64; // 模拟不同的访问频率
         cache_items.insert(i, meta);
     }
     
@@ -731,7 +731,7 @@ fn test_eviction_strategies() {
 /// 测试时间感知淘汰策略
 #[test]
 fn test_time_aware_eviction_strategy() {
-    let manager = IntelligentEvictionManager::new();
+    let mut manager = IntelligentEvictionManager::new();
     
     let mut cache_items = HashMap::new();
     let now = std::time::Instant::now();
@@ -759,7 +759,7 @@ fn test_time_aware_eviction_strategy() {
 /// 测试模式感知淘汰策略
 #[test]
 fn test_pattern_aware_eviction_strategy() {
-    let manager = IntelligentEvictionManager::new();
+    let mut manager = IntelligentEvictionManager::new();
     
     let mut cache_items = HashMap::new();
     
@@ -784,7 +784,7 @@ fn test_pattern_aware_eviction_strategy() {
 /// 测试大小感知淘汰策略  
 #[test]
 fn test_size_aware_eviction_strategy() {
-    let manager = IntelligentEvictionManager::new();
+    let mut manager = IntelligentEvictionManager::new();
     
     let mut cache_items = HashMap::new();
     
@@ -807,7 +807,7 @@ fn test_size_aware_eviction_strategy() {
 /// 测试混合LRU+LFU策略
 #[test]
 fn test_hybrid_lru_lfu_strategy() {
-    let manager = IntelligentEvictionManager::new();
+    let mut manager = IntelligentEvictionManager::new();
     
     let mut cache_items = HashMap::new();
     let now = std::time::Instant::now();

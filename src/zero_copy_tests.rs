@@ -5,9 +5,13 @@ mod zero_copy_tests {
     use std::fs::File;
     use std::io::Write;
     use tempfile::TempDir;
-    use crate::lazy_array::{
-        ZeroCopyHandler, ZeroCopyView, ZeroCopyAnalyzer, ContinuousMemoryOptimizer,
-        ZeroCopyDecision, FancyIndexEngine, OptimizedLazyArray
+    use crate::{
+        memory::{
+            zero_copy::{ZeroCopyHandler, ZeroCopyView, ZeroCopyAnalyzer, ZeroCopyDecision},
+            ZeroCopyData,
+        },
+        indexing::fancy_index::FancyIndexEngine, 
+        lazy_array::core::OptimizedLazyArray
     };
     use crate::metadata::DataType;
 

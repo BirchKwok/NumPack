@@ -1,36 +1,27 @@
 #[macro_use]
 extern crate lazy_static;
 
+// 核心模块
 mod error;
 mod metadata;
 mod parallel_io;
-mod lazy_array;
 mod batch_access_engine;
-mod windows_mapping; // 添加Windows平台特有的内存映射管理系统
+mod windows_mapping; // Windows平台特有的内存映射管理
 
-#[cfg(test)]
-mod fancy_index_tests;
+// 新的模块化结构
+mod access_pattern;
+mod performance;
+mod memory;
+mod cache;
+mod indexing;
+mod lazy_array;
+mod numpack;
 
+// 测试模块
 #[cfg(test)]
-mod fancy_index_integration_test;
+mod tests;
 
-#[cfg(test)]
-mod simd_tests;
-
-#[cfg(test)]
-mod prefetch_tests;
-
-#[cfg(test)]
-mod batch_access_tests;
-
-#[cfg(test)]
-mod prefetch_benchmark;
-
-#[cfg(test)]
-mod zero_copy_tests;
-
-#[cfg(test)]
-mod multilevel_cache_tests;
+// 旧测试文件已迁移到新的tests模块中
 
 use std::path::{Path, PathBuf};
 use numpy::{IntoPyArray, PyArrayDyn, PyArrayMethods};
@@ -2440,7 +2431,7 @@ impl HighPerformanceLazyArray {
     }
 
     fn intelligent_warmup(&self, workload_hint: &str) -> PyResult<()> {
-        use crate::lazy_array::{WorkloadHint, AccessHint};
+        use crate::access_pattern::{WorkloadHint, AccessHint};
         
         // 首先获取WorkloadHint
         let workload = match workload_hint {
@@ -3535,11 +3526,16 @@ fn create_optimized_mmap(path: &Path, modify_time: i64, cache: &mut MutexGuard<H
 
 #[pymodule]
 fn _lib_numpack(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // 注册核心类
     m.add_class::<NumPack>()?;
     m.add_class::<LazyArray>()?;
     m.add_class::<LazyArrayIterator>()?;
     m.add_class::<ArrayMetadata>()?;
     m.add_class::<HighPerformanceLazyArray>()?;
+    
+    // 注册新模块的Python绑定（如果有）
+    // numpack::python_bindings::register_python_bindings(m)?;
+    
     Ok(())
 }
 
