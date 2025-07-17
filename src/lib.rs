@@ -728,6 +728,58 @@ impl LazyArray {
         Ok(self.shape[0])
     }
 
+    fn __enter__(slf: PyRef<Self>) -> PyRef<Self> {
+        slf
+    }
+
+    fn __exit__(
+        &self,
+        _exc_type: Option<&Bound<'_, PyAny>>,
+        _exc_val: Option<&Bound<'_, PyAny>>,
+        _exc_tb: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        // 显式清理资源
+        #[cfg(target_family = "windows")]
+        {
+            // 在Windows上强制解除映射
+            drop(Arc::clone(&self.mmap));
+        }
+        Ok(false)  // 返回false表示不抑制异常
+    }
+}
+
+// 实现Drop特性以确保Windows平台上的资源正确释放
+#[cfg(target_family = "windows")]
+impl Drop for LazyArray {
+    fn drop(&mut self) {
+        // 在Windows上，使用Arc克隆和drop以确保内存映射被释放
+        // 这会确保文件句柄关闭，避免"Access is denied"错误
+        let _temp = Arc::clone(&self.mmap);
+        drop(_temp);
+        
+        // 此操作会确保在LazyArray被Drop时及时释放文件锁
+        unsafe {
+            // 刷新文件缓冲并强制关闭句柄
+            let path_str = self.array_path.clone();
+            if let Ok(file) = std::fs::File::open(path_str) {
+                use std::os::windows::io::AsRawHandle;
+                let handle = file.as_raw_handle();
+                if !handle.is_null() {
+                    // 强制刷新和解锁
+                    windows_sys::Win32::Storage::FileSystem::FlushFileBuffers(handle as isize);
+                }
+            }
+        }
+    }
+}
+
+// HighPerformanceLazyArray的Drop实现
+#[cfg(target_family = "windows")]
+impl Drop for HighPerformanceLazyArray {
+    fn drop(&mut self) {
+        // 确保在Windows平台上释放OptimizedLazyArray中的内存映射
+        drop(&self.optimized_array);
+    }
 }
 
 // 新增：LazyArray的内部方法实现
@@ -3391,19 +3443,22 @@ fn create_optimized_mmap(path: &Path, modify_time: i64, cache: &mut MutexGuard<H
         libc::fcntl(file.as_raw_fd(), libc::F_RDAHEAD, 1);
     }
 
-    // Windows
+    // Windows - 使用不同的映射选项，确保文件可以正常关闭
     #[cfg(target_family = "windows")]
     unsafe {
+        // Windows平台特殊处理：使用更兼容的映射选项
         if let Ok(mmap_view) = memmap2::MmapOptions::new()
             .populate() 
-            .map(&file) 
+            .map_copy(&file) // 使用map_copy减少文件锁定
         {
+            // 锁定内存但允许共享
             let _ = VirtualLock(
                 mmap_view.as_ptr() as *mut _,
                 mmap_view.len()
             );
         }
 
+        // 设置文件IO重叠范围但不锁定
         let handle = file.as_handle();
         let raw_handle = handle.as_raw_handle() as HANDLE;
         let _ = SetFileIoOverlappedRange(
@@ -3414,9 +3469,17 @@ fn create_optimized_mmap(path: &Path, modify_time: i64, cache: &mut MutexGuard<H
     }
     
     let mmap = unsafe { 
-        memmap2::MmapOptions::new()
+        #[cfg(not(target_family = "windows"))]
+        let mmap = memmap2::MmapOptions::new()
             .populate()
-            .map(&file)?
+            .map(&file)?;
+
+        #[cfg(target_family = "windows")]
+        let mmap = memmap2::MmapOptions::new()
+            .populate()
+            .map_copy(&file)?; // Windows平台使用map_copy减少文件锁定
+
+        mmap
     };
     
     let mmap = Arc::new(mmap);

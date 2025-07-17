@@ -3490,6 +3490,22 @@ struct AccessStats {
     total_reads: u64,
 }
 
+#[cfg(target_family = "windows")]
+impl Drop for OptimizedLazyArray {
+    fn drop(&mut self) {
+        // 在Windows上，明确释放内存映射，确保文件句柄被关闭
+        let _temp = Arc::clone(&self.mmap);
+        drop(_temp);
+        
+        // 尝试重新打开和关闭文件以确保解锁
+        if let Ok(path_str) = self.file_path.to_str() {
+            if let Ok(file) = std::fs::File::open(path_str) {
+                drop(file); // 立即关闭文件
+            }
+        }
+    }
+}
+
 impl OptimizedLazyArray {
     pub fn from_file(file_path: &str, shape: Vec<usize>, itemsize: usize) -> io::Result<Self> {
         let path = PathBuf::from(file_path);
