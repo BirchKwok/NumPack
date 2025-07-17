@@ -427,7 +427,7 @@ impl LazyArray {
 
     #[getter]
     fn nbytes(&self) -> PyResult<usize> {
-        Ok(self.shape.iter().product::<usize>() * self.itemsize)
+        Ok(self.itemsize * self.size()?)
     }
 
     /// Reshape the array to a new shape (view operation, no data copying)
@@ -739,12 +739,21 @@ impl LazyArray {
         _exc_val: Option<&Bound<'_, PyAny>>,
         _exc_tb: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
-        // 显式清理资源
+        // 显式清理资源 - 所有平台通用实现
+        // 手动触发对mmap的引用，以便在离开上下文管理器时确保资源被释放
+        let _temp = Arc::clone(&self.mmap);
+        drop(_temp);
+        
+        // Windows平台特有的额外清理
         #[cfg(target_family = "windows")]
         {
-            // 在Windows上强制解除映射
-            drop(Arc::clone(&self.mmap));
+            // 检查是否为临时文件
+            let path = std::path::Path::new(&self.array_path);
+            if self.array_path.contains("temp") || self.array_path.contains("tmp") {
+                release_windows_file_handle(path);
+            }
         }
+        
         Ok(false)  // 返回false表示不抑制异常
     }
 }
@@ -2169,7 +2178,7 @@ impl HighPerformanceLazyArray {
 
     #[getter]
     fn nbytes(&self) -> PyResult<usize> {
-        Ok(self.shape.iter().product::<usize>() * self.itemsize)
+        Ok(self.itemsize * self.size()?)
     }
 
     // 优化的字节数据转换为NumPy数组（减少内存分配）
@@ -2320,6 +2329,22 @@ impl HighPerformanceLazyArray {
             ));
         }
         Ok(self.shape[0])
+    }
+    
+    // 添加上下文管理器支持
+    fn __enter__(slf: PyRef<Self>) -> PyRef<Self> {
+        slf
+    }
+
+    fn __exit__(
+        &self,
+        _exc_type: Option<&Bound<'_, PyAny>>,
+        _exc_val: Option<&Bound<'_, PyAny>>,
+        _exc_tb: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        // 触发OptimizedLazyArray的清理
+        let _ = &self.optimized_array; // 使用let _替代drop引用
+        Ok(false)  // 返回false表示不抑制异常
     }
 
     // 新增：智能策略布尔索引

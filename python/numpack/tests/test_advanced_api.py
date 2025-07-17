@@ -382,16 +382,21 @@ class TestLazyArrayAPI:
             assert np.allclose(row, data[i])
 
     def test_lazy_array_context_manager(self, lazy_array_2d):
-        """测试 LazyArray 是否有上下文管理器功能"""
+        """测试 LazyArray 上下文管理器功能"""
         lazy_arr, _ = lazy_array_2d
         
-        # LazyArray 不需要支持上下文管理器，验证这一点
-        assert not hasattr(lazy_arr, '__enter__') or not hasattr(lazy_arr, '__exit__')
+        # LazyArray 现在支持上下文管理器，验证这一点
+        assert hasattr(lazy_arr, '__enter__') and hasattr(lazy_arr, '__exit__')
         
-        # 即使没有上下文管理器，基本操作也应该正常工作
-        assert lazy_arr.shape == (1000, 128)
-        reshaped = lazy_arr.reshape((500, 256))
-        assert reshaped.shape == (500, 256)
+        # 测试上下文管理器使用方法
+        with lazy_arr as arr:
+            # 上下文内的对象应该与原始对象相同
+            assert arr is lazy_arr
+            assert arr.shape == (1000, 128)
+            
+            # 在上下文中执行一些操作
+            reshaped = arr.reshape((500, 256))
+            assert reshaped.shape == (500, 256)
 
     def test_lazy_array_boolean_indexing(self, numpack):
         """测试 LazyArray 布尔索引功能"""

@@ -188,6 +188,7 @@ class LazyArray:
     - Numpy-compatible interface and dtype system
     - Advanced indexing with boolean masks and fancy indexing
     - Reshape operations without data copying
+    - Context manager support for explicit resource management
     
     Note:
         This is a type stub for the actual Rust implementation. The real functionality
@@ -286,6 +287,42 @@ class LazyArray:
         Example:
             >>> lazy_arr.nbytes
             1024000
+        """
+        ...
+    
+    # ===========================
+    # Context Manager Support
+    # ===========================
+    
+    def __enter__(self) -> 'LazyArray':
+        """
+        Enter context manager.
+        
+        Enables using LazyArray with 'with' statement for improved resource management.
+        
+        Returns:
+            LazyArray: Self reference
+            
+        Example:
+            >>> with lazy_arr as arr:
+            ...     result = arr[10:20]  # Resources properly managed
+        """
+        ...
+    
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        """
+        Exit context manager.
+        
+        Ensures proper cleanup of resources when exiting the 'with' block.
+        Particularly important on Windows for ensuring file handles are released.
+        
+        Args:
+            exc_type: Exception type if an exception was raised
+            exc_val: Exception value if an exception was raised
+            exc_tb: Exception traceback if an exception was raised
+            
+        Returns:
+            bool: False (exceptions are not suppressed)
         """
         ...
     
