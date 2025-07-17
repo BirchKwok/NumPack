@@ -12,6 +12,12 @@ use memmap2::{Mmap, MmapOptions};
 use dashmap::DashMap;
 use pyo3::PyResult;
 
+// 添加 Windows 平台需要的 trait 导入
+#[cfg(target_family = "windows")]
+use std::os::windows::fs::OpenOptionsExt;
+#[cfg(target_family = "windows")]
+use std::os::windows::io::AsRawHandle;
+
 // Windows系统API类型别名
 #[cfg(target_family = "windows")]
 type HANDLE = isize;
@@ -249,7 +255,8 @@ pub fn execute_full_cleanup(path: &Path) {
             if handle != std::ptr::null_mut() {
                 // 刷新缓冲区并清理
                 windows_sys::Win32::Storage::FileSystem::FlushFileBuffers(handle as isize);
-                windows_sys::Win32::Storage::FileSystem::CancelIo(handle as isize);
+                // 修正 CancelIo 的路径，它在 System::IO 模块中，而不是 Storage::FileSystem
+                windows_sys::Win32::System::IO::CancelIo(handle as isize);
                 
                 // 尝试解锁文件
                 windows_sys::Win32::Storage::FileSystem::UnlockFile(

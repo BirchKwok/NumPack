@@ -1460,7 +1460,7 @@ impl StreamProcessor {
     pub fn create_advanced_stream<T: Clone + Send + 'static>(
         &mut self, 
         data: Vec<T>,
-        context: &dyn BatchDataContext
+        _context: &dyn BatchDataContext
     ) -> StreamingResult<Vec<T>> {
         let start_time = Instant::now();
         let total_size = data.len();
@@ -1506,9 +1506,9 @@ impl StreamProcessor {
     pub fn process_streaming_batch_access(
         &mut self,
         indices: Vec<usize>,
-        context: &dyn BatchDataContext
+        _context: &dyn BatchDataContext
     ) -> StreamingResult<Vec<u8>> {
-        let start_time = Instant::now();
+        let _start_time = Instant::now();
         
         // 检查内存压力
         let backpressure = self.memory_monitor.get_backpressure_signal();
@@ -1531,13 +1531,13 @@ impl StreamProcessor {
             .map(|chunk| {
                 let chunk_start = Instant::now();
                 let chunk_data: Vec<Vec<u8>> = chunk.into_iter()
-                    .map(|idx| context.get_row_data(idx))
+                    .map(|idx| _context.get_row_data(idx))
                     .collect();
                 
                 // 合并块数据
                 let mut combined_data = Vec::new();
-                for row in chunk_data {
-                    combined_data.extend_from_slice(&row);
+                for row in &chunk_data {
+                    combined_data.extend_from_slice(row);
                 }
                 
                 // 记录块处理时间
