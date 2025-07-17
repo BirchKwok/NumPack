@@ -4106,13 +4106,15 @@ impl OptimizedLazyArray {
         
         while i < selected_indices.len() {
             let start_idx = selected_indices[i];
-            let mut end_idx = start_idx;
+            // 使用 _end_idx 标记变量是有意被忽略的
+            let mut _end_idx = start_idx;
             let mut consecutive_count = 1;
             
             // 找连续的行
             while i + consecutive_count < selected_indices.len() && 
                   selected_indices[i + consecutive_count] == start_idx + consecutive_count {
-                end_idx = selected_indices[i + consecutive_count];
+                // 更新为最后一个连续索引 (仅用于调试/记录目的)
+                _end_idx = selected_indices[i + consecutive_count];
                 consecutive_count += 1;
             }
             
@@ -5144,63 +5146,6 @@ impl OptimizedLazyArray {
         self.ultra_fast_boolean_filter(mask)
     }
 
-    // AVX-512优化的布尔滤波器
-    #[cfg(target_arch = "x86_64")]
-    fn avx512_boolean_filter(&self, mask: &[bool]) -> Vec<usize> {
-        let mut selected = Vec::with_capacity(mask.len() / 4);
-        let chunk_size = 512; // AVX-512可以处理512位
-        
-        for (chunk_start, chunk) in mask.chunks(chunk_size).enumerate() {
-            let base_idx = chunk_start * chunk_size;
-            
-            if chunk.len() == chunk_size {
-                // 使用AVX-512位操作
-                unsafe {
-                    let mut bit_masks: [u64; 8] = [0; 8]; // 512位 = 8 * 64位
-                    
-                    for (i, &val) in chunk.iter().enumerate() {
-                        if val {
-                            let word_idx = i / 64;
-                            let bit_idx = i % 64;
-                            bit_masks[word_idx] |= 1u64 << bit_idx;
-                        }
-                    }
-                    
-                    // 并行处理8个64位掩码
-                    for (word_idx, &mask) in bit_masks.iter().enumerate() {
-                        let mut mask_copy = mask;
-                        let word_base = base_idx + word_idx * 64;
-                        
-                        // 使用BMI指令加速位提取
-                        while mask_copy != 0 {
-                            #[cfg(target_feature = "bmi1")]
-                            {
-                                let pos = mask_copy.trailing_zeros() as usize;
-                                selected.push(word_base + pos);
-                                mask_copy = std::arch::x86_64::_blsr_u64(mask_copy); // BMI1指令
-                            }
-                            #[cfg(not(target_feature = "bmi1"))]
-                            {
-                                let pos = mask_copy.trailing_zeros() as usize;
-                                selected.push(word_base + pos);
-                                mask_copy &= mask_copy - 1;
-                            }
-                        }
-                    }
-                }
-            } else {
-                // 处理剩余元素
-                for (i, &val) in chunk.iter().enumerate() {
-                    if val {
-                        selected.push(base_idx + i);
-                    }
-                }
-            }
-        }
-        
-        selected
-    }
-
     // AVX2优化的布尔滤波器
     #[cfg(target_arch = "x86_64")]
     fn avx2_boolean_filter(&self, mask: &[bool]) -> Vec<usize> {
@@ -5377,15 +5322,19 @@ impl OptimizedLazyArray {
         
         while i < selected_indices.len() {
             let start_idx = selected_indices[i];
+            // 使用 _end_idx 标记变量是有意被忽略的
+            let mut _end_idx = start_idx;
             let mut consecutive_count = 1;
             
-            // 找连续块
-            while i + consecutive_count < selected_indices.len() &&
+            // 找连续的行
+            while i + consecutive_count < selected_indices.len() && 
                   selected_indices[i + consecutive_count] == start_idx + consecutive_count {
+                // 更新为最后一个连续索引 (仅用于调试/记录目的)
+                _end_idx = selected_indices[i + consecutive_count];
                 consecutive_count += 1;
             }
             
-            if consecutive_count >= 3 { // 3行或以上连续时使用范围复制
+            if consecutive_count >= 4 { // 4行或以上连续时使用大块复制
                 let range_data = self.get_rows_range(start_idx, start_idx + consecutive_count);
                 for chunk in range_data.chunks_exact(row_size) {
                     result.push(chunk.to_vec());

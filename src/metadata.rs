@@ -607,7 +607,7 @@ impl CachedMetadataStore {
         let store = if path.exists() {
             MetadataStore::load(path, wal_path)?
         } else {
-            let mut store = MetadataStore::new(wal_path);
+            let store = MetadataStore::new(wal_path);
             store.save(path)?;
             store
         };
