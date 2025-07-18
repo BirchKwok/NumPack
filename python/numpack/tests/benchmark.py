@@ -8,6 +8,7 @@ from numpack import NumPack
 from typing import Dict, List, Callable
 from statistics import mean
 import psutil
+import pytest
 
 logging.basicConfig(
     level=logging.INFO,
@@ -102,6 +103,7 @@ def get_memory_usage():
     process = psutil.Process(os.getpid())
     return process.memory_info().rss
 
+@pytest.mark.benchmark
 @run_multiple_times(runs=3)
 @clean_file_when_finished('benchmark_data')
 def test_very_large_array(timing_stats: TimingStats):
@@ -204,6 +206,7 @@ def test_very_large_array(timing_stats: TimingStats):
             import shutil
             shutil.rmtree(test_dir)
 
+@pytest.mark.benchmark
 @run_multiple_times(runs=7)
 @clean_file_when_finished('test_large', 'test_large.npz', 'test_large_array1.npy', 'test_large_array2.npy')
 def test_large_data(timing_stats: TimingStats):
@@ -317,6 +320,7 @@ def test_large_data(timing_stats: TimingStats):
         logger.error(f"Large data test failed: {str(e)}")
         raise
 
+@pytest.mark.benchmark
 @run_multiple_times(runs=7)
 @clean_file_when_finished('test_append', 'test_append.npz')
 def test_append_operations(timing_stats: TimingStats):
@@ -366,6 +370,7 @@ def test_append_operations(timing_stats: TimingStats):
         logger.error(f"Append operations test failed: {str(e)}")
         raise
 
+@pytest.mark.benchmark
 @run_multiple_times(runs=7)
 @clean_file_when_finished('test_random_access', 'test_random_access.npz', 'test_random_access_array1.npy', 'test_random_access_array2.npy')
 def test_random_access(timing_stats: TimingStats):
@@ -423,6 +428,7 @@ def test_random_access(timing_stats: TimingStats):
         logger.error(f"Random access performance test failed: {str(e)}")
         raise
 
+@pytest.mark.benchmark
 @run_multiple_times(runs=7)
 @clean_file_when_finished('test_replace', 'test_replace.npz', 'test_replace_array.npy')
 def test_replace_operations(timing_stats: TimingStats):
@@ -557,6 +563,7 @@ def test_replace_operations(timing_stats: TimingStats):
         logger.error(f"Replace operations test failed: {str(e)}")
         raise
 
+@pytest.mark.benchmark
 @run_multiple_times(runs=7)
 @clean_file_when_finished('test_drop', 'test_drop.npz', 'test_drop_array1.npy', 'test_drop_array2.npy')
 def test_drop_operations(timing_stats: TimingStats):
@@ -711,6 +718,7 @@ def test_drop_operations(timing_stats: TimingStats):
         logger.error(f"Drop operations test failed: {str(e)}")
         raise
 
+@pytest.mark.benchmark
 @run_multiple_times(runs=7)
 @clean_file_when_finished('test_append_rows', 'test_append_rows.npz', 'test_append_rows_array.npy')
 def test_append_rows_operations(timing_stats: TimingStats):
@@ -798,6 +806,7 @@ def test_append_rows_operations(timing_stats: TimingStats):
         logger.error(f"Append rows operations test failed: {str(e)}")
         raise
 
+@pytest.mark.benchmark
 @run_multiple_times(runs=7)
 @clean_file_when_finished('test_matrix', 'test_matrix.npz', 'test_matrix_array.npy')
 def test_matrix_computation(timing_stats: TimingStats):

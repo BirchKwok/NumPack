@@ -85,7 +85,7 @@ jobs:
           else
             . venv/bin/activate
           fi
-          python -m pip install "maturin>=1.0,<2.0" "numpy>=1.26.0" pytest
+          python -m pip install "maturin>=1.0,<2.0" "numpy>=1.26.0" pytest pytest-timeout
           
       # Install system dependencies (Linux)
       - name: Install system dependencies (Linux)
@@ -145,7 +145,7 @@ jobs:
           else
             . venv/bin/activate
           fi
-          python -m pytest
+          python -m pytest -m "not benchmark" --timeout=300
         
       # Build wheels
       - name: Build wheels
