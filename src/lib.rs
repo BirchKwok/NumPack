@@ -51,10 +51,22 @@ use rayon::prelude::*;
 #[allow(unused_imports)]
 use std::os::unix::io::AsRawFd;
 
-// 移除或标记为未使用的Windows相关导入
+// Windows特定的导入
 #[cfg(target_family = "windows")] 
 #[allow(unused_imports)]
-use std::os::windows::io::AsRawHandle;
+use std::os::windows::io::{AsHandle, AsRawHandle};
+
+#[cfg(target_family = "windows")] 
+#[allow(unused_imports)]
+use windows_sys::Win32::Storage::FileSystem::SetFileIoOverlappedRange;
+
+#[cfg(target_family = "windows")] 
+#[allow(unused_imports)]
+use windows_sys::Win32::System::Memory::VirtualLock;
+
+#[cfg(target_family = "windows")] 
+#[allow(unused_imports)]
+use windows_sys::Win32::Foundation::HANDLE;
 
 lazy_static! {
     static ref MMAP_CACHE: Mutex<HashMap<String, (Arc<Mmap>, i64)>> = Mutex::new(HashMap::new());
@@ -3552,10 +3564,6 @@ fn create_optimized_mmap(path: &Path, modify_time: i64, cache: &mut MutexGuard<H
     // Windows - 使用简化的安全版本
     #[cfg(target_family = "windows")]
     unsafe {
-        use std::os::windows::io::{AsHandle, AsRawHandle};
-        use windows_sys::Win32::Storage::FileSystem::SetFileIoOverlappedRange;
-        use windows_sys::Win32::System::Memory::VirtualLock;
-        use windows_sys::Win32::Foundation::HANDLE;
         
         if let Ok(mmap_view) = memmap2::MmapOptions::new()
             .populate() 
