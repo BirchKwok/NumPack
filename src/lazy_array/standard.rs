@@ -745,7 +745,7 @@ impl LazyArray {
 }
 
 #[cfg(target_family = "windows")]
-fn release_windows_file_handle(path: &Path) {
+pub fn release_windows_file_handle(path: &Path) {
     // Windows平台的文件句柄释放
     use std::thread;
     use std::time::Duration;
