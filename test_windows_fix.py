@@ -43,17 +43,17 @@ def test_windows_cleanup():
         
         # 懒加载测试
         print("\n测试2: 懒加载和迭代器")
-        with npk.load('test_array', lazy=True) as lazy_arr:
-            print(f"懒加载成功，形状: {lazy_arr.shape}")
-            
-            # 测试迭代器
-            rows = []
-            for i, row in enumerate(lazy_arr):
-                rows.append(row)
-                if i >= 2:  # 只取前3行
-                    break
-            
-            print(f"迭代器测试成功，获取了 {len(rows)} 行")
+        lazy_arr = npk.load('test_array', lazy=True)
+        print(f"懒加载成功，形状: {lazy_arr.shape}")
+        
+        # 测试迭代器
+        rows = []
+        for i, row in enumerate(lazy_arr):
+            rows.append(row)
+            if i >= 2:  # 只取前3行
+                break
+        
+        print(f"迭代器测试成功，获取了 {len(rows)} 行")
         
         # 测试Windows特定清理
         print("\n测试3: Windows特定清理")
@@ -80,11 +80,11 @@ def test_windows_cleanup():
             test_data = {data_name: np.random.rand(50, 16).astype(np.float32)}
             npk.save(test_data)
             
-            with npk.load(data_name, lazy=True) as lazy_arr:
-                # 快速访问几行
-                _ = lazy_arr[0]
-                _ = lazy_arr[10:20]
-                print(f"LazyArray {i} 测试完成")
+            lazy_arr = npk.load(data_name, lazy=True)
+            # 快速访问几行
+            _ = lazy_arr[0]
+            _ = lazy_arr[10:20]
+            print(f"LazyArray {i} 测试完成")
         
         print("\n所有测试完成!")
         
