@@ -143,4 +143,9 @@ impl OptimizedLazyArray {
         // TODO: 实现GPU加速聚合
         indices.iter().map(|_| vec![]).collect()
     }
+    
+    pub fn numa_aware_read(&self, offset: usize, size: usize) -> Vec<u8> {
+        // TODO: 实现NUMA感知读取 - 目前使用基础read_data实现
+        self.read_data(offset, size)
+    }
 }
