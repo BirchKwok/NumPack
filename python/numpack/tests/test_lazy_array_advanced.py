@@ -21,6 +21,10 @@ def numpack(temp_dir):
     
     # 测试后清理 - 特别针对Windows平台
     import gc, time
+    
+    # 强制删除NumPack实例
+    del npk
+    
     if os.name == 'nt':
         # Windows平台强化清理
         try:
@@ -28,12 +32,13 @@ def numpack(temp_dir):
         except:
             pass
         
+        # 多次强制垃圾回收
         for _ in range(5):
             gc.collect()
             time.sleep(0.01)
         
-        # 确保所有临时文件资源被释放
-        time.sleep(0.1)
+        # 额外等待时间以确保文件句柄完全释放
+        time.sleep(0.15)
     else:
         # 非Windows平台基本清理
         gc.collect()
@@ -45,7 +50,25 @@ def lazy_array_large(numpack):
     data = np.random.rand(10000, 256).astype(np.float32)
     numpack.save({'large_array': data})
     lazy_arr = numpack.load('large_array', lazy=True)
-    return lazy_arr, data
+    yield lazy_arr, data
+    
+    # 手动清理LazyArray，确保文件句柄释放
+    import gc, time
+    del lazy_arr
+    if hasattr(data, '__del__'):
+        del data
+    
+    # Windows平台强化清理
+    if os.name == 'nt':
+        try:
+            force_cleanup_windows_handles()
+        except:
+            pass
+        
+        for _ in range(3):
+            gc.collect()
+            time.sleep(0.01)
+        time.sleep(0.05)
 
 
 @pytest.fixture
@@ -54,7 +77,25 @@ def lazy_array_small(numpack):
     data = np.random.rand(100, 32).astype(np.float32)
     numpack.save({'small_array': data})
     lazy_arr = numpack.load('small_array', lazy=True)
-    return lazy_arr, data
+    yield lazy_arr, data
+    
+    # 手动清理LazyArray，确保文件句柄释放
+    import gc, time
+    del lazy_arr
+    if hasattr(data, '__del__'):
+        del data
+    
+    # Windows平台强化清理
+    if os.name == 'nt':
+        try:
+            force_cleanup_windows_handles()
+        except:
+            pass
+        
+        for _ in range(3):
+            gc.collect()
+            time.sleep(0.01)
+        time.sleep(0.05)
 
 
 class TestLazyArrayAdvancedMethods:

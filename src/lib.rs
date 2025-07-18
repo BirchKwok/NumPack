@@ -77,7 +77,7 @@ lazy_static! {
 fn clear_temp_files_from_cache() {
     let mut cache = MMAP_CACHE.lock().unwrap();
     let temp_files: Vec<String> = cache.keys()
-        .filter(|k| k.contains("temp") || k.contains("tmp"))
+        .filter(|k| k.contains("temp") || k.contains("tmp") || k.contains("test"))
         .cloned()
         .collect();
     
@@ -89,6 +89,17 @@ fn clear_temp_files_from_cache() {
             // 尝试释放文件句柄
             let path = std::path::Path::new(&temp_file);
             release_windows_file_handle(path);
+        }
+    }
+    
+    // 在Windows平台进行额外的清理
+    // 如果缓存太大，清理所有项目
+    if cache.len() > 15 {
+        let all_keys: Vec<String> = cache.keys().cloned().collect();
+        for key in all_keys {
+            if let Some((mmap, _)) = cache.remove(&key) {
+                drop(mmap);
+            }
         }
     }
 }
@@ -3634,12 +3645,21 @@ fn force_cleanup_windows_handles() -> PyResult<()> {
     // 清理临时文件缓存
     clear_temp_files_from_cache();
     
-    // 触发内存管理
-    let _temp_alloc: Vec<u8> = vec![0; 4096];
-    drop(_temp_alloc);
+    // 触发内存管理多次，更激进的清理
+    for _ in 0..5 {
+        let _temp_alloc: Vec<u8> = vec![0; 4096];
+        drop(_temp_alloc);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
     
-    // 短暂等待
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    // 触发延迟清理队列处理
+    #[cfg(feature = "windows_mapping")]
+    {
+        crate::windows_mapping::try_cleanup_queue();
+    }
+    
+    // 更长等待时间确保系统处理清理
+    std::thread::sleep(std::time::Duration::from_millis(100));
     
     Ok(())
 }

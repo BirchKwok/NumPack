@@ -23,6 +23,10 @@ def numpack(temp_dir):
     
     # 测试后清理 - 特别针对Windows平台
     import gc, time
+    
+    # 强制删除NumPack实例
+    del npk
+    
     if os.name == 'nt':
         # Windows平台强化清理
         try:
@@ -30,12 +34,13 @@ def numpack(temp_dir):
         except:
             pass
         
+        # 多次强制垃圾回收
         for _ in range(5):
             gc.collect()
             time.sleep(0.01)
         
-        # 确保所有临时文件资源被释放
-        time.sleep(0.1)
+        # 额外等待时间以确保文件句柄完全释放
+        time.sleep(0.15)
     else:
         # 非Windows平台基本清理
         gc.collect()
@@ -192,7 +197,26 @@ class TestLazyArrayAPI:
         data = np.random.rand(1000, 128).astype(np.float32)
         numpack.save({'test_array': data})
         lazy_arr = numpack.load('test_array', lazy=True)
-        return lazy_arr, data
+        yield lazy_arr, data
+        
+        # 手动清理LazyArray，确保文件句柄释放
+        import gc, time
+        del lazy_arr
+        if hasattr(data, '__del__'):
+            del data
+        
+        # Windows平台强化清理
+        if os.name == 'nt':
+            try:
+                from numpack import force_cleanup_windows_handles
+                force_cleanup_windows_handles()
+            except:
+                pass
+            
+            for _ in range(3):
+                gc.collect()
+                time.sleep(0.01)
+            time.sleep(0.05)
 
     @pytest.fixture  
     def lazy_array_3d(self, numpack):
@@ -200,7 +224,26 @@ class TestLazyArrayAPI:
         data = np.random.rand(100, 64, 32).astype(np.float32)
         numpack.save({'test_array_3d': data})
         lazy_arr = numpack.load('test_array_3d', lazy=True)
-        return lazy_arr, data
+        yield lazy_arr, data
+        
+        # 手动清理LazyArray，确保文件句柄释放
+        import gc, time
+        del lazy_arr
+        if hasattr(data, '__del__'):
+            del data
+        
+        # Windows平台强化清理
+        if os.name == 'nt':
+            try:
+                from numpack import force_cleanup_windows_handles
+                force_cleanup_windows_handles()
+            except:
+                pass
+            
+            for _ in range(3):
+                gc.collect()
+                time.sleep(0.01)
+            time.sleep(0.05)
 
     def test_lazy_array_properties(self, lazy_array_2d):
         """测试 LazyArray 基本属性"""
