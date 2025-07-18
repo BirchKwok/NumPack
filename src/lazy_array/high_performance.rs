@@ -199,6 +199,25 @@ impl HighPerformanceLazyArray {
         Ok(self.itemsize * self.size()?)
     }
 
+    #[getter]
+    fn T(&self) -> PyResult<HighPerformanceLazyArray> {
+        // 只允许二维数组进行转置
+        if self.shape.len() != 2 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Transpose is only supported for 2D arrays"
+            ));
+        }
+
+        // 创建转置后的形状（交换行列）
+        let mut transposed_shape = self.shape.clone();
+        transposed_shape.swap(0, 1);
+
+        // 由于OptimizedLazyArray无法clone，转置功能在高性能版本中暂不支持
+        Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
+            "Transpose is not yet implemented for HighPerformanceLazyArray"
+        ))
+    }
+
     // 内部方法：将字节数据转换为NumPy数组
     fn bytes_to_numpy_array(&self, py: Python, data: Vec<u8>, shape: Vec<usize>) -> PyResult<PyObject> {
         let array: PyObject = match self.dtype {
@@ -297,21 +316,7 @@ impl HighPerformanceLazyArray {
         Ok(self.shape[0])
     }
     
-    // 添加上下文管理器支持
-    fn __enter__(slf: PyRef<Self>) -> PyRef<Self> {
-        slf
-    }
 
-    fn __exit__(
-        &self,
-        _exc_type: Option<&Bound<'_, PyAny>>,
-        _exc_val: Option<&Bound<'_, PyAny>>,
-        _exc_tb: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<bool> {
-        // 触发OptimizedLazyArray的清理
-        let _ = &self.optimized_array; // 使用let _替代drop引用
-        Ok(false)  // 返回false表示不抑制异常
-    }
 
     // 新增：智能策略布尔索引
     fn boolean_index_smart(&self, py: Python, mask: Vec<bool>) -> PyResult<PyObject> {

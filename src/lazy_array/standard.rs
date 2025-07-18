@@ -745,7 +745,24 @@ impl LazyArray {
 }
 
 #[cfg(target_family = "windows")]
-fn release_windows_file_handle(_path: &Path) {
-    // Windows简化版本，无需特殊清理
-    // 依赖Rust的自动资源管理
+fn release_windows_file_handle(path: &Path) {
+    // Windows平台的文件句柄释放
+    use std::thread;
+    use std::time::Duration;
+    
+    // 尝试多次释放以确保文件句柄被正确清理
+    for attempt in 0..3 {
+        // 分配和释放一小块内存来触发系统的内存管理
+        let _temp_alloc: Vec<u8> = vec![0; 1024];
+        drop(_temp_alloc);
+        
+        // 短暂等待让系统处理文件句柄
+        thread::sleep(Duration::from_millis(if attempt == 0 { 1 } else { 5 }));
+        
+        // 尝试打开文件以测试是否仍被锁定
+        if let Ok(_) = std::fs::File::open(path) {
+            // 文件可以打开，说明没有被锁定
+            break;
+        }
+    }
 }

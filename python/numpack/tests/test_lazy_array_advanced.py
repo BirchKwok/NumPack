@@ -1,7 +1,8 @@
 import numpy as np
 import pytest
 import tempfile
-from numpack import NumPack
+import os
+from numpack import NumPack, force_cleanup_windows_handles
 
 
 @pytest.fixture
@@ -16,7 +17,26 @@ def numpack(temp_dir):
     """创建 NumPack 实例固定器"""
     npk = NumPack(temp_dir)
     npk.reset()
-    return npk
+    yield npk
+    
+    # 测试后清理 - 特别针对Windows平台
+    import gc, time
+    if os.name == 'nt':
+        # Windows平台强化清理
+        try:
+            force_cleanup_windows_handles()
+        except:
+            pass
+        
+        for _ in range(5):
+            gc.collect()
+            time.sleep(0.01)
+        
+        # 确保所有临时文件资源被释放
+        time.sleep(0.1)
+    else:
+        # 非Windows平台基本清理
+        gc.collect()
 
 
 @pytest.fixture
@@ -340,24 +360,21 @@ class TestLazyArrayDataTypes:
         
         numpack.save({'data_dtype_test': data})
         
-        # 使用with语句确保资源释放
-        with numpack.load('data_dtype_test', lazy=True) as lazy_arr:
-            # 测试基本属性
-            assert lazy_arr.dtype == dtype
-            assert lazy_arr.shape == data.shape
-            
-            # 测试数据访问
-            row = lazy_arr[0]
-            assert np.allclose(row, data[0])
-            
-            # 测试 reshape (不使用-1维度)
-            total_size = data.size
-            reshaped = lazy_arr.reshape(total_size)
-            assert reshaped.size == data.size
+        # 加载LazyArray
+        lazy_arr = numpack.load('data_dtype_test', lazy=True)
         
-        # 强制垃圾回收以确保资源释放
-        import gc
-        gc.collect()
+        # 测试基本属性
+        assert lazy_arr.dtype == dtype
+        assert lazy_arr.shape == data.shape
+        
+        # 测试数据访问
+        row = lazy_arr[0]
+        assert np.allclose(row, data[0])
+        
+        # 测试 reshape (不使用-1维度)
+        total_size = data.size
+        reshaped = lazy_arr.reshape(total_size)
+        assert reshaped.size == data.size
         
         # Windows平台上特殊处理，等待文件句柄完全释放
         import os, time

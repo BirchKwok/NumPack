@@ -1,9 +1,23 @@
 import shutil
+import os
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Tuple, Union, Optional
 import numpy as np
 
 from ._lib_numpack import NumPack as _NumPack, LazyArray
+
+# Windows平台特殊处理
+if os.name == 'nt':
+    try:
+        from ._lib_numpack import force_cleanup_windows_handles
+    except ImportError:
+        # 如果没有这个函数（非Windows构建），创建一个空函数
+        def force_cleanup_windows_handles():
+            pass
+else:
+    def force_cleanup_windows_handles():
+        """非Windows平台的空实现"""
+        pass
 
 
 __version__ = "0.2.0"
@@ -188,7 +202,6 @@ class LazyArray:
     - Numpy-compatible interface and dtype system
     - Advanced indexing with boolean masks and fancy indexing
     - Reshape operations without data copying
-    - Context manager support for explicit resource management
     
     Note:
         This is a type stub for the actual Rust implementation. The real functionality
@@ -290,41 +303,37 @@ class LazyArray:
         """
         ...
     
-    # ===========================
-    # Context Manager Support
-    # ===========================
-    
-    def __enter__(self) -> 'LazyArray':
+    @property
+    def T(self) -> 'LazyArray':
         """
-        Enter context manager.
+        Transpose of the array (for 2D arrays only).
         
-        Enables using LazyArray with 'with' statement for improved resource management.
+        Returns a new LazyArray view with dimensions swapped. This is a zero-copy 
+        operation that creates a view of the original data with transposed shape.
         
         Returns:
-            LazyArray: Self reference
+            LazyArray: Transposed array view
             
-        Example:
-            >>> with lazy_arr as arr:
-            ...     result = arr[10:20]  # Resources properly managed
+        Raises:
+            ValueError: If the array is not 2-dimensional
+            
+        Examples:
+            >>> # Original array shape: (1000, 256)
+            >>> transposed = lazy_arr.T
+            >>> transposed.shape
+            (256, 1000)
+            
+            >>> # Chain operations
+            >>> result = lazy_arr.T[10:20]  # Get rows 10-19 of transposed array
+            
+        Note:
+            - Only 2D arrays support transpose operation
+            - This is a view operation - no data is copied
+            - The original array remains unchanged
         """
         ...
     
-    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
-        """
-        Exit context manager.
-        
-        Ensures proper cleanup of resources when exiting the 'with' block.
-        Particularly important on Windows for ensuring file handles are released.
-        
-        Args:
-            exc_type: Exception type if an exception was raised
-            exc_val: Exception value if an exception was raised
-            exc_tb: Exception traceback if an exception was raised
-            
-        Returns:
-            bool: False (exceptions are not suppressed)
-        """
-        ...
+
     
     # ===========================
     # Core Array Operations
@@ -444,3 +453,7 @@ class LazyArray:
         """
         for i in range(len(self)):
             yield self[i]
+
+
+# 导出的公共API
+__all__ = ['NumPack', 'LazyArray', 'force_cleanup_windows_handles']

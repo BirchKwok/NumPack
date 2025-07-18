@@ -4,7 +4,7 @@ import tempfile
 import os
 import shutil
 from pathlib import Path
-from numpack import NumPack
+from numpack import NumPack, force_cleanup_windows_handles
 
 
 @pytest.fixture
@@ -19,7 +19,26 @@ def numpack(temp_dir):
     """创建 NumPack 实例固定器"""
     npk = NumPack(temp_dir)
     npk.reset()
-    return npk
+    yield npk
+    
+    # 测试后清理 - 特别针对Windows平台
+    import gc, time
+    if os.name == 'nt':
+        # Windows平台强化清理
+        try:
+            force_cleanup_windows_handles()
+        except:
+            pass
+        
+        for _ in range(5):
+            gc.collect()
+            time.sleep(0.01)
+        
+        # 确保所有临时文件资源被释放
+        time.sleep(0.1)
+    else:
+        # 非Windows平台基本清理
+        gc.collect()
 
 
 def create_test_array(dtype, shape):
@@ -369,44 +388,21 @@ class TestLazyArrayAPI:
         data = np.array([[1, 2], [3, 4], [5, 6]], dtype=np.float32)
         numpack.save({'small_array': data})
         
-        # 使用with语句和上下文管理器
-        with numpack.load('small_array', lazy=True) as lazy_arr:
-            # 测试迭代
-            rows = []
-            for i, row in enumerate(lazy_arr):
-                rows.append(row)
-                if i >= 2:  # 只测试前几行
-                    break
-            
-            assert len(rows) == 3
-            for i, row in enumerate(rows):
-                assert np.allclose(row, data[i])
+        # 加载LazyArray
+        lazy_arr = numpack.load('small_array', lazy=True)
         
-        # 强制垃圾回收
-        import gc
-        gc.collect()
+        # 测试迭代
+        rows = []
+        for i, row in enumerate(lazy_arr):
+            rows.append(row)
+            if i >= 2:  # 只测试前几行
+                break
         
-        # Windows平台上特殊处理
-        import os, time
-        if os.name == 'nt':
-            time.sleep(0.1)
+        assert len(rows) == 3
+        for i, row in enumerate(rows):
+            assert np.allclose(row, data[i])
 
-    def test_lazy_array_context_manager(self, lazy_array_2d):
-        """测试 LazyArray 上下文管理器功能"""
-        lazy_arr, _ = lazy_array_2d
-        
-        # LazyArray 现在支持上下文管理器，验证这一点
-        assert hasattr(lazy_arr, '__enter__') and hasattr(lazy_arr, '__exit__')
-        
-        # 测试上下文管理器使用方法
-        with lazy_arr as arr:
-            # 上下文内的对象应该与原始对象相同
-            assert arr is lazy_arr
-            assert arr.shape == (1000, 128)
-            
-            # 在上下文中执行一些操作
-            reshaped = arr.reshape((500, 256))
-            assert reshaped.shape == (500, 256)
+
 
     def test_lazy_array_boolean_indexing(self, numpack):
         """测试 LazyArray 布尔索引功能"""
@@ -417,25 +413,42 @@ class TestLazyArrayAPI:
         # 创建布尔掩码
         mask = np.array([True, False] * 50)  # 交替的布尔值
         
-        # 使用上下文管理器
-        with numpack.load('bool_test', lazy=True) as lazy_arr:
-            # 测试布尔索引（如果支持的话）
-            try:
-                result = lazy_arr[mask]
-                expected = data[mask]
-                assert np.allclose(result, expected)
-            except (NotImplementedError, TypeError):
-                # 不跳过测试，让测试失败
-                raise
+        # 加载LazyArray
+        lazy_arr = numpack.load('bool_test', lazy=True)
         
-        # 强制垃圾回收
-        import gc
-        gc.collect()
+        # 测试布尔索引（如果支持的话）
+        try:
+            result = lazy_arr[mask]
+            expected = data[mask]
+            assert np.allclose(result, expected)
+        except (NotImplementedError, TypeError):
+            # 不跳过测试，让测试失败
+            raise
+
+    def test_lazy_array_transpose(self, numpack):
+        """测试 LazyArray 转置功能"""
+        # 创建2D测试数据
+        data = np.random.rand(100, 50).astype(np.float32)
+        numpack.save({'transpose_test': data})
         
-        # Windows平台上特殊处理
-        import os, time
-        if os.name == 'nt':
-            time.sleep(0.1)
+        # 加载LazyArray
+        lazy_arr = numpack.load('transpose_test', lazy=True)
+        
+        # 测试转置属性
+        transposed = lazy_arr.T
+        
+        # 验证转置后的形状
+        assert transposed.shape == (50, 100)
+        assert lazy_arr.shape == (100, 50)  # 原数组形状不变
+        
+        # 验证数据类型保持一致
+        assert transposed.dtype == lazy_arr.dtype
+        
+        # 验证其他属性
+        assert transposed.ndim == 2
+        assert transposed.size == lazy_arr.size
+        assert transposed.itemsize == lazy_arr.itemsize
+        assert transposed.nbytes == lazy_arr.nbytes
 
     def test_lazy_array_multidimensional_indexing(self, lazy_array_3d):
         """测试 LazyArray 多维索引"""

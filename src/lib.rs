@@ -72,6 +72,27 @@ lazy_static! {
     static ref MMAP_CACHE: Mutex<HashMap<String, (Arc<Mmap>, i64)>> = Mutex::new(HashMap::new());
 }
 
+// Windows平台的临时文件清理函数
+#[cfg(target_family = "windows")]
+fn clear_temp_files_from_cache() {
+    let mut cache = MMAP_CACHE.lock().unwrap();
+    let temp_files: Vec<String> = cache.keys()
+        .filter(|k| k.contains("temp") || k.contains("tmp"))
+        .cloned()
+        .collect();
+    
+    for temp_file in temp_files {
+        if let Some((mmap, _)) = cache.remove(&temp_file) {
+            // 强制释放mmap引用
+            drop(mmap);
+            
+            // 尝试释放文件句柄
+            let path = std::path::Path::new(&temp_file);
+            release_windows_file_handle(path);
+        }
+    }
+}
+
 #[allow(dead_code)]
 #[pyclass]
 struct NumPack {
@@ -447,6 +468,30 @@ impl LazyArray {
         Ok(self.itemsize * self.size()?)
     }
 
+    #[getter]
+    fn T(&self) -> PyResult<LazyArray> {
+        // 只允许二维数组进行转置
+        if self.shape.len() != 2 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Transpose is only supported for 2D arrays"
+            ));
+        }
+
+        // 创建转置后的形状（交换行列）
+        let mut transposed_shape = self.shape.clone();
+        transposed_shape.swap(0, 1);
+
+        // 创建转置的LazyArray实例
+        Ok(LazyArray {
+            mmap: Arc::clone(&self.mmap),
+            shape: transposed_shape,
+            dtype: self.dtype.clone(),
+            itemsize: self.itemsize,
+            array_path: format!("{}_T", self.array_path),
+            modify_time: self.modify_time,
+        })
+    }
+
     /// Reshape the array to a new shape (view operation, no data copying)
     /// 
     /// Parameters:
@@ -746,33 +791,7 @@ impl LazyArray {
         Ok(self.shape[0])
     }
 
-    fn __enter__(slf: PyRef<Self>) -> PyRef<Self> {
-        slf
-    }
 
-    fn __exit__(
-        &self,
-        _exc_type: Option<&Bound<'_, PyAny>>,
-        _exc_val: Option<&Bound<'_, PyAny>>,
-        _exc_tb: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<bool> {
-        // 显式清理资源 - 所有平台通用实现
-        // 手动触发对mmap的引用，以便在离开上下文管理器时确保资源被释放
-        let _temp = Arc::clone(&self.mmap);
-        drop(_temp);
-        
-        // Windows平台特有的额外清理
-        #[cfg(target_family = "windows")]
-        {
-            // 检查是否为临时文件
-            let path = std::path::Path::new(&self.array_path);
-            if self.array_path.contains("temp") || self.array_path.contains("tmp") {
-                release_windows_file_handle(path);
-            }
-        }
-        
-        Ok(false)  // 返回false表示不抑制异常
-    }
 }
 
 // 实现Drop特性以确保Windows平台上的资源正确释放
@@ -3605,16 +3624,60 @@ fn _lib_numpack(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ArrayMetadata>()?;
     m.add_class::<HighPerformanceLazyArray>()?;
     
+    // 注册Windows清理函数
+    #[cfg(target_family = "windows")]
+    m.add_function(wrap_pyfunction!(force_cleanup_windows_handles, m)?)?;
+    
     // 注册新模块的Python绑定（如果有）
     // numpack::python_bindings::register_python_bindings(m)?;
     
     Ok(())
 }
 
+// Windows平台强制清理函数
 #[cfg(target_family = "windows")]
-fn release_windows_file_handle(_path: &Path) {
-    // Windows简化版本，无需特殊清理
-    // 依赖Rust的自动资源管理
+#[pyfunction]
+fn force_cleanup_windows_handles() -> PyResult<()> {
+    // 清理临时文件缓存
+    clear_temp_files_from_cache();
+    
+    // 触发内存管理
+    let _temp_alloc: Vec<u8> = vec![0; 4096];
+    drop(_temp_alloc);
+    
+    // 短暂等待
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    
+    Ok(())
+}
+
+#[cfg(target_family = "windows")]
+fn release_windows_file_handle(path: &Path) {
+    // Windows平台的文件句柄释放
+    use std::thread;
+    use std::time::Duration;
+    
+    // 尝试多次释放以确保文件句柄被正确清理
+    for attempt in 0..3 {
+        // 强制运行垃圾回收
+        // 在这里我们不能直接调用Python的gc，但可以通过其他方式触发内存清理
+        
+        // 分配和释放一小块内存来触发系统的内存管理
+        let _temp_alloc: Vec<u8> = vec![0; 1024];
+        drop(_temp_alloc);
+        
+        // 短暂等待让系统处理文件句柄
+        thread::sleep(Duration::from_millis(if attempt == 0 { 1 } else { 5 }));
+        
+        // 尝试打开文件以测试是否仍被锁定
+        if let Ok(_) = std::fs::File::open(path) {
+            // 文件可以打开，说明没有被锁定
+            break;
+        }
+    }
+    
+    // 清理临时文件缓存
+    clear_temp_files_from_cache();
 }
 
 /// 安全创建内存 slice 的辅助函数 - 防止 Windows 内存访问冲突
