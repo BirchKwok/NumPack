@@ -14,6 +14,7 @@ use numpy::{IntoPyArray, PyArrayDyn, PyArrayMethods};
 use ndarray::ArrayD;
 use memmap2::Mmap;
 use half::f16;
+use num_complex::{Complex32, Complex64};
 
 use crate::parallel_io::ParallelIO;
 use crate::metadata::DataType;
@@ -72,6 +73,8 @@ impl NumPack {
         let mut f16_arrays = Vec::new();
         let mut f32_arrays = Vec::new();
         let mut f64_arrays = Vec::new();
+        let mut complex64_arrays = Vec::new();
+        let mut complex128_arrays = Vec::new();
 
         for (i, (key, value)) in arrays.iter().enumerate() {
             let name = if let Some(prefix) = &array_name {
@@ -148,6 +151,16 @@ impl NumPack {
                     let array = unsafe { array.as_array().to_owned() };
                     f64_arrays.push((name, array, dtype));
                 }
+                DataType::Complex64 => {
+                    let array = value.downcast::<PyArrayDyn<Complex32>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    complex64_arrays.push((name, array, dtype));
+                }
+                DataType::Complex128 => {
+                    let array = value.downcast::<PyArrayDyn<Complex64>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    complex128_arrays.push((name, array, dtype));
+                }
             }
         }
 
@@ -187,6 +200,12 @@ impl NumPack {
         }
         if !f64_arrays.is_empty() {
             self.io.save_arrays(&f64_arrays)?;
+        }
+        if !complex64_arrays.is_empty() {
+            self.io.save_arrays(&complex64_arrays)?;
+        }
+        if !complex128_arrays.is_empty() {
+            self.io.save_arrays(&complex128_arrays)?;
         }
 
         Ok(())
@@ -356,6 +375,20 @@ impl NumPack {
                 };
                 data.into_pyarray(py).into()
             }
+            DataType::Complex64 => {
+                let data = unsafe {
+                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const Complex32, mmap.len() / 8);
+                    ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
+                };
+                data.into_pyarray(py).into()
+            }
+            DataType::Complex128 => {
+                let data = unsafe {
+                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const Complex64, mmap.len() / 16);
+                    ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
+                };
+                data.into_pyarray(py).into()
+            }
         };
         
         drop(mmap);
@@ -519,6 +552,30 @@ impl NumPack {
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
+                DataType::Complex64 => {
+                    let py_array = array.downcast::<PyArrayDyn<Complex32>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    let bytes = unsafe {
+                        std::slice::from_raw_parts(
+                            data.as_ptr() as *const u8,
+                            data.len() * std::mem::size_of::<Complex32>()
+                        )
+                    };
+                    file.write_all(bytes)?;
+                }
+                DataType::Complex128 => {
+                    let py_array = array.downcast::<PyArrayDyn<Complex64>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    let bytes = unsafe {
+                        std::slice::from_raw_parts(
+                            data.as_ptr() as *const u8,
+                            data.len() * std::mem::size_of::<Complex64>()
+                        )
+                    };
+                    file.write_all(bytes)?;
+                }
             }
 
             // Update metadata
@@ -676,6 +733,26 @@ impl NumPack {
                 };
                 array.into_pyarray(py).into()
             }
+            DataType::Complex64 => {
+                let array = unsafe {
+                    let slice = std::slice::from_raw_parts(
+                        data.as_ptr() as *const Complex32,
+                        data.len() / std::mem::size_of::<Complex32>()
+                    );
+                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Complex128 => {
+                let array = unsafe {
+                    let slice = std::slice::from_raw_parts(
+                        data.as_ptr() as *const Complex64,
+                        data.len() / std::mem::size_of::<Complex64>()
+                    );
+                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                };
+                array.into_pyarray(py).into()
+            }
         };
 
         Ok(array)
@@ -716,6 +793,10 @@ impl NumPack {
             DataType::Float16 => "float16",
             DataType::Float32 => "float32",
             DataType::Float64 => "float64",
+
+            DataType::Complex64 => "complex64",
+
+            DataType::Complex128 => "complex128",
         };
 
         crate::lazy_array::HighPerformanceLazyArray::new(

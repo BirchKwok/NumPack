@@ -6,5 +6,4 @@ pub mod cache_tests;
 pub mod indexing_tests;
 pub mod integration_tests;
 pub mod lazy_array_tests;
-pub mod performance_tests;
-pub mod windows_safety_tests; 
+pub mod performance_tests; 

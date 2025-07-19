@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use pyo3::prelude::*;
 use ndarray::ArrayD;
 use numpy::IntoPyArray;
+use num_complex::{Complex32, Complex64};
 
 use crate::metadata::DataType;
 use crate::lazy_array::{OptimizedLazyArray, FastTypeConversion};
@@ -174,6 +175,8 @@ impl HighPerformanceLazyArray {
             DataType::Float16 => "float16",
             DataType::Float32 => "float32",
             DataType::Float64 => "float64",
+            DataType::Complex64 => "complex64",
+            DataType::Complex128 => "complex128",
         };
         let dtype = numpy.getattr("dtype")?.call1((dtype_str,))?;
         Ok(dtype.into())
@@ -289,6 +292,18 @@ impl HighPerformanceLazyArray {
             }
             DataType::Float64 => {
                 let typed_data = data.to_typed_vec::<f64>();
+                let array = ArrayD::from_shape_vec(shape.to_vec(), typed_data)
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+                array.into_pyarray(py).into()
+            }
+            DataType::Complex64 => {
+                let typed_data = data.to_typed_vec::<Complex32>();
+                let array = ArrayD::from_shape_vec(shape.to_vec(), typed_data)
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+                array.into_pyarray(py).into()
+            }
+            DataType::Complex128 => {
+                let typed_data = data.to_typed_vec::<Complex64>();
                 let array = ArrayD::from_shape_vec(shape.to_vec(), typed_data)
                     .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
                 array.into_pyarray(py).into()

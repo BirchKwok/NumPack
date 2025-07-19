@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 use memmap2::Mmap;
+use num_complex::{Complex32, Complex64};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple, PySlice};
 use pyo3::ffi::Py_buffer;
@@ -48,6 +49,8 @@ impl LazyArray {
             DataType::Float16 => "e",
             DataType::Float32 => "f",
             DataType::Float64 => "d",
+            DataType::Complex64 => "Zf",
+            DataType::Complex128 => "Zd",
         };
 
         let format_str = std::ffi::CString::new(format).unwrap();
@@ -185,6 +188,8 @@ impl LazyArray {
             DataType::Float16 => "float16",
             DataType::Float32 => "float32",
             DataType::Float64 => "float64",
+            DataType::Complex64 => "complex64",
+            DataType::Complex128 => "complex128",
         };
         let dtype = numpy.getattr("dtype")?.call1((dtype_str,))?;
         Ok(dtype.into())
@@ -537,6 +542,14 @@ impl LazyArray {
                 let value = unsafe { *(self.mmap.as_ptr().add(offset) as *const f64) };
                 format!("{:.3}", value)
             }
+            DataType::Complex64 => {
+                let value = unsafe { *(self.mmap.as_ptr().add(offset) as *const Complex32) };
+                format!("{:.3}+{:.3}j", value.re, value.im)
+            }
+            DataType::Complex128 => {
+                let value = unsafe { *(self.mmap.as_ptr().add(offset) as *const Complex64) };
+                format!("{:.3}+{:.3}j", value.re, value.im)
+            }
         };
 
         Ok(value_str)
@@ -673,6 +686,26 @@ impl LazyArray {
             DataType::Float64 => {
                 let array = unsafe {
                     let slice: &[f64] = bytemuck::cast_slice(&data);
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Complex64 => {
+                let array = unsafe {
+                    let slice = std::slice::from_raw_parts(
+                        data.as_ptr() as *const Complex32,
+                        data.len() / std::mem::size_of::<Complex32>()
+                    );
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Complex128 => {
+                let array = unsafe {
+                    let slice = std::slice::from_raw_parts(
+                        data.as_ptr() as *const Complex64,
+                        data.len() / std::mem::size_of::<Complex64>()
+                    );
                     ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
                 };
                 array.into_pyarray(py).into()

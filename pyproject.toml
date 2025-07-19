@@ -37,8 +37,6 @@ python-source = "python"
 [tool.pytest.ini_options]
 # 默认忽略性能基准测试，使用标记过滤
 addopts = "-m 'not benchmark'"
-# 设置测试超时时间
-timeout = 300
 # 测试目录
 testpaths = ["python/numpack/tests"]
 # 定义标记

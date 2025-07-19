@@ -188,6 +188,8 @@ pub enum DataType {
     Float16,
     Float32,
     Float64,
+    Complex64,
+    Complex128,
 }
 
 impl DataType {
@@ -205,6 +207,8 @@ impl DataType {
             DataType::Float16 => 2,
             DataType::Float32 => 4,
             DataType::Float64 => 8,
+            DataType::Complex64 => 8,   // 2 * float32
+            DataType::Complex128 => 16, // 2 * float64
         }
     }
 }

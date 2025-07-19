@@ -6,8 +6,6 @@ mod error;
 mod metadata;
 mod parallel_io;
 mod batch_access_engine;
-// Windows映射模块暂时禁用，使用简化方案
-// mod windows_mapping;
 
 // 新的模块化结构
 mod access_pattern;
@@ -22,8 +20,6 @@ mod numpack;
 #[cfg(test)]
 mod tests;
 
-// 旧测试文件已迁移到新的tests模块中
-
 use std::path::{Path, PathBuf};
 use numpy::{IntoPyArray, PyArrayDyn, PyArrayMethods};
 use pyo3::exceptions::PyKeyError;
@@ -32,9 +28,10 @@ use pyo3::types::{PyDict, PyList, PyTuple};
 use pyo3::types::PySlice;
 use std::fs::OpenOptions;
 use std::io::Write;
+use num_complex::{Complex32, Complex64};
 use ndarray::ArrayD;
 use pyo3::ffi::Py_buffer;
-use memmap2::Mmap;
+use memmap2::{Mmap, MmapOptions};
 use std::ptr;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -51,57 +48,14 @@ use rayon::prelude::*;
 #[allow(unused_imports)]
 use std::os::unix::io::AsRawFd;
 
-// Windows特定的导入
-#[cfg(target_family = "windows")] 
-#[allow(unused_imports)]
-use std::os::windows::io::{AsHandle, AsRawHandle};
-
-#[cfg(target_family = "windows")] 
-#[allow(unused_imports)]
-use windows_sys::Win32::Storage::FileSystem::SetFileIoOverlappedRange;
-
-#[cfg(target_family = "windows")] 
-#[allow(unused_imports)]
-use windows_sys::Win32::System::Memory::VirtualLock;
-
-#[cfg(target_family = "windows")] 
-#[allow(unused_imports)]
-use windows_sys::Win32::Foundation::HANDLE;
-
 lazy_static! {
     static ref MMAP_CACHE: Mutex<HashMap<String, (Arc<Mmap>, i64)>> = Mutex::new(HashMap::new());
 }
 
-// Windows平台的临时文件清理函数
-#[cfg(target_family = "windows")]
+// 清理临时文件缓存（所有平台通用）
 fn clear_temp_files_from_cache() {
     let mut cache = MMAP_CACHE.lock().unwrap();
-    let temp_files: Vec<String> = cache.keys()
-        .filter(|k| k.contains("temp") || k.contains("tmp") || k.contains("test"))
-        .cloned()
-        .collect();
-    
-    for temp_file in temp_files {
-        if let Some((mmap, _)) = cache.remove(&temp_file) {
-            // 强制释放mmap引用
-            drop(mmap);
-            
-            // 尝试释放文件句柄
-            let path = std::path::Path::new(&temp_file);
-            release_windows_file_handle(path);
-        }
-    }
-    
-    // 在Windows平台进行额外的清理
-    // 如果缓存太大，清理所有项目
-    if cache.len() > 15 {
-        let all_keys: Vec<String> = cache.keys().cloned().collect();
-        for key in all_keys {
-            if let Some((mmap, _)) = cache.remove(&key) {
-                drop(mmap);
-            }
-        }
-    }
+    cache.clear();
 }
 
 #[allow(dead_code)]
@@ -120,6 +74,18 @@ struct LazyArray {
     itemsize: usize,
     array_path: String,
     modify_time: i64,
+}
+
+#[allow(dead_code)]
+#[pyclass]
+struct StreamLoader {
+    base_dir: PathBuf,
+    array_name: String,
+    total_rows: i64,
+    buffer_size: i64,
+    current_index: i64,
+    dtype: DataType,
+    shape: Vec<usize>,
 }
 
 /// Iterator for LazyArray that yields rows
@@ -230,6 +196,10 @@ impl LazyArray {
             DataType::Float16 => "e",
             DataType::Float32 => "f",
             DataType::Float64 => "d",
+
+            DataType::Complex64 => "complex64",
+
+            DataType::Complex128 => "complex128",
         };
 
         let format_str = std::ffi::CString::new(format).unwrap();
@@ -242,18 +212,7 @@ impl LazyArray {
         }
         strides.reverse();
 
-                 // Windows安全：使用安全的内存访问包装
-         #[cfg(target_os = "windows")]
-         {
-             use crate::memory::windows_simd::is_windows_safe_mode;
-             if is_windows_safe_mode() {
-                 // 在Windows安全模式下，不直接暴露mmap指针
-                 // 而是返回一个受保护的缓冲区
-                 return Err(PyErr::new::<pyo3::exceptions::PyBufferError, _>(
-                     "Buffer protocol disabled in Windows safe mode. Use array slicing instead."
-                 ));
-             }
-         }
+                 // 安全检查：确保 mmap 有效
 
         (*view).buf = slf.mmap.as_ptr() as *mut std::ffi::c_void;
         (*view).obj = ptr::null_mut();
@@ -387,6 +346,14 @@ impl LazyArray {
                 let val = unsafe { *(self.mmap.as_ptr().add(offset) as *const f64) };
                 format!("{:.6}", val)
             }
+            DataType::Complex64 => {
+                let val = unsafe { *(self.mmap.as_ptr().add(offset) as *const Complex32) };
+                format!("{:.6}+{:.6}j", val.re, val.im)
+            }
+            DataType::Complex128 => {
+                let val = unsafe { *(self.mmap.as_ptr().add(offset) as *const Complex64) };
+                format!("{:.6}+{:.6}j", val.re, val.im)
+            }
         };
         Ok(value)
     }
@@ -454,6 +421,8 @@ impl LazyArray {
             DataType::Float16 => "float16",
             DataType::Float32 => "float32",
             DataType::Float64 => "float64",
+            DataType::Complex64 => "complex64",
+            DataType::Complex128 => "complex128",
         };
         let dtype = numpy.getattr("dtype")?.call1((dtype_str,))?;
         Ok(dtype.into())
@@ -805,59 +774,25 @@ impl LazyArray {
 
 }
 
-// 实现Drop特性以确保Windows平台上的资源正确释放
-#[cfg(target_family = "windows")]
+// 实现Drop特性以确保资源正确释放
 impl Drop for LazyArray {
     fn drop(&mut self) {
-        // 简化的Drop实现，避免危险的文件操作
-        let path = std::path::Path::new(&self.array_path);
-        
-        // 只在测试环境中执行基本清理
-        let is_test = std::env::var("PYTEST_CURRENT_TEST").is_ok() || std::env::var("CARGO_PKG_NAME").is_ok();
-        
-        if is_test {
-            // 测试环境：最小化清理，避免卡住
-            release_windows_file_handle(path);
-        } else {
-            // 生产环境：标准清理
-            let is_temp = self.array_path.contains("temp") || self.array_path.contains("tmp");
-            if is_temp {
-                // 临时文件需要立即清理，但限制重试次数
-                for _ in 0..2 {  // 减少重试次数
-                    release_windows_file_handle(path);
-                    std::thread::sleep(std::time::Duration::from_millis(1));
+        // 清理缓存中的引用
+        if let Ok(mut cache) = MMAP_CACHE.try_lock() {
+            if let Some((cached_mmap, _)) = cache.get(&self.array_path) {
+                if Arc::ptr_eq(&self.mmap, cached_mmap) {
+                    cache.remove(&self.array_path);
                 }
-            } else {
-                // 普通文件使用标准清理
-                release_windows_file_handle(path);
             }
         }
-        
-        // 移除危险的文件重新映射操作
-        // 简单释放mmap引用即可
     }
 }
 
-// HighPerformanceLazyArray的更智能Drop实现
-#[cfg(target_family = "windows")]
+// HighPerformanceLazyArray的Drop实现
 impl Drop for HighPerformanceLazyArray {
     fn drop(&mut self) {
-        // 优先处理核心数据
+        // 清理优化数组
         drop(&self.optimized_array);
-        
-        // 对于临时文件，强制执行额外的清理
-        // 由于可能无法直接获取文件路径，使用形状和大小信息来检测是否为临时数组
-        // 临时测试数组通常有特定的形状模式，如较小的行数或列数
-        let is_small_array = self.shape.len() <= 2 && 
-                            (self.shape.get(0).map_or(false, |&r| r < 1000) || 
-                             self.shape.get(1).map_or(false, |&c| c < 100));
-        
-        // 只对可能是临时测试数组的对象执行额外清理
-        if is_small_array {
-            // 强制运行垃圾回收
-            std::mem::drop(Box::new([0u8; 1024])); // 触发堆内存分配和释放
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
     }
 }
 
@@ -1890,6 +1825,26 @@ impl LazyArray {
                 };
                 array.into_pyarray(py).into()
             }
+            DataType::Complex64 => {
+                let array = unsafe {
+                    let slice = std::slice::from_raw_parts(
+                        data.as_ptr() as *const Complex32,
+                        data.len() / std::mem::size_of::<Complex32>()
+                    );
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Complex128 => {
+                let array = unsafe {
+                    let slice = std::slice::from_raw_parts(
+                        data.as_ptr() as *const Complex64,
+                        data.len() / std::mem::size_of::<Complex64>()
+                    );
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
+                };
+                array.into_pyarray(py).into()
+            }
         };
 
         Ok(array)
@@ -2259,6 +2214,8 @@ impl HighPerformanceLazyArray {
             DataType::Float16 => "float16",
             DataType::Float32 => "float32",
             DataType::Float64 => "float64",
+            DataType::Complex64 => "complex64",
+            DataType::Complex128 => "complex128",
         };
         let dtype = numpy.getattr("dtype")?.call1((dtype_str,))?;
         Ok(dtype.into())
@@ -2407,6 +2364,18 @@ impl HighPerformanceLazyArray {
             }
             DataType::Float64 => {
                 let typed_data = data.to_typed_vec::<f64>();
+                let array = ArrayD::from_shape_vec(shape.to_vec(), typed_data)
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+                array.into_pyarray(py).into()
+            }
+            DataType::Complex64 => {
+                let typed_data = data.to_typed_vec::<Complex32>();
+                let array = ArrayD::from_shape_vec(shape.to_vec(), typed_data)
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+                array.into_pyarray(py).into()
+            }
+            DataType::Complex128 => {
+                let typed_data = data.to_typed_vec::<Complex64>();
                 let array = ArrayD::from_shape_vec(shape.to_vec(), typed_data)
                     .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
                 array.into_pyarray(py).into()
@@ -2696,6 +2665,8 @@ fn get_array_dtype(array: &Bound<'_, PyAny>) -> PyResult<DataType> {
         "float16" => Ok(DataType::Float16),
         "float32" => Ok(DataType::Float32),
         "float64" => Ok(DataType::Float64),
+        "complex64" => Ok(DataType::Complex64),
+        "complex128" => Ok(DataType::Complex128),
         _ => Err(pyo3::exceptions::PyValueError::new_err(
             format!("Unsupported dtype: {}", dtype_str)
         )),
@@ -2733,6 +2704,8 @@ impl NumPack {
         let mut f16_arrays = Vec::new();
         let mut f32_arrays = Vec::new();
         let mut f64_arrays = Vec::new();
+        let mut complex64_arrays = Vec::new();
+        let mut complex128_arrays = Vec::new();
 
         for (i, (key, value)) in arrays.iter().enumerate() {
             let name = if let Some(prefix) = &array_name {
@@ -2809,6 +2782,16 @@ impl NumPack {
                     let array = unsafe { array.as_array().to_owned() };
                     f64_arrays.push((name, array, dtype));
                 }
+                DataType::Complex64 => {
+                    let array = value.downcast::<PyArrayDyn<Complex32>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    complex64_arrays.push((name, array, dtype));
+                }
+                DataType::Complex128 => {
+                    let array = value.downcast::<PyArrayDyn<Complex64>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    complex128_arrays.push((name, array, dtype));
+                }
             }
         }
 
@@ -2847,6 +2830,12 @@ impl NumPack {
         }
         if !f64_arrays.is_empty() {
             self.io.save_arrays(&f64_arrays)?;
+        }
+        if !complex64_arrays.is_empty() {
+            self.io.save_arrays(&complex64_arrays)?;
+        }
+        if !complex128_arrays.is_empty() {
+            self.io.save_arrays(&complex128_arrays)?;
         }
 
         Ok(())
@@ -3012,6 +3001,20 @@ impl NumPack {
             DataType::Float64 => {
                 let data = unsafe {
                     let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const f64, mmap.len() / 8);
+                    ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
+                };
+                data.into_pyarray(py).into()
+            }
+            DataType::Complex64 => {
+                let data = unsafe {
+                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const Complex32, mmap.len() / 8);
+                    ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
+                };
+                data.into_pyarray(py).into()
+            }
+            DataType::Complex128 => {
+                let data = unsafe {
+                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const Complex64, mmap.len() / 16);
                     ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
                 };
                 data.into_pyarray(py).into()
@@ -3187,6 +3190,30 @@ impl NumPack {
                     let array_ref = unsafe { py_array.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
+                }
+                DataType::Complex64 => {
+                    let py_array = array.downcast::<PyArrayDyn<Complex32>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    let bytes = unsafe {
+                        std::slice::from_raw_parts(
+                            data.as_ptr() as *const u8,
+                            data.len() * std::mem::size_of::<Complex32>()
+                        )
+                    };
+                    file.write_all(bytes)?;
+                }
+                DataType::Complex128 => {
+                    let py_array = array.downcast::<PyArrayDyn<Complex64>>()?;
+                    let array_ref = unsafe { py_array.as_array() };
+                    let data = array_ref.as_slice().unwrap();
+                    let bytes = unsafe {
+                        std::slice::from_raw_parts(
+                            data.as_ptr() as *const u8,
+                            data.len() * std::mem::size_of::<Complex64>()
+                        )
+                    };
+                    file.write_all(bytes)?;
                 }
             }
 
@@ -3392,6 +3419,16 @@ impl NumPack {
                     let array = unsafe { array.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
+                DataType::Complex64 => {
+                    let array = value.downcast::<PyArrayDyn<Complex32>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
+                }
+                DataType::Complex128 => {
+                    let array = value.downcast::<PyArrayDyn<Complex64>>()?;
+                    let array = unsafe { array.as_array().to_owned() };
+                    self.io.replace_rows(&name, &array, &indices)?;
+                }
             }
         }
         
@@ -3517,6 +3554,26 @@ impl NumPack {
                 };
                 array.into_pyarray(py).into()
             }
+            DataType::Complex64 => {
+                let array = unsafe {
+                    let slice = std::slice::from_raw_parts(
+                        data.as_ptr() as *const Complex32,
+                        data.len() / std::mem::size_of::<Complex32>()
+                    );
+                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Complex128 => {
+                let array = unsafe {
+                    let slice = std::slice::from_raw_parts(
+                        data.as_ptr() as *const Complex64,
+                        data.len() / std::mem::size_of::<Complex64>()
+                    );
+                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                };
+                array.into_pyarray(py).into()
+            }
         };
         
         Ok(array)
@@ -3557,6 +3614,8 @@ impl NumPack {
             DataType::Float16 => "float16",
             DataType::Float32 => "float32",
             DataType::Float64 => "float64",
+            DataType::Complex64 => "complex64",
+            DataType::Complex128 => "complex128",
         };
 
         HighPerformanceLazyArray::new(
@@ -3564,6 +3623,169 @@ impl NumPack {
             shape,
             dtype_str.to_string()
         )
+    }
+
+    fn stream_load(&self, py: Python, array_name: &str, buffer_size: i64) -> PyResult<StreamLoader> {
+        if !self.io.has_array(array_name) {
+            return Err(PyErr::new::<PyKeyError, _>(format!("Array {} not found", array_name)));
+        }
+
+        let meta = self.io.get_array_meta(array_name).unwrap();
+        let total_rows = meta.shape[0] as i64;
+        let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
+        
+        Ok(StreamLoader {
+            base_dir: self.base_dir.clone(),
+            array_name: array_name.to_string(),
+            total_rows,
+            buffer_size,
+            current_index: 0,
+            dtype: meta.dtype.clone(),
+            shape,
+        })
+    }
+}
+
+#[pymethods]
+impl StreamLoader {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self, py: Python) -> PyResult<Option<PyObject>> {
+        if self.current_index >= self.total_rows {
+            return Ok(None);
+        }
+
+        let end_index = std::cmp::min(self.current_index + self.buffer_size, self.total_rows);
+        let batch_size = (end_index - self.current_index) as usize;
+        
+        // 直接从文件加载数据
+        let data_file = self.base_dir.join(format!("data_{}.npkd", self.array_name));
+        let file = std::fs::File::open(&data_file)?;
+        let mmap = unsafe { MmapOptions::new().map(&file)? };
+        
+        // 计算偏移量和大小
+        let element_size = self.dtype.size_bytes();
+        let row_size = self.shape[1..].iter().product::<usize>() * element_size;
+        let offset = self.current_index as usize * row_size;
+        let size = batch_size * row_size;
+        
+        if offset + size > mmap.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>("Data offset out of bounds"));
+        }
+        
+        // 创建新的形状
+        let mut new_shape = self.shape.clone();
+        new_shape[0] = batch_size;
+        
+        // 根据数据类型创建numpy数组
+        let array = match self.dtype {
+            DataType::Bool => {
+                let data = unsafe {
+                    let slice = std::slice::from_raw_parts(mmap.as_ptr().add(offset) as *const bool, size);
+                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
+                };
+                data.into_pyarray(py).into()
+            }
+            DataType::Uint8 => {
+                let data = unsafe {
+                    let slice = std::slice::from_raw_parts(mmap.as_ptr().add(offset) as *const u8, size);
+                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
+                };
+                data.into_pyarray(py).into()
+            }
+            DataType::Uint16 => {
+                let data = unsafe {
+                    let slice = std::slice::from_raw_parts(mmap.as_ptr().add(offset) as *const u16, size / 2);
+                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
+                };
+                data.into_pyarray(py).into()
+            }
+            DataType::Uint32 => {
+                let data = unsafe {
+                    let slice = std::slice::from_raw_parts(mmap.as_ptr().add(offset) as *const u32, size / 4);
+                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
+                };
+                data.into_pyarray(py).into()
+            }
+            DataType::Uint64 => {
+                let data = unsafe {
+                    let slice = std::slice::from_raw_parts(mmap.as_ptr().add(offset) as *const u64, size / 8);
+                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
+                };
+                data.into_pyarray(py).into()
+            }
+            DataType::Int8 => {
+                let data = unsafe {
+                    let slice = std::slice::from_raw_parts(mmap.as_ptr().add(offset) as *const i8, size);
+                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
+                };
+                data.into_pyarray(py).into()
+            }
+            DataType::Int16 => {
+                let data = unsafe {
+                    let slice = std::slice::from_raw_parts(mmap.as_ptr().add(offset) as *const i16, size / 2);
+                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
+                };
+                data.into_pyarray(py).into()
+            }
+            DataType::Int32 => {
+                let data = unsafe {
+                    let slice = std::slice::from_raw_parts(mmap.as_ptr().add(offset) as *const i32, size / 4);
+                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
+                };
+                data.into_pyarray(py).into()
+            }
+            DataType::Int64 => {
+                let data = unsafe {
+                    let slice = std::slice::from_raw_parts(mmap.as_ptr().add(offset) as *const i64, size / 8);
+                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
+                };
+                data.into_pyarray(py).into()
+            }
+            DataType::Float16 => {
+                let data = unsafe {
+                    let slice = std::slice::from_raw_parts(mmap.as_ptr().add(offset) as *const u16, size / 2);
+                    let f16_data: Vec<half::f16> = slice.iter().map(|&x| half::f16::from_bits(x)).collect();
+                    // 转换为f32用于Python兼容性
+                    let f32_data: Vec<f32> = f16_data.iter().map(|&x| x.to_f32()).collect();
+                    ArrayD::from_shape_vec(new_shape, f32_data).unwrap()
+                };
+                data.into_pyarray(py).into()
+            }
+            DataType::Float32 => {
+                let data = unsafe {
+                    let slice = std::slice::from_raw_parts(mmap.as_ptr().add(offset) as *const f32, size / 4);
+                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
+                };
+                data.into_pyarray(py).into()
+            }
+            DataType::Float64 => {
+                let data = unsafe {
+                    let slice = std::slice::from_raw_parts(mmap.as_ptr().add(offset) as *const f64, size / 8);
+                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
+                };
+                data.into_pyarray(py).into()
+            }
+            DataType::Complex64 => {
+                let data = unsafe {
+                    let slice = std::slice::from_raw_parts(mmap.as_ptr().add(offset) as *const Complex32, size / 8);
+                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
+                };
+                data.into_pyarray(py).into()
+            }
+            DataType::Complex128 => {
+                let data = unsafe {
+                    let slice = std::slice::from_raw_parts(mmap.as_ptr().add(offset) as *const Complex64, size / 16);
+                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
+                };
+                data.into_pyarray(py).into()
+            }
+        };
+        
+        self.current_index = end_index;
+        Ok(Some(array))
     }
 }
 
@@ -3614,28 +3836,7 @@ fn create_optimized_mmap(path: &Path, modify_time: i64, cache: &mut MutexGuard<H
         libc::fcntl(file.as_raw_fd(), libc::F_RDAHEAD, 1);
     }
 
-    // Windows - 使用简化的安全版本
-    #[cfg(target_family = "windows")]
-    unsafe {
-        
-        if let Ok(mmap_view) = memmap2::MmapOptions::new()
-            .populate() 
-            .map(&file) 
-        {
-            let _ = VirtualLock(
-                mmap_view.as_ptr() as *mut _,
-                mmap_view.len()
-            );
-        }
-
-        let handle = file.as_handle();
-        let raw_handle = handle.as_raw_handle() as HANDLE;
-        let _ = SetFileIoOverlappedRange(
-            raw_handle as isize,
-            std::ptr::null(),
-            file_size.min(u32::MAX as usize) as u32
-        );
-    }
+    // 标准内存映射处理
     
     let mmap = unsafe { 
         memmap2::MmapOptions::new()
@@ -3657,10 +3858,9 @@ fn _lib_numpack(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<LazyArrayIterator>()?;
     m.add_class::<ArrayMetadata>()?;
     m.add_class::<HighPerformanceLazyArray>()?;
+    m.add_class::<StreamLoader>()?;
     
-    // 注册Windows清理函数
-    #[cfg(target_family = "windows")]
-    m.add_function(wrap_pyfunction!(force_cleanup_windows_handles, m)?)?;
+    // 注册清理函数
     
     // 注册新模块的Python绑定（如果有）
     // numpack::python_bindings::register_python_bindings(m)?;
@@ -3668,70 +3868,20 @@ fn _lib_numpack(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-// Windows平台强制清理函数
-#[cfg(target_family = "windows")]
+// 通用清理函数
 #[pyfunction]
 fn force_cleanup_windows_handles() -> PyResult<()> {
     // 清理临时文件缓存
     clear_temp_files_from_cache();
-    
-    // 触发内存管理多次，更激进的清理
-    for _ in 0..5 {
-        let _temp_alloc: Vec<u8> = vec![0; 4096];
-        drop(_temp_alloc);
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
-    
-    // 触发延迟清理队列处理
-    #[cfg(feature = "windows_mapping")]
-    {
-        crate::windows_mapping::try_cleanup_queue();
-    }
-    
-    // 更长等待时间确保系统处理清理
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    
     Ok(())
 }
 
-#[cfg(target_family = "windows")]
-fn release_windows_file_handle(path: &Path) {
-    // Windows平台的文件句柄释放
-    use std::thread;
-    use std::time::Duration;
-    
-    // 检查是否在测试环境中
-    let is_test = std::env::var("PYTEST_CURRENT_TEST").is_ok() || std::env::var("CARGO_PKG_NAME").is_ok();
-    
-    if is_test {
-        // 测试环境：最小化操作，避免卡住
-        let _temp_alloc: Vec<u8> = vec![0; 512];  // 更小的分配
-        drop(_temp_alloc);
-        // 不进行文件测试，避免可能的阻塞
-        return;
-    }
-    
-    // 生产环境：标准清理，但减少重试次数
-    for attempt in 0..2 {  // 减少重试次数从3到2
-        // 分配和释放一小块内存来触发系统的内存管理
-        let _temp_alloc: Vec<u8> = vec![0; 1024];
-        drop(_temp_alloc);
-        
-        // 短暂等待让系统处理文件句柄
-        thread::sleep(Duration::from_millis(if attempt == 0 { 1 } else { 3 }));  // 减少睡眠时间
-        
-        // 尝试打开文件以测试是否仍被锁定
-        if let Ok(_) = std::fs::File::open(path) {
-            // 文件可以打开，说明没有被锁定
-            break;
-        }
-    }
-    
-    // 清理临时文件缓存（仅在生产环境）
-    clear_temp_files_from_cache();
+// 通用文件句柄释放函数（兼容性保留）
+fn release_windows_file_handle(_path: &Path) {
+    // 不再需要特殊处理，保留函数名以兼容现有代码
 }
 
-/// 安全创建内存 slice 的辅助函数 - 防止 Windows 内存访问冲突
+/// 安全创建内存 slice 的辅助函数
 fn safe_slice_from_mmap(mmap: &Mmap, offset: usize, size: usize) -> Result<&[u8], PyErr> {
     if offset + size > mmap.len() {
         return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>("Data offset out of bounds"));
