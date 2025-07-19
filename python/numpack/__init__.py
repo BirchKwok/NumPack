@@ -9,16 +9,16 @@ __version__ = "0.2.0"
 
 # 平台检测
 def _is_windows():
-    """检测是否为 Windows 平台"""
+    """Detect if running on Windows platform"""
     return platform.system().lower() == 'windows'
 
 def _should_use_python_backend():
-    """决定是否使用 Python 后端"""
-    # Windows 平台强制使用 Python 后端
+    """Decide whether to use Python backend"""
+    # Windows platform forces use of Python backend
     if _is_windows():
         return True
     
-    # 允许通过环境变量强制使用 Python 后端（用于测试）
+    # Allow forcing Python backend via environment variable (for testing)
     if os.environ.get('NUMPACK_FORCE_PYTHON_BACKEND', '').lower() in ['1', 'true', 'yes']:
         return True
     
@@ -28,29 +28,29 @@ def _should_use_python_backend():
 _USE_PYTHON_BACKEND = _should_use_python_backend()
 
 if _USE_PYTHON_BACKEND:
-    # Windows 平台或强制使用：统一格式 Python 后端
-    print(f"NumPack: 使用统一格式 Python 后端 (平台: {platform.system()})")
+    # Windows platform or forced: unified format Python backend
+    print(f"NumPack: Using unified format Python backend (Platform: {platform.system()})")
     from .unified_numpack import NumPack as _NumPack, LazyArray
     _BACKEND_TYPE = "python"
 else:
-    # Unix/Linux 平台：尝试使用 Rust 后端
-    print(f"NumPack: 尝试使用 Rust 后端 (平台: {platform.system()})")
+    # Unix/Linux platform: try to use Rust backend
+    print(f"NumPack: Trying to use Rust backend (Platform: {platform.system()})")
     try:
         import numpack._lib_numpack as rust_backend
         _NumPack = rust_backend.NumPack
         LazyArray = rust_backend.LazyArray
         _BACKEND_TYPE = "rust"
     except ImportError as e:
-        print(f"警告: 无法导入 Rust 后端，回退到统一格式 Python 后端: {e}")
+        print(f"Warning: Cannot import Rust backend, falling back to unified format Python backend: {e}")
         from .unified_numpack import NumPack as _NumPack, LazyArray
         _BACKEND_TYPE = "python"
 
 
 class NumPack:
-    """NumPack - 高性能数组存储库（混合架构）
+    """NumPack - High-performance array storage library (hybrid architecture)
     
-    - Windows 平台：使用纯 Python 实现确保兼容性
-    - Unix/Linux 平台：使用 Rust 后端实现最大性能，失败时回退到 Python 后端
+    - Windows platform: Use pure Python implementation for compatibility
+    - Unix/Linux platform: Use Rust backend for maximum performance, fallback to Python backend on failure
     """
     
     def __init__(self, filename: Union[str, Path], drop_if_exists: bool = False):
@@ -319,7 +319,7 @@ class NumPack:
 
 # 提供向后兼容的空函数
 def force_cleanup_windows_handles():
-    """向后兼容的空实现 - Windows句柄清理逻辑已移除"""
+    """Backward compatible empty implementation - Windows handle cleanup logic removed"""
     pass
 
 # 导出的公共API
@@ -327,7 +327,7 @@ __all__ = ['NumPack', 'LazyArray', 'force_cleanup_windows_handles']
 
 # 提供后端信息查询
 def get_backend_info():
-    """获取当前后端信息"""
+    """Get current backend information"""
     return {
         'backend_type': _BACKEND_TYPE,
         'platform': platform.system(),

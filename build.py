@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-NumPack 条件性构建脚本
+NumPack conditional build script
 
-根据平台和环境变量选择合适的构建方式：
-- Windows 平台：使用纯 Python 构建（setuptools）
-- Unix/Linux 平台：使用 Rust + Python 构建（maturin）
-- 环境变量 NUMPACK_PYTHON_ONLY=1：强制使用纯 Python 构建
+Choose appropriate build method based on platform and environment variables:
+- Windows platform: Use pure Python build (setuptools)
+- Unix/Linux platform: Use Rust + Python build (maturin)
+- Environment variable NUMPACK_PYTHON_ONLY=1: Force pure Python build
 """
 
 import os
@@ -17,17 +17,17 @@ from pathlib import Path
 
 
 def is_windows():
-    """检测是否为 Windows 平台"""
+    """Detect if running on Windows platform"""
     return platform.system().lower() == 'windows'
 
 
 def should_use_python_only():
-    """决定是否使用纯 Python 构建"""
-    # 检查环境变量
+    """Decide whether to use pure Python build"""
+    # Check environment variable
     if os.environ.get('NUMPACK_PYTHON_ONLY', '').lower() in ['1', 'true', 'yes']:
         return True
     
-    # Windows 平台默认使用纯 Python
+    # Windows platform defaults to pure Python
     if is_windows():
         return True
     
@@ -35,43 +35,43 @@ def should_use_python_only():
 
 
 def backup_original_config():
-    """备份原始配置文件"""
+    """Backup original configuration file"""
     if Path('pyproject.toml').exists():
         shutil.copy('pyproject.toml', 'pyproject.toml.backup')
-        print("✅ 已备份原始 pyproject.toml")
+        print("Backed up original pyproject.toml")
 
 
 def restore_original_config():
-    """恢复原始配置文件"""
+    """Restore original configuration file"""
     if Path('pyproject.toml.backup').exists():
         shutil.copy('pyproject.toml.backup', 'pyproject.toml')
         Path('pyproject.toml.backup').unlink()
-        print("✅ 已恢复原始 pyproject.toml")
+        print("Restored original pyproject.toml")
 
 
 def setup_python_only_build():
-    """设置纯 Python 构建"""
-    print("🐍 设置纯 Python 构建模式...")
+    """Setup pure Python build"""
+    print("Setting up pure Python build mode...")
     
-    # 备份原始配置
+    # Backup original configuration
     backup_original_config()
     
-    # 使用 Windows 专用配置
+    # Use Windows-specific configuration
     if Path('pyproject.toml.windows').exists():
         shutil.copy('pyproject.toml.windows', 'pyproject.toml')
-        print("✅ 已切换到纯 Python 构建配置")
+        print("Switched to pure Python build configuration")
     else:
-        print("❌ 错误：找不到 pyproject.toml.windows 文件")
+        print("Error: pyproject.toml.windows file not found")
         return False
     
     return True
 
 
 def setup_rust_build():
-    """设置 Rust + Python 构建"""
-    print("🦀 设置 Rust + Python 构建模式...")
+    """Setup Rust + Python build"""
+    print("Setting up Rust + Python build mode...")
     
-    # 使用原始配置文件（包含 maturin）
+    # Use original configuration file (contains maturin)
     if Path('pyproject.toml.backup').exists():
         restore_original_config()
     
@@ -83,102 +83,102 @@ def run_build(build_args=None):
     build_args = build_args or []
     
     if should_use_python_only():
-        print(f"🐍 执行纯 Python 构建 (平台: {platform.system()})")
+        print(f"Executing pure Python build (Platform: {platform.system()})")
         
         if not setup_python_only_build():
             return False
         
         try:
-            # 使用标准的 Python 构建工具
+            # Use standard Python build tools
             cmd = [sys.executable, '-m', 'build'] + build_args
-            print(f"执行命令: {' '.join(cmd)}")
+            print(f"Running command: {' '.join(cmd)}")
             result = subprocess.run(cmd, check=True)
-            print("✅ 纯 Python 构建成功")
+            print("Pure Python build successful")
             return True
             
         except subprocess.CalledProcessError as e:
-            print(f"❌ 纯 Python 构建失败: {e}")
+            print(f"Pure Python build failed: {e}")
             return False
         except FileNotFoundError:
-            print("❌ 错误：未找到 'build' 模块，请安装: pip install build")
+            print("Error: 'build' module not found, please install: pip install build")
             return False
         finally:
-            # 恢复原始配置
+            # Restore original configuration
             restore_original_config()
     
     else:
-        print(f"🦀 执行 Rust + Python 构建 (平台: {platform.system()})")
+        print(f"Executing Rust + Python build (Platform: {platform.system()})")
         
         setup_rust_build()
         
         try:
-            # 使用 maturin 构建
+            # Use maturin build
             cmd = ['maturin', 'build', '--release'] + build_args
-            print(f"执行命令: {' '.join(cmd)}")
+            print(f"Running command: {' '.join(cmd)}")
             result = subprocess.run(cmd, check=True)
-            print("✅ Rust + Python 构建成功")
+            print("Rust + Python build successful")
             return True
             
         except subprocess.CalledProcessError as e:
-            print(f"❌ Rust 构建失败: {e}")
+            print(f"Rust build failed: {e}")
             return False
         except FileNotFoundError:
-            print("❌ 错误：未找到 'maturin'，请安装: pip install maturin")
+            print("Error: 'maturin' not found, please install: pip install maturin")
             return False
 
 
 def run_develop():
-    """执行开发模式安装"""
+    """Execute development mode installation"""
     if should_use_python_only():
-        print(f"🐍 执行纯 Python 开发安装 (平台: {platform.system()})")
+        print(f"Executing pure Python development install (Platform: {platform.system()})")
         
         if not setup_python_only_build():
             return False
         
         try:
-            # 使用 pip editable 安装
+            # Use pip editable install
             cmd = [sys.executable, '-m', 'pip', 'install', '-e', '.']
-            print(f"执行命令: {' '.join(cmd)}")
+            print(f"Running command: {' '.join(cmd)}")
             result = subprocess.run(cmd, check=True)
-            print("✅ 纯 Python 开发安装成功")
+            print("Pure Python development install successful")
             return True
             
         except subprocess.CalledProcessError as e:
-            print(f"❌ 纯 Python 开发安装失败: {e}")
+            print(f"Pure Python development install failed: {e}")
             return False
         finally:
-            # 恢复原始配置
+            # Restore original configuration
             restore_original_config()
     
     else:
-        print(f"🦀 执行 Rust + Python 开发安装 (平台: {platform.system()})")
+        print(f"Executing Rust + Python development install (Platform: {platform.system()})")
         
         try:
-            # 使用 maturin develop
+            # Use maturin develop
             cmd = ['maturin', 'develop']
-            print(f"执行命令: {' '.join(cmd)}")
+            print(f"Running command: {' '.join(cmd)}")
             result = subprocess.run(cmd, check=True)
-            print("✅ Rust + Python 开发安装成功")
+            print("Rust + Python development install successful")
             return True
             
         except subprocess.CalledProcessError as e:
-            print(f"❌ Rust 开发安装失败: {e}")
+            print(f"Rust development install failed: {e}")
             return False
         except FileNotFoundError:
-            print("❌ 错误：未找到 'maturin'，请安装: pip install maturin")
+            print("Error: 'maturin' not found, please install: pip install maturin")
             return False
 
 
 def main():
-    """主函数"""
+    """Main function"""
     import argparse
     
-    parser = argparse.ArgumentParser(description="NumPack 条件性构建脚本")
+    parser = argparse.ArgumentParser(description="NumPack conditional build script")
     parser.add_argument('command', choices=['build', 'develop', 'info'], 
-                        help='要执行的命令')
+                        help='Command to execute')
     parser.add_argument('--python-only', action='store_true',
-                        help='强制使用纯 Python 构建')
-    parser.add_argument('--out', help='输出目录（仅用于 build）')
+                        help='Force pure Python build')
+    parser.add_argument('--out', help='Output directory (for build only)')
     
     args = parser.parse_args()
     
@@ -186,16 +186,16 @@ def main():
     if args.python_only:
         os.environ['NUMPACK_PYTHON_ONLY'] = '1'
     
-    print(f"🔧 NumPack 构建脚本")
-    print(f"平台: {platform.system()} {platform.machine()}")
+    print(f"NumPack Build Script")
+    print(f"Platform: {platform.system()} {platform.machine()}")
     print(f"Python: {sys.version}")
-    print(f"构建模式: {'纯 Python' if should_use_python_only() else 'Rust + Python'}")
+    print(f"Build mode: {'Pure Python' if should_use_python_only() else 'Rust + Python'}")
     print("-" * 50)
     
     if args.command == 'info':
-        print(f"当前配置:")
-        print(f"  - 平台: {platform.system()}")
-        print(f"  - 使用纯 Python: {should_use_python_only()}")
+        print(f"Current configuration:")
+        print(f"  - Platform: {platform.system()}")
+        print(f"  - Use Pure Python: {should_use_python_only()}")
         print(f"  - NUMPACK_PYTHON_ONLY: {os.environ.get('NUMPACK_PYTHON_ONLY', 'unset')}")
         return
     

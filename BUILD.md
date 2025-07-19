@@ -1,148 +1,148 @@
-# NumPack 构建指南
+# NumPack Build Guide
 
-本项目支持根据平台自动选择不同的构建方式，实现跨平台的最佳性能和兼容性。
+This project supports automatic selection of different build methods based on platform, achieving optimal cross-platform performance and compatibility.
 
-## 构建方式
+## Build Methods
 
-### 自动平台检测
-- **Windows 平台**: 自动使用纯 Python 实现，避免 Rust 编译复杂性
-- **Unix/Linux/macOS 平台**: 使用 Rust + Python 混合实现，获得最佳性能
+### Automatic Platform Detection
+- **Windows Platform**: Automatically use pure Python implementation to avoid Rust compilation complexity
+- **Unix/Linux/macOS Platform**: Use Rust + Python hybrid implementation for optimal performance
 
-### 手动控制
-可以通过环境变量强制使用特定构建方式：
+### Manual Control
+You can force specific build methods using environment variables:
 
 ```bash
-# 强制使用纯 Python 构建（任何平台）
+# Force pure Python build (any platform)
 export NUMPACK_PYTHON_ONLY=1
 
-# 使用默认构建方式
+# Use default build method
 unset NUMPACK_PYTHON_ONLY
 ```
 
-## 使用构建脚本
+## Using the Build Script
 
-### 查看当前配置
+### View Current Configuration
 ```bash
 python build.py info
 ```
 
-### 开发模式安装
+### Development Mode Installation
 ```bash
-# 自动选择构建方式
+# Automatically select build method
 python build.py develop
 
-# 强制使用纯 Python
+# Force pure Python
 python build.py develop --python-only
 ```
 
-### 构建分发包
+### Build Distribution Packages
 ```bash
-# 自动选择构建方式
+# Automatically select build method
 python build.py build
 
-# 指定输出目录
+# Specify output directory
 python build.py build --out dist
 
-# 强制使用纯 Python
+# Force pure Python
 python build.py build --python-only
 ```
 
-## 传统构建方式
+## Traditional Build Methods
 
-### Windows 平台（纯 Python）
+### Windows Platform (Pure Python)
 ```bash
-# 安装依赖
+# Install dependencies
 pip install build
 
-# 开发安装
+# Development install
 pip install -e .
 
-# 构建 wheel
+# Build wheel
 python -m build
 ```
 
-### Unix/Linux 平台（Rust + Python）
+### Unix/Linux Platform (Rust + Python)
 ```bash
-# 安装依赖
+# Install dependencies
 pip install maturin
 
-# 开发安装
+# Development install
 maturin develop
 
-# 构建 wheel
+# Build wheel
 maturin build --release
 ```
 
-## 依赖说明
+## Dependencies
 
-### 纯 Python 构建依赖
+### Pure Python Build Dependencies
 - `setuptools>=61.0`
 - `wheel`
-- `build` (用于构建)
+- `build` (for building)
 - `numpy>=1.26.0`
 - `filelock>=3.0.0`
 
-### Rust 构建依赖
+### Rust Build Dependencies
 - `maturin>=1.0,<2.0`
-- Rust 工具链
+- Rust toolchain
 - `numpy>=1.26.0`
 - `filelock>=3.0.0`
 
-## 文件格式兼容性
+## File Format Compatibility
 
-无论使用哪种构建方式，NumPack 都确保：
-- ✅ 完全相同的 Python API
-- ✅ 完全兼容的文件格式
-- ✅ 跨平台文件互操作性
+Regardless of the build method used, NumPack ensures:
+- ✅ Identical Python API
+- ✅ Fully compatible file format
+- ✅ Cross-platform file interoperability
 
-## 性能对比
+## Performance Comparison
 
-| 平台 | 构建方式 | 编译复杂度 | 运行性能 | 兼容性 |
-|------|----------|------------|----------|--------|
-| Windows | 纯 Python | 低 | 中等 | 极高 |
-| Unix/Linux | Rust + Python | 中等 | 高 | 高 |
-| macOS | Rust + Python | 中等 | 高 | 高 |
+| Platform | Build Method | Compile Complexity | Runtime Performance | Compatibility |
+|----------|--------------|-------------------|-------------------|---------------|
+| Windows | Pure Python | Low | Medium | Very High |
+| Unix/Linux | Rust + Python | Medium | High | High |
+| macOS | Rust + Python | Medium | High | High |
 
-## 故障排除
+## Troubleshooting
 
-### Windows 上 Rust 编译问题
-如果在 Windows 上遇到 Rust 编译问题，可以强制使用纯 Python：
+### Rust Compilation Issues on Windows
+If you encounter Rust compilation issues on Windows, you can force pure Python:
 ```bash
 set NUMPACK_PYTHON_ONLY=1
 python build.py develop
 ```
 
-### 缺少依赖
+### Missing Dependencies
 ```bash
-# 纯 Python 构建缺少依赖
+# Missing dependencies for pure Python build
 pip install build setuptools wheel
 
-# Rust 构建缺少依赖  
+# Missing dependencies for Rust build  
 pip install maturin
-# 安装 Rust: https://rustup.rs/
+# Install Rust: https://rustup.rs/
 ```
 
-### 开发环境设置
+### Development Environment Setup
 ```bash
-# 克隆仓库
+# Clone repository
 git clone <repo-url>
 cd NumPack
 
-# 安装开发依赖
+# Install development dependencies
 pip install -e ".[dev]"
 
-# 运行测试
+# Run tests
 python -m pytest
 
-# 检查构建配置
+# Check build configuration
 python build.py info
 ```
 
-## CI/CD 集成
+## CI/CD Integration
 
-项目的 GitHub Actions 工作流会自动：
-- Windows: 使用纯 Python 构建
-- Linux/macOS: 使用 Rust + Python 构建
-- 生成对应平台的 wheel 包
+The project's GitHub Actions workflow automatically:
+- Windows: Use pure Python build
+- Linux/macOS: Use Rust + Python build
+- Generate platform-specific wheel packages
 
-这确保了最佳的用户体验和最小的构建复杂度。 
+This ensures the best user experience and minimal build complexity. 
