@@ -21,3 +21,5 @@ __pycache__/
 *.cursorrules
 .kiro/
 .cursor/
+
+*.egg-info/

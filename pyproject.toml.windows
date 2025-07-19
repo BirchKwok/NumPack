@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "numpack"
+version = "0.2.0"
+description = "A high-performance array storage and manipulation library (Python-only for Windows)"
+authors = [{ name = "NumPack Contributors" }]
+requires-python = ">=3.9"
+readme = "README.md"
+license = { file = "LICENSE" }
+keywords = ["numpy", "array", "storage", "performance", "python"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Operating System :: Microsoft :: Windows",
+]
+dependencies = [
+    "numpy>=1.26.0",
+    "filelock>=3.0.0"
+]
+
+[tool.setuptools]
+package-dir = {"" = "python"}
+
+[tool.setuptools.packages.find]
+where = ["python"]
+
+[tool.pytest.ini_options]
+# 默认忽略性能基准测试，使用标记过滤
+addopts = "-m 'not benchmark'"
+# 测试目录
+testpaths = ["python/numpack/tests"]
+# 定义标记
+markers = [
+    "benchmark: marks tests as benchmark (deselect with '-m \"not benchmark\"')",
+] 

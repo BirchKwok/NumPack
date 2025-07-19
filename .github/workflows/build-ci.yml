@@ -107,8 +107,9 @@ jobs:
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
           
-      # Install Rust toolchain
+      # Install Rust toolchain (skip for Windows)
       - name: Install Rust
+        if: runner.os != 'Windows'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -131,10 +132,15 @@ jobs:
         run: |
           if [ "$RUNNER_OS" == "Windows" ]; then
             . venv/Scripts/activate
+            # Windows 使用纯 Python 构建
+            export NUMPACK_PYTHON_ONLY=1
+            python -m pip install build
+            python build.py develop
           else
             . venv/bin/activate
+            # Unix/Linux 使用 Rust + Python 构建
+            maturin develop
           fi
-          maturin develop
         
       # Run tests
       - name: Run tests
@@ -153,10 +159,19 @@ jobs:
         
       # Build wheels
       - name: Build wheels
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            . venv/Scripts/activate
+            # Windows 使用纯 Python 构建
+            export NUMPACK_PYTHON_ONLY=1
+            python -m pip install build
+            python build.py build --out dist
+          else
+            . venv/bin/activate
+            # Unix/Linux 使用 maturin 构建
+            maturin build --release --out dist --find-interpreter
+          fi
           
       - name: Upload wheels
         uses: actions/upload-artifact@v4
