@@ -202,8 +202,8 @@ class ArrayMetadata:
         return self._rust_metadata.total_elements
     
     @property
-    def modify_time(self) -> float:
-        return self._rust_metadata.timestamp
+    def modify_time(self) -> int:
+        return int(self._rust_metadata.timestamp)
     
     def __repr__(self) -> str:
         return f"ArrayMetadata(name='{self.name}', shape={self.shape}, dtype={self.dtype})"
@@ -314,12 +314,12 @@ class NumPack:
         """获取成员列表（别名）"""
         return self.list_arrays()
     
-    def get_modify_time(self, array_name: str) -> float:
+    def get_modify_time(self, array_name: str) -> int:
         """获取修改时间"""
         if not self.manager.has_array(array_name):
             raise KeyError(f"Array '{array_name}' not found")
         metadata = self.manager.get_metadata(array_name)
-        return metadata.timestamp
+        return int(metadata.timestamp)
     
     def get_metadata(self) -> Dict[str, Any]:
         """获取完整元数据"""
@@ -330,7 +330,7 @@ class NumPack:
                 'shape': list(rust_metadata.shape),  # 确保返回列表而不是元组
                 'dtype': str(rust_metadata.dtype),
                 'size': rust_metadata.total_elements,
-                'modify_time': rust_metadata.timestamp,
+                'modify_time': int(rust_metadata.timestamp),
             }
         # 包装在 'arrays' 键下以匹配 Rust 后端格式
         return {'arrays': arrays_metadata}
