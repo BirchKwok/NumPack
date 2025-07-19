@@ -11,6 +11,10 @@ use numpy::Element;
 use crate::error::{NpkError, NpkResult};
 use crate::metadata::{ArrayMetadata, DataType, CachedMetadataStore};
 
+// Windows平台特定导入
+#[cfg(target_family = "windows")]
+use windows_sys::Win32::Storage::FileSystem;
+
 // Helper functions for file IO
 #[cfg(unix)]
 mod platform {
@@ -526,6 +530,25 @@ impl ParallelIO {
                 
                 // Ensure data is written to disk
                 writer.flush()?;
+                
+                // Windows平台额外同步确保文件真正写入磁盘
+                #[cfg(target_family = "windows")]
+                {
+                    use std::os::windows::io::AsRawHandle;
+                    unsafe {
+                        let handle = file.as_raw_handle();
+                        windows_sys::Win32::Storage::FileSystem::FlushFileBuffers(handle as isize);
+                    }
+                }
+                
+                // Unix平台使用fsync
+                #[cfg(target_family = "unix")]
+                {
+                    use std::os::unix::io::AsRawFd;
+                    unsafe {
+                        libc::fsync(file.as_raw_fd());
+                    }
+                }
                 
                 // Create metadata
                 let meta = ArrayMetadata::new(

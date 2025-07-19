@@ -2863,6 +2863,21 @@ impl NumPack {
         if lazy {
             let meta = self.io.get_array_metadata(array_name)?;
             let data_path = self.base_dir.join(format!("data_{}.npkd", array_name));
+            
+            // Windows平台文件存在性检查，防止路径被误解析为目录
+            if !data_path.exists() {
+                return Err(PyErr::new::<pyo3::exceptions::PyFileNotFoundError, _>(
+                    format!("Data file not found: {}", data_path.display())
+                ));
+            }
+            
+            // 确保路径是文件而不是目录
+            if data_path.is_dir() {
+                return Err(PyErr::new::<pyo3::exceptions::PyIsADirectoryError, _>(
+                    format!("Expected file but found directory: {}", data_path.display())
+                ));
+            }
+            
             let array_path = data_path.to_string_lossy().to_string();
             
             let mut cache = MMAP_CACHE.lock().unwrap();
@@ -2893,6 +2908,21 @@ impl NumPack {
 
         let meta = self.io.get_array_metadata(array_name)?;
         let data_path = self.base_dir.join(format!("data_{}.npkd", array_name));
+        
+        // Windows平台文件存在性检查，防止路径被误解析为目录
+        if !data_path.exists() {
+            return Err(PyErr::new::<pyo3::exceptions::PyFileNotFoundError, _>(
+                format!("Data file not found: {}", data_path.display())
+            ));
+        }
+        
+        // 确保路径是文件而不是目录
+        if data_path.is_dir() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIsADirectoryError, _>(
+                format!("Expected file but found directory: {}", data_path.display())
+            ));
+        }
+        
         let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
         
         // Use mmap to accelerate data loading
