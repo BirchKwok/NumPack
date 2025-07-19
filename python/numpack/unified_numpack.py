@@ -312,35 +312,35 @@ def test_unified_numpack():
         npk = NumPack(test_path)
         npk.save(test_arrays)
         
-        print(f"✅ 保存成功")
-        print(f"数组列表: {npk.list_arrays()}")
+        print(f"✅ Save successful")
+        print(f"Array list: {npk.list_arrays()}")
         
         # 测试读取
         for name, original in test_arrays.items():
             loaded = npk.load(name)
-            assert np.array_equal(loaded, original), f"数据不匹配: {name}"
-            print(f"✅ 验证通过: {name}")
+            assert np.array_equal(loaded, original), f"Data mismatch: {name}"
+            print(f"✅ Verification passed: {name}")
         
         # 测试延迟加载
         lazy = npk.load('matrix', lazy=True)
-        print(f"✅ 延迟加载: {lazy}")
+        print(f"✅ Lazy loading: {lazy}")
         lazy_data = lazy.to_numpy()
         assert np.array_equal(lazy_data, test_arrays['matrix'])
-        print(f"✅ 延迟加载数据正确")
+        print(f"✅ Lazy loading data correct")
         
         # 测试增量保存
         new_data = {'extra': np.array([100, 200, 300])}
         npk.save(new_data)
         all_arrays = npk.list_arrays()
-        print(f"✅ 增量保存后数组: {all_arrays}")
+        print(f"✅ Arrays after incremental save: {all_arrays}")
         assert 'matrix' in all_arrays and 'extra' in all_arrays
         
         # 测试字典访问
         matrix_data = npk['matrix']
         assert np.array_equal(matrix_data, test_arrays['matrix'])
-        print(f"✅ 字典访问正确")
+        print(f"✅ Dictionary access correct")
         
-        print(f"✅ 所有测试通过！使用统一 Rust 兼容格式")
+        print(f"✅ All tests passed! Using unified Rust compatible format")
 
 
 if __name__ == "__main__":
