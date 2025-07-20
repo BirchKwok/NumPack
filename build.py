@@ -16,6 +16,49 @@ import subprocess
 from pathlib import Path
 
 
+def is_called_as_module():
+    """Check if this script is being called as 'python -m build'"""
+    # Check if this is being run as a module
+    # When called as 'python -m build', the script path will be 'build.py' and no command arguments
+    return (
+        len(sys.argv) >= 1 and 
+        (sys.argv[0].endswith('build.py') or sys.argv[0] == 'build.py') and
+        (len(sys.argv) == 1 or not any(cmd in sys.argv for cmd in ['build', 'develop', 'info']))
+    )
+
+
+def call_real_build():
+    """Call the real build package, not this script"""
+    try:
+        # Remove the current directory from sys.path temporarily
+        original_path = sys.path[:]
+        original_argv = sys.argv[:]
+        current_dir = os.getcwd()
+        
+        # Remove current directory from path to avoid recursion
+        paths_to_remove = ['', '.', current_dir]
+        for path in paths_to_remove:
+            while path in sys.path:
+                sys.path.remove(path)
+        
+        # Import and run the real build module
+        import build.__main__
+        
+        # Prepare arguments (remove the script name, keep the rest)
+        cli_args = sys.argv[1:] if len(sys.argv) > 1 else []
+        build.__main__.main(cli_args)
+        
+    except ImportError:
+        print("Error: The 'build' package is not installed. Please install it with: pip install build")
+        sys.exit(1)
+    except SystemExit as e:
+        sys.exit(e.code)
+    finally:
+        # Restore original path and argv
+        sys.path[:] = original_path
+        sys.argv[:] = original_argv
+
+
 def is_windows():
     """Detect if running on Windows platform"""
     return platform.system().lower() == 'windows'
@@ -89,18 +132,48 @@ def run_build(build_args=None):
             return False
         
         try:
-            # Use standard Python build tools
-            cmd = [sys.executable, '-m', 'build'] + build_args
-            print(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, check=True)
+            # Call the real build module directly, not via command line
+            original_argv = sys.argv[:]
+            original_path = sys.path[:]
+            current_dir = os.getcwd()
+            
+            try:
+                # Remove current directory from path to avoid recursion, but keep other paths
+                paths_to_remove = ['', '.', current_dir]
+                removed_paths = []
+                for path in paths_to_remove:
+                    while path in sys.path:
+                        idx = sys.path.index(path)
+                        removed_paths.append((idx, path))
+                        sys.path.remove(path)
+                
+                # Import and call the real build module
+                import build.__main__
+                
+                # Prepare arguments for the real build module
+                cli_args = build_args if build_args else []
+                build.__main__.main(cli_args)
+                
+            finally:
+                # Restore original state
+                sys.argv[:] = original_argv
+                sys.path[:] = original_path
+            
             print("Pure Python build successful")
             return True
             
-        except subprocess.CalledProcessError as e:
-            print(f"Pure Python build failed: {e}")
-            return False
-        except FileNotFoundError:
+        except SystemExit as e:
+            if e.code == 0:
+                print("Pure Python build successful")
+                return True
+            else:
+                print(f"Pure Python build failed with exit code: {e.code}")
+                return False
+        except ImportError:
             print("Error: 'build' module not found, please install: pip install build")
+            return False
+        except Exception as e:
+            print(f"Pure Python build failed: {e}")
             return False
         finally:
             # Restore original configuration
@@ -211,6 +284,21 @@ def main():
         success = run_develop()
         sys.exit(0 if success else 1)
 
+
+# Check if we're being called as 'python -m build'
+if is_called_as_module():
+    # If we should use Python-only build, set up the configuration first
+    if should_use_python_only():
+        setup_python_only_build()
+    
+    try:
+        call_real_build()
+    finally:
+        # Restore original configuration if we modified it
+        if should_use_python_only():
+            restore_original_config()
+    
+    sys.exit(0)
 
 if __name__ == '__main__':
     main() 
