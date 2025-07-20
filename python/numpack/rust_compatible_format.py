@@ -296,37 +296,60 @@ class RustCompatibleReader:
         if not self.metadata_file.exists():
             return
         
-        with open(self.metadata_file, 'rb') as f:
-            data = f.read()
+        # 使用文件锁保护读取操作
+        lock_file = self.base_path / "metadata.npkm.lock"
+        lock = filelock.FileLock(lock_file)
         
-        offset = 0
-        
-        # 读取头部
-        version = struct.unpack('<I', data[offset:offset+4])[0]
-        offset += 4
-        
-        num_arrays = struct.unpack('<I', data[offset:offset+4])[0]
-        offset += 4
-        
-        # 跳过保留字段
-        reserved1 = struct.unpack('<I', data[offset:offset+4])[0]
-        offset += 4
-        
-        # 第一个数组的名称长度（头部的一部分）
-        first_name_length = struct.unpack('<I', data[offset:offset+4])[0]
-        offset += 4
-        
-        # 现在 offset = 16，这里开始第一个数组的信息
-        # 但是名称长度已经在头部了，需要特殊处理第一个数组
-        
-        for i in range(num_arrays):
-            if i == 0:
-                # 第一个数组特殊处理
-                metadata, next_offset = self._parse_first_array_metadata(data, offset, first_name_length)
-            else:
-                metadata, next_offset = self._parse_array_metadata(data, offset)
-            self.arrays[metadata.name] = metadata
-            offset = next_offset
+        with lock:
+            try:
+                with open(self.metadata_file, 'rb') as f:
+                    data = f.read()
+                
+                # 检查文件大小
+                if len(data) < 16:
+                    # 文件太小，可能损坏或正在写入
+                    return
+                
+                offset = 0
+                
+                # 读取头部
+                if offset + 4 > len(data):
+                    return
+                version = struct.unpack('<I', data[offset:offset+4])[0]
+                offset += 4
+                
+                if offset + 4 > len(data):
+                    return
+                num_arrays = struct.unpack('<I', data[offset:offset+4])[0]
+                offset += 4
+                
+                # 跳过保留字段
+                if offset + 4 > len(data):
+                    return
+                reserved1 = struct.unpack('<I', data[offset:offset+4])[0]
+                offset += 4
+                
+                # 第一个数组的名称长度（头部的一部分）
+                if offset + 4 > len(data):
+                    return
+                first_name_length = struct.unpack('<I', data[offset:offset+4])[0]
+                offset += 4
+                
+                # 现在 offset = 16，这里开始第一个数组的信息
+                # 但是名称长度已经在头部了，需要特殊处理第一个数组
+                
+                for i in range(num_arrays):
+                    if i == 0:
+                        # 第一个数组特殊处理
+                        metadata, next_offset = self._parse_first_array_metadata(data, offset, first_name_length)
+                    else:
+                        metadata, next_offset = self._parse_array_metadata(data, offset)
+                    self.arrays[metadata.name] = metadata
+                    offset = next_offset
+                    
+            except (struct.error, IOError, OSError) as e:
+                # 如果读取失败，可能是文件正在被写入，返回空
+                return
     
     def _parse_array_metadata(self, data: bytes, offset: int) -> Tuple[RustArrayMetadata, int]:
         """解析单个数组的元数据"""
@@ -334,53 +357,77 @@ class RustCompatibleReader:
         # 名称长度(4) + 填充(4) + 名称 + 名称长度(4) + 填充(4) + 名称 + 其他字段
         
         # 读取名称长度
+        if offset + 4 > len(data):
+            raise struct.error("Insufficient data for name length")
         name_length = struct.unpack('<I', data[offset:offset+4])[0]
         offset += 4
         
         # 读取填充
+        if offset + 4 > len(data):
+            raise struct.error("Insufficient data for padding")
         padding = struct.unpack('<I', data[offset:offset+4])[0]
         offset += 4
         
         # 读取名称
+        if offset + name_length > len(data):
+            raise struct.error("Insufficient data for name")
         name = data[offset:offset+name_length].decode('utf-8')
         offset += name_length
         
         # 读取重复的名称长度
+        if offset + 4 > len(data):
+            raise struct.error("Insufficient data for repeated name length")
         name_length_2 = struct.unpack('<I', data[offset:offset+4])[0]
         offset += 4
         
         # 读取填充
+        if offset + 4 > len(data):
+            raise struct.error("Insufficient data for second padding")
         padding_2 = struct.unpack('<I', data[offset:offset+4])[0]
         offset += 4
         
         # 跳过重复的名称
+        if offset + name_length_2 > len(data):
+            raise struct.error("Insufficient data for repeated name")
         offset += name_length_2
         
         # 读取维度数
+        if offset + 8 > len(data):
+            raise struct.error("Insufficient data for ndim")
         ndim = struct.unpack('<Q', data[offset:offset+8])[0]
         offset += 8
         
         # 读取形状
         shape = []
         for _ in range(ndim):
+            if offset + 8 > len(data):
+                raise struct.error("Insufficient data for shape dimension")
             dim_size = struct.unpack('<Q', data[offset:offset+8])[0]
             shape.append(dim_size)
             offset += 8
         
         # 读取数据类型
+        if offset + 8 > len(data):
+            raise struct.error("Insufficient data for dtype")
         dtype_code = struct.unpack('<Q', data[offset:offset+8])[0]
         offset += 8
         
         dtype = RUST_DTYPE_REVERSE_MAP.get(dtype_code, np.int32)
         
         # 读取文件路径
+        if offset + 8 > len(data):
+            raise struct.error("Insufficient data for path length")
         path_length = struct.unpack('<Q', data[offset:offset+8])[0]
         offset += 8
         
+        if offset + path_length > len(data):
+            raise struct.error("Insufficient data for file path")
         file_path = data[offset:offset+path_length].decode('utf-8')
         offset += path_length
         
         # 跳过时间戳和其他信息
+        if offset + 24 > len(data):
+            raise struct.error("Insufficient data for timestamps")
         offset += 24  # 3个8字节字段
         
         metadata = RustArrayMetadata(
@@ -397,49 +444,71 @@ class RustCompatibleReader:
         # 第一个数组的格式略有不同，名称长度在头部
         
         # 跳过填充（偏移16-19）
+        if offset + 4 > len(data):
+            raise struct.error("Insufficient data for first array padding")
         padding = struct.unpack('<I', data[offset:offset+4])[0]
         offset += 4
         
         # 读取名称（偏移20开始）
+        if offset + name_length > len(data):
+            raise struct.error("Insufficient data for first array name")
         name = data[offset:offset+name_length].decode('utf-8')
         offset += name_length
         
         # 读取重复的名称长度
+        if offset + 4 > len(data):
+            raise struct.error("Insufficient data for first array repeated name length")
         name_length_2 = struct.unpack('<I', data[offset:offset+4])[0]
         offset += 4
         
         # 读取填充
+        if offset + 4 > len(data):
+            raise struct.error("Insufficient data for first array second padding")
         padding_2 = struct.unpack('<I', data[offset:offset+4])[0]
         offset += 4
         
         # 跳过重复的名称
+        if offset + name_length_2 > len(data):
+            raise struct.error("Insufficient data for first array repeated name")
         offset += name_length_2
         
         # 读取维度数
+        if offset + 8 > len(data):
+            raise struct.error("Insufficient data for first array ndim")
         ndim = struct.unpack('<Q', data[offset:offset+8])[0]
         offset += 8
         
         # 读取形状
         shape = []
         for _ in range(ndim):
+            if offset + 8 > len(data):
+                raise struct.error("Insufficient data for first array shape dimension")
             dim_size = struct.unpack('<Q', data[offset:offset+8])[0]
             shape.append(dim_size)
             offset += 8
         
         # 读取数据类型
+        if offset + 8 > len(data):
+            raise struct.error("Insufficient data for first array dtype")
         dtype_code = struct.unpack('<Q', data[offset:offset+8])[0]
         offset += 8
         
         dtype = RUST_DTYPE_REVERSE_MAP.get(dtype_code, np.int32)
         
         # 读取文件路径
+        if offset + 8 > len(data):
+            raise struct.error("Insufficient data for first array path length")
         path_length = struct.unpack('<Q', data[offset:offset+8])[0]
         offset += 8
         
+        if offset + path_length > len(data):
+            raise struct.error("Insufficient data for first array file path")
         file_path = data[offset:offset+path_length].decode('utf-8')
         offset += path_length
         
         # 跳过时间戳和其他信息
+        if offset + 24 > len(data):
+            raise struct.error("Insufficient data for first array timestamps")
         offset += 24  # 3个8字节字段
         
         metadata = RustArrayMetadata(

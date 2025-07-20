@@ -160,23 +160,8 @@ class NumPack:
             array_name = [array_name]
             
         if self._backend_type == "python":
-            # Python 后端模拟 drop 功能
-            for name in array_name:
-                if indexes is None:
-                    # 删除整个数组
-                    self._npk.reset()  # 简化实现
-                else:
-                    # 删除特定行
-                    if self.has_array(name):
-                        existing = self.load(name)
-                        if isinstance(indexes, int):
-                            indexes = [indexes]
-                        elif isinstance(indexes, np.ndarray):
-                            indexes = indexes.tolist()
-                        remaining_mask = np.ones(len(existing), dtype=bool)
-                        remaining_mask[indexes] = False
-                        remaining_data = existing[remaining_mask]
-                        self.save({name: remaining_data})
+            # Python 后端使用新实现的 drop 方法
+            self._npk.drop(array_name, indexes)
         else:
             # Rust 后端
             self._npk.drop(array_name, indexes)
@@ -274,7 +259,9 @@ class NumPack:
         
         if self._backend_type == "python":
             # Python 后端的实现
-            return self._npk.stream_load(array_name, buffer_size or 1000)
+            # 当buffer_size为None时，逐行返回（buffer_size=1）
+            effective_buffer_size = buffer_size if buffer_size is not None else 1
+            return self._npk.stream_load(array_name, effective_buffer_size)
         else:
             # Rust 后端：使用新实现的stream_load方法
             effective_buffer_size = buffer_size if buffer_size is not None else 1

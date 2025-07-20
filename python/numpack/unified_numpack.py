@@ -243,31 +243,41 @@ class NumPack:
         if not isinstance(arrays, dict):
             raise ValueError("arrays must be a dictionary")
         
-        # 获取现有数组（增量保存）
-        existing_arrays = {}
-        try:
-            existing_names = self.manager.list_arrays()
-            for name in existing_names:
-                existing_arrays[name] = self.manager.load(name)
-        except:
-            # 如果文件不存在或为空，忽略错误
-            pass
+        # 使用文件锁确保并发安全
+        import filelock
+        lock_file = self.filename / "save.lock"
+        lock = filelock.FileLock(lock_file)
         
-        # 合并新数组和现有数组
-        merged_arrays = existing_arrays.copy()
-        
-        # 转换为 numpy 数组并验证
-        for name, array in arrays.items():
-            if not isinstance(name, str):
-                raise ValueError("Array names must be strings")
+        with lock:
+            # 获取现有数组（增量保存）
+            existing_arrays = {}
+            try:
+                # 创建新的 reader 实例以确保读取最新状态
+                temp_manager = RustCompatibleManager(self.filename)
+                existing_names = temp_manager.list_arrays()
+                for name in existing_names:
+                    existing_arrays[name] = temp_manager.load(name)
+            except:
+                # 如果文件不存在或为空，忽略错误
+                pass
             
-            if not isinstance(array, np.ndarray):
-                array = np.asarray(array)
+            # 合并新数组和现有数组
+            merged_arrays = existing_arrays.copy()
             
-            merged_arrays[name] = array
-        
-        # 保存合并后的数组
-        self.manager.save(merged_arrays)
+            # 转换为 numpy 数组并验证
+            for name, array in arrays.items():
+                if not isinstance(name, str):
+                    raise ValueError("Array names must be strings")
+                
+                if not isinstance(array, np.ndarray):
+                    array = np.asarray(array)
+                
+                merged_arrays[name] = array
+            
+            # 保存合并后的数组
+            self.manager.save(merged_arrays)
+            # 重新加载元数据
+            self.manager._reader = None
     
     def load(self, array_name: str, lazy: bool = False) -> Union[np.ndarray, LazyArray]:
         """加载数组
@@ -369,8 +379,61 @@ class NumPack:
         # 加载完整数组然后分批返回（简化实现）
         array = self.manager.load(array_name)
         
-        for i in range(0, len(array), buffer_size):
-            yield array[i:i + buffer_size]
+        # 当buffer_size为1时，逐行返回
+        if buffer_size == 1:
+            for i in range(len(array)):
+                yield array[i:i+1]
+        else:
+            for i in range(0, len(array), buffer_size):
+                yield array[i:i + buffer_size]
+    
+    def drop(self, array_names: Union[str, List[str]], indexes: Optional[Union[List[int], int, np.ndarray]] = None) -> None:
+        """删除数组或数组的特定行
+        
+        Parameters:
+            array_names (Union[str, List[str]]): 要删除的数组名称
+            indexes (Optional[Union[List[int], int, np.ndarray]]): 要删除的索引，如果为None则删除整个数组
+        """
+        if isinstance(array_names, str):
+            array_names = [array_names]
+        
+        for array_name in array_names:
+            if not self.manager.has_array(array_name):
+                raise KeyError(f"Array '{array_name}' not found")
+            
+            if indexes is None:
+                # 删除整个数组 - 重新保存不包含此数组的所有数组
+                all_arrays = {}
+                for name in self.manager.list_arrays():
+                    if name != array_name:
+                        all_arrays[name] = self.manager.load(name)
+                
+                # 清理并重新保存
+                self.manager.reset()
+                if all_arrays:
+                    self.manager.save(all_arrays)
+            else:
+                # 删除特定行
+                existing = self.manager.load(array_name)
+                if isinstance(indexes, int):
+                    indexes = [indexes]
+                elif isinstance(indexes, np.ndarray):
+                    indexes = indexes.tolist()
+                
+                remaining_mask = np.ones(len(existing), dtype=bool)
+                remaining_mask[indexes] = False
+                remaining_data = existing[remaining_mask]
+                
+                # 保存修改后的数组，同时保持其他数组不变
+                all_arrays = {}
+                for name in self.manager.list_arrays():
+                    if name == array_name:
+                        all_arrays[name] = remaining_data
+                    else:
+                        all_arrays[name] = self.manager.load(name)
+                
+                self.manager.reset()
+                self.manager.save(all_arrays)
     
     # 字典式访问接口
     def __getitem__(self, array_name: str) -> np.ndarray:
