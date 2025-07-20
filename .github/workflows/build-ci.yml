@@ -7,6 +7,34 @@ on:
   workflow_dispatch:
 
 jobs:
+  build_sdist:
+    name: Build source distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build setuptools wheel
+          
+      - name: Build sdist
+        run: |
+          # 使用纯Python构建生成sdist
+          export NUMPACK_PYTHON_ONLY=1
+          python build.py build --out dist
+          
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
   build_wheels:
     name: Build wheels on ${{ matrix.os }} - Python ${{ matrix.python }}
     runs-on: ${{ matrix.os }}
@@ -157,19 +185,21 @@ jobs:
           fi
           python -m pytest -m "not benchmark" --timeout=300
         
-      # Build wheels
+      # Build wheels only (no sdist)
       - name: Build wheels
         shell: bash
         run: |
+          mkdir -p dist
           if [ "$RUNNER_OS" == "Windows" ]; then
             . venv/Scripts/activate
             # Windows 使用纯 Python 构建
             export NUMPACK_PYTHON_ONLY=1
             python -m pip install build
-            python build.py build --out dist
+            # 只构建wheel，不构建sdist
+            python -m build --wheel --outdir dist
           else
             . venv/bin/activate
-            # Unix/Linux 使用 maturin 构建
+            # Unix/Linux 使用 maturin 构建wheel
             maturin build --release --out dist --find-interpreter
           fi
           
@@ -177,12 +207,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}-${{ matrix.python }}
-          path: dist
+          path: dist/*.whl
 
   release:
     name: Release
     runs-on: ubuntu-latest
-    needs: [build_wheels]
+    needs: [build_sdist, build_wheels]
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: write
@@ -190,12 +220,61 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Download artifacts
+      - name: Download sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+          
+      - name: Download wheels
         uses: actions/download-artifact@v4
         with:
           pattern: wheels-*
           path: dist
           merge-multiple: true
+          
+      - name: Check and clean distribution files
+        run: |
+          echo "=== Distribution files before cleanup ==="
+          ls -la dist/
+          
+          # 检查tar文件完整性
+          echo "=== Checking tar file integrity ==="
+          for file in dist/*.tar.gz; do
+            if [ -f "$file" ]; then
+              echo "Checking $file..."
+              if tar -tzf "$file" > /dev/null 2>&1; then
+                echo "✓ $file is valid"
+              else
+                echo "✗ $file is corrupted, removing..."
+                rm -f "$file"
+              fi
+            fi
+          done
+          
+          # 移除重复的文件和潜在问题文件
+          echo "=== Removing duplicate and problematic files ==="
+          # 移除任何非wheel和非tar.gz文件
+          find dist/ -type f ! -name "*.whl" ! -name "*.tar.gz" -delete || true
+          
+          echo "=== Final distribution files ==="
+          ls -la dist/
+          
+          # 确保至少有一个sdist文件
+          sdist_count=$(ls dist/*.tar.gz 2>/dev/null | wc -l)
+          wheel_count=$(ls dist/*.whl 2>/dev/null | wc -l)
+          
+          echo "Found $sdist_count sdist files and $wheel_count wheel files"
+          
+          if [ $sdist_count -eq 0 ]; then
+            echo "Error: No valid sdist files found"
+            exit 1
+          fi
+          
+          if [ $wheel_count -eq 0 ]; then
+            echo "Error: No wheel files found"
+            exit 1
+          fi
           
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
@@ -213,9 +292,14 @@ jobs:
       - name: Install twine
         run: python -m pip install --upgrade twine
         
+      - name: Verify files before upload
+        run: |
+          echo "=== Verifying files before PyPI upload ==="
+          python -m twine check dist/*
+        
       - name: Upload to PyPI
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
-        run: python -m twine upload dist/*
+        run: python -m twine upload dist/* --verbose
         

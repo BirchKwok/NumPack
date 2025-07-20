@@ -74,6 +74,8 @@ struct LazyArray {
     itemsize: usize,
     array_path: String,
     modify_time: i64,
+    // 内置优化引擎，可选字段
+    optimized_engine: Option<OptimizedLazyArray>,
 }
 
 #[allow(dead_code)]
@@ -469,6 +471,7 @@ impl LazyArray {
             itemsize: self.itemsize,
             array_path: format!("{}_T", self.array_path),
             modify_time: self.modify_time,
+            optimized_engine: None, // 转置视图暂不支持优化引擎
         })
     }
 
@@ -603,6 +606,7 @@ impl LazyArray {
             itemsize: self.itemsize,
             array_path: self.array_path.clone(),
             modify_time: self.modify_time,
+            optimized_engine: None, // 重塑视图暂不支持优化引擎
         };
 
         // Return the new LazyArray as a Python object
@@ -615,7 +619,20 @@ impl LazyArray {
 
     // 阶段1：极限FFI优化
     fn mega_batch_get_rows(&self, py: Python, indices: Vec<usize>, batch_size: usize) -> PyResult<Vec<PyObject>> {
-        // 由于LazyArray没有OptimizedLazyArray的功能，我们需要使用基础的批量操作
+        // 优先使用优化引擎
+        if let Some(ref engine) = self.optimized_engine {
+            let rows_data = engine.mega_batch_get_rows(&indices, batch_size);
+            if !rows_data.is_empty() {
+                let mut results = Vec::new();
+                for row_data in rows_data {
+                    let numpy_array = self.bytes_to_numpy(py, row_data)?;
+                    results.push(numpy_array);
+                }
+                return Ok(results);
+            }
+        }
+        
+        // 回退到基础实现
         let mut results = Vec::new();
         let chunk_size = batch_size.max(100);
         
@@ -641,7 +658,21 @@ impl LazyArray {
             return self.create_numpy_array(py, Vec::new(), &empty_shape);
         }
         
-        // 批量收集数据
+        // 优先使用优化引擎
+        if let Some(ref engine) = self.optimized_engine {
+            let rows_data = engine.vectorized_gather(&indices);
+            if !rows_data.is_empty() {
+                let mut all_data = Vec::new();
+                for row in rows_data {
+                    all_data.extend(row);
+                }
+                let mut result_shape = self.shape.clone();
+                result_shape[0] = indices.len();
+                return self.create_numpy_array(py, all_data, &result_shape);
+            }
+        }
+        
+        // 回退到基础实现
         let mut all_data = Vec::new();
         for &idx in &indices {
             if idx < self.shape[0] {
@@ -665,7 +696,22 @@ impl LazyArray {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>("Mask length doesn't match array length"));
         }
         
-        // 收集选中的行
+        // 优先使用优化引擎
+        if let Some(ref engine) = self.optimized_engine {
+            let selected_rows = engine.parallel_boolean_index(&mask);
+            if !selected_rows.is_empty() {
+                let mut selected_data = Vec::new();
+                for row in selected_rows {
+                    selected_data.extend(row);
+                }
+                let selected_count = mask.iter().filter(|&&x| x).count();
+                let mut result_shape = self.shape.clone();
+                result_shape[0] = selected_count;
+                return self.create_numpy_array(py, selected_data, &result_shape);
+            }
+        }
+        
+        // 回退到基础实现
         let mut selected_data = Vec::new();
         let mut selected_count = 0;
         for (idx, &selected) in mask.iter().enumerate() {
@@ -684,7 +730,21 @@ impl LazyArray {
 
     // 阶段3：内存管理优化
     fn intelligent_warmup(&self, workload_hint: &str) -> PyResult<()> {
-        // 简化的预热实现
+        // 如果有优化引擎，使用智能预热
+        if let Some(ref engine) = self.optimized_engine {
+            use crate::access_pattern::AccessHint;
+            let hint = match workload_hint {
+                "sequential" => AccessHint::WillAccessAll,
+                "random" => AccessHint::WillAccessSparse(0.05),
+                "boolean" => AccessHint::WillAccessSparse(0.2),
+                "heavy" => AccessHint::WillAccessAll,
+                _ => AccessHint::WillAccessAll,
+            };
+            engine.warmup_intelligent(&hint);
+            return Ok(());
+        }
+        
+        // 回退到基础预热实现
         let warmup_size = match workload_hint {
             "sequential" => 0.1,
             "random" => 0.05,
@@ -704,7 +764,20 @@ impl LazyArray {
     }
 
     fn get_performance_stats(&self) -> PyResult<Vec<(String, f64)>> {
-        // 返回基本的性能统计
+        // 如果有优化引擎，获取真实的性能统计
+        if let Some(ref engine) = self.optimized_engine {
+            let (hits, misses, hit_rate, current_size, max_size, total_blocks) = engine.get_extended_cache_stats();
+            return Ok(vec![
+                ("cache_hits".to_string(), hits as f64),
+                ("cache_misses".to_string(), misses as f64),
+                ("hit_rate".to_string(), hit_rate),
+                ("cache_blocks".to_string(), total_blocks as f64),
+                ("current_cache_size".to_string(), current_size as f64),
+                ("max_cache_size".to_string(), max_size as f64),
+            ]);
+        }
+        
+        // 回退到基本的性能统计
         Ok(vec![
             ("cache_hits".to_string(), 0.0),
             ("cache_misses".to_string(), 0.0),
@@ -728,14 +801,28 @@ impl LazyArray {
         let selected_count = mask.iter().filter(|&&x| x).count();
         let selection_density = selected_count as f64 / mask.len() as f64;
         
-        let algorithm = if selection_density < 0.01 {
-            "ZeroCopy"
-        } else if selection_density > 0.9 {
-            "Vectorized"
-        } else if selection_density > 0.5 {
-            "AdaptivePrefetch"
+        // 如果有优化引擎，使用更智能的算法选择
+        let algorithm = if self.optimized_engine.is_some() {
+            if selection_density < 0.005 {
+                "OptimizedZeroCopy"
+            } else if selection_density > 0.95 {
+                "OptimizedVectorized"
+            } else if selection_density > 0.6 {
+                "OptimizedAdaptivePrefetch"
+            } else {
+                "OptimizedSIMD"
+            }
         } else {
-            "StandardSIMD"
+            // 回退到基础算法选择
+            if selection_density < 0.01 {
+                "ZeroCopy"
+            } else if selection_density > 0.9 {
+                "Vectorized"
+            } else if selection_density > 0.5 {
+                "AdaptivePrefetch"
+            } else {
+                "StandardSIMD"
+            }
         };
         
         Ok(algorithm.to_string())
@@ -747,6 +834,15 @@ impl LazyArray {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>("Row index out of bounds"));
         }
         
+        // 优先使用优化引擎
+        if let Some(ref engine) = self.optimized_engine {
+            let row_data = engine.get_row(row_idx);
+            if !row_data.is_empty() {
+                return Ok(row_data);
+            }
+        }
+        
+        // 回退到基础实现
         let row_size = self.shape[1..].iter().product::<usize>() * self.itemsize;
         let offset = row_idx * row_size;
         
@@ -2883,6 +2979,13 @@ impl NumPack {
             let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
             let itemsize = meta.dtype.size_bytes() as usize;
             
+            // 尝试创建优化引擎
+            let optimized_engine = OptimizedLazyArray::new(
+                data_path.clone(),
+                shape.clone(),
+                meta.dtype.clone()
+            ).ok(); // 如果失败则使用None
+            
             let lazy_array = LazyArray {
                 mmap,
                 shape,
@@ -2890,6 +2993,7 @@ impl NumPack {
                 itemsize,
                 array_path,
                 modify_time: meta.last_modified as i64,
+                optimized_engine,
             };
             
             return Ok(Py::new(py, lazy_array)?.into());
