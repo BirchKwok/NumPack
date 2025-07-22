@@ -26,19 +26,19 @@ def numpack(temp_dir):
     del npk
     
     if os.name == 'nt':
-        # Windows平台强化清理
+        # Windows平台优化清理
         try:
             force_cleanup_windows_handles()
         except:
             pass
         
-        # 多次强制垃圾回收
-        for _ in range(5):
+        # 减少垃圾回收次数和等待时间
+        for _ in range(2):  # 从5次减少到2次
             gc.collect()
-            time.sleep(0.01)
+            time.sleep(0.002)  # 从10ms减少到2ms
         
-        # 额外等待时间以确保文件句柄完全释放
-        time.sleep(0.15)
+        # 大幅减少额外等待时间
+        time.sleep(0.01)  # 从150ms减少到10ms
     else:
         # 非Windows平台基本清理
         gc.collect()
@@ -65,10 +65,10 @@ def lazy_array_large(numpack):
         except:
             pass
         
-        for _ in range(3):
+        for _ in range(1):  # 从3次减少到1次
             gc.collect()
-            time.sleep(0.01)
-        time.sleep(0.05)
+            time.sleep(0.002)  # 从10ms减少到2ms
+        time.sleep(0.005)  # 从50ms减少到5ms
 
 
 @pytest.fixture
@@ -92,10 +92,10 @@ def lazy_array_small(numpack):
         except:
             pass
         
-        for _ in range(3):
+        for _ in range(1):  # 从3次减少到1次
             gc.collect()
-            time.sleep(0.01)
-        time.sleep(0.05)
+            time.sleep(0.002)  # 从10ms减少到2ms
+        time.sleep(0.005)  # 从50ms减少到5ms
 
 
 class TestLazyArrayAdvancedMethods:
@@ -417,10 +417,10 @@ class TestLazyArrayDataTypes:
         reshaped = lazy_arr.reshape(total_size)
         assert reshaped.size == data.size
         
-        # Windows平台上特殊处理，等待文件句柄完全释放
+        # Windows平台上优化处理，减少等待时间
         import os, time
         if os.name == 'nt':
-            time.sleep(0.1)
+            time.sleep(0.01)  # 从100ms减少到10ms
 
 
 if __name__ == '__main__':

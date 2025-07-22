@@ -20,13 +20,13 @@ def force_release_file_handles(file_path_or_dir):
     except ImportError:
         pass
     
-    # 多次垃圾回收
-    for _ in range(5):
+    # 优化的垃圾回收
+    for _ in range(2):  # 从5次减少到2次
         gc.collect()
-        time.sleep(0.01)
+        time.sleep(0.002)  # 从10ms减少到2ms
     
-    # 额外等待
-    time.sleep(0.1)
+    # 减少额外等待
+    time.sleep(0.01)  # 从100ms减少到10ms
 
 
 def safe_rmtree(path):
@@ -59,13 +59,13 @@ def safe_rmtree(path):
                 except ImportError:
                     pass
                 
-                # 强制垃圾回收
-                for _ in range(10):
+                # 优化的强制垃圾回收
+                for _ in range(3):  # 从10次减少到3次
                     gc.collect()
-                    time.sleep(0.005)
+                    time.sleep(0.002)  # 从5ms减少到2ms
                 
-                # 等待更长时间
-                time.sleep(0.2)
+                # 减少等待时间
+                time.sleep(0.02)  # 从200ms减少到20ms
             else:
                 # 最后一次尝试失败，记录错误但不抛出异常
                 print(f"Warning: Failed to delete {path} after 3 attempts")
@@ -97,10 +97,10 @@ def cleanup_test_environment():
     except ImportError:
         pass
     
-    # 强制垃圾回收
-    for _ in range(8):
+    # 优化的强制垃圾回收
+    for _ in range(3):  # 从8次减少到3次
         gc.collect()
-        time.sleep(0.005)
+        time.sleep(0.002)  # 从5ms减少到2ms
     
-    # 最终等待
-    time.sleep(0.1) 
+    # 减少最终等待
+    time.sleep(0.01)  # 从100ms减少到10ms 

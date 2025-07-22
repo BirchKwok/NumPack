@@ -24,26 +24,46 @@ def numpack(temp_dir):
     # 测试后清理 - 特别针对Windows平台
     import gc, time
     
-    # 强制删除NumPack实例
-    del npk
-    
-    if os.name == 'nt':
-        # Windows平台强化清理
-        try:
-            force_cleanup_windows_handles()
-        except:
-            pass
+    try:
+        # 显式关闭NumPack实例
+        npk.close()
         
-        # 多次强制垃圾回收
-        for _ in range(5):
+        # 强制删除NumPack实例
+        del npk
+        
+        if os.name == 'nt':
+            # Windows平台使用句柄管理器强化清理
+            try:
+                from numpack.windows_handle_manager import get_handle_manager
+                handle_manager = get_handle_manager()
+                handle_manager.force_cleanup_and_wait()  # 使用自动检测的短延迟
+            except:
+                # 回退到传统清理
+                force_cleanup_windows_handles()
+            
+            # 减少垃圾回收次数和等待时间
+            for _ in range(3):
+                gc.collect()
+                time.sleep(0.005)  # 5ms instead of 30ms
+            
+            # 大幅减少额外等待时间
+            time.sleep(0.02)  # 20ms instead of 600ms
+        else:
+            # 非Windows平台基本清理
             gc.collect()
-            time.sleep(0.01)
-        
-        # 额外等待时间以确保文件句柄完全释放
-        time.sleep(0.15)
-    else:
-        # 非Windows平台基本清理
-        gc.collect()
+            
+    except Exception as e:
+        # 如果清理失败，至少记录错误但不影响测试
+        print(f"Warning: Cleanup failed: {e}")
+        if os.name == 'nt':
+            # Windows上再尝试一次
+            try:
+                from numpack.windows_handle_manager import get_handle_manager
+                get_handle_manager().force_cleanup_and_wait()  # 使用自动检测的短延迟
+            except:
+                pass
+            time.sleep(0.05)  # 50ms instead of 1000ms
+            gc.collect()
 
 
 def create_test_array(dtype, shape):
@@ -205,7 +225,7 @@ class TestLazyArrayAPI:
         if hasattr(data, '__del__'):
             del data
         
-        # Windows平台强化清理
+        # Windows平台优化清理
         if os.name == 'nt':
             try:
                 from numpack import force_cleanup_windows_handles
@@ -213,10 +233,11 @@ class TestLazyArrayAPI:
             except:
                 pass
             
-            for _ in range(3):
+            # 减少清理次数和等待时间  
+            for _ in range(1):  # 从3次减少到1次
                 gc.collect()
-                time.sleep(0.01)
-            time.sleep(0.05)
+                time.sleep(0.002)  # 从10ms减少到2ms
+            time.sleep(0.005)  # 从50ms减少到5ms
 
     @pytest.fixture  
     def lazy_array_3d(self, numpack):
@@ -232,7 +253,7 @@ class TestLazyArrayAPI:
         if hasattr(data, '__del__'):
             del data
         
-        # Windows平台强化清理
+        # Windows平台优化清理
         if os.name == 'nt':
             try:
                 from numpack import force_cleanup_windows_handles
@@ -240,10 +261,11 @@ class TestLazyArrayAPI:
             except:
                 pass
             
-            for _ in range(3):
+            # 减少清理次数和等待时间
+            for _ in range(1):  # 从3次减少到1次
                 gc.collect()
-                time.sleep(0.01)
-            time.sleep(0.05)
+                time.sleep(0.002)  # 从10ms减少到2ms
+            time.sleep(0.005)  # 从50ms减少到5ms
 
     def test_lazy_array_properties(self, lazy_array_2d):
         """测试 LazyArray 基本属性"""

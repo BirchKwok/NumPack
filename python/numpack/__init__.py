@@ -289,6 +289,28 @@ class NumPack:
             "stats_available": False
         }
 
+    def close(self) -> None:
+        """显式关闭NumPack实例，释放所有资源"""
+        try:
+            if hasattr(self._npk, 'close'):
+                self._npk.close()
+            elif hasattr(self._npk, '_cleanup_windows_handles'):
+                self._npk._cleanup_windows_handles()
+        except Exception:
+            pass
+    
+    def __del__(self):
+        """析构函数"""
+        self.close()
+    
+    def __enter__(self):
+        """上下文管理器入口"""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """上下文管理器出口"""
+        self.close()
+
     def __repr__(self) -> str:
         backend_info = f"backend={self._backend_type}"
         # 尝试获取文件名
@@ -309,8 +331,22 @@ class NumPack:
 
 # 提供向后兼容的空函数
 def force_cleanup_windows_handles():
-    """Backward compatible empty implementation - Windows handle cleanup logic removed"""
-    pass
+    """强制清理Windows句柄 - 使用统一句柄管理器"""
+    try:
+        # 尝试使用新的句柄管理器
+        from .windows_handle_manager import force_cleanup_windows_handles as _force_cleanup
+        return _force_cleanup()
+    except ImportError:
+        # 如果句柄管理器不可用，使用传统方法
+        import gc
+        import time
+        import os
+        
+        gc.collect()
+        if os.name == 'nt':
+            time.sleep(0.1)
+            gc.collect()
+        return True
 
 # 导出的公共API
 __all__ = ['NumPack', 'LazyArray', 'force_cleanup_windows_handles']

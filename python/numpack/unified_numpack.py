@@ -10,8 +10,10 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Tuple, Union, Optional
 import numpy as np
+import time
 
 from .msgpack_compatible_format import MessagePackCompatibleManager, MessagePackArrayMetadata, MessagePackCompatibleReader
+from .windows_handle_manager import get_handle_manager, force_cleanup_windows_handles
 
 
 class LazyArray:
@@ -26,6 +28,15 @@ class LazyArray:
         self._reshaped = False
         self._original_shape = None
         self._target_shape = None
+        
+        # 集成句柄管理器
+        self._handle_manager = get_handle_manager()
+        self._memmap_handle_id = None
+        self._instance_id = f"lazy_array_{id(self)}_{time.time()}"
+    
+    def __del__(self):
+        """析构函数 - 确保内存映射文件被正确关闭"""
+        self._cleanup_all_handles()
     
     @property
     def metadata(self) -> MessagePackArrayMetadata:
@@ -70,10 +81,69 @@ class LazyArray:
         """数组总字节数"""
         return self.size * self.itemsize
     
+    def _cleanup_all_handles(self) -> None:
+        """清理所有句柄 - 使用统一句柄管理器"""
+        try:
+            # 清理所有与此实例相关的句柄
+            self._handle_manager.cleanup_by_owner(self)
+            
+            # 清理实例级别的内存映射
+            if self._memmap_handle_id:
+                self._handle_manager.cleanup_handle(self._memmap_handle_id)
+                self._memmap_handle_id = None
+            
+            # 传统清理方法作为备份
+            self._cleanup_memmap_fallback()
+            
+        except Exception as e:
+            # 如果句柄管理器清理失败，使用传统方法
+            self._cleanup_memmap_fallback()
+    
+    def _cleanup_memmap_fallback(self) -> None:
+        """传统内存映射清理方法 - 作为备份"""
+        if self._memmap_array is not None:
+            try:
+                # 在Windows上，需要显式删除memmap引用
+                if hasattr(self._memmap_array, '_mmap'):
+                    self._memmap_array._mmap.close()
+                del self._memmap_array
+            except:
+                pass
+            finally:
+                self._memmap_array = None
+    
     def _get_memmap(self) -> np.memmap:
         """获取内存映射数组 - 懒加载核心"""
         if self._memmap_array is None:
-            self._memmap_array = self.manager._reader.get_memmap_array(self.array_name, mode='r')
+            # 确保reader存在
+            if self.manager._reader is None:
+                self.manager._reader = MessagePackCompatibleReader(self.manager.base_path)
+            
+            # 使用句柄管理器管理内存映射
+            try:
+                metadata = self.metadata
+                data_file = self.manager.base_path / metadata.data_file
+                
+                # 生成唯一的句柄ID
+                self._memmap_handle_id = f"{self._instance_id}_memmap_{self.array_name}"
+                
+                # 创建内存映射
+                memmap = np.memmap(data_file, dtype=metadata.dtype, mode='r', shape=metadata.shape)
+                
+                # 注册到句柄管理器
+                self._handle_manager.register_memmap(
+                    self._memmap_handle_id,
+                    memmap,
+                    self,
+                    str(data_file)
+                )
+                
+                self._memmap_array = memmap
+                
+            except Exception as e:
+                # 如果句柄管理器失败，回退到直接方法
+                self._memmap_array = self.manager._reader.get_memmap_array(self.array_name, mode='r')
+        
         return self._memmap_array
     
     @property
@@ -132,24 +202,37 @@ class LazyArray:
     
     def __getitem__(self, key) -> np.ndarray:
         """支持索引访问 - 优化版本"""
-        # 使用内存映射进行高效索引访问
-        memmap_data = self._get_memmap()
-        
-        if self._transposed:
-            # 处理转置
-            result = memmap_data.T[key]
-        elif self._reshaped and self._target_shape:
-            # 处理重塑
-            reshaped_data = memmap_data.reshape(self._target_shape)
-            result = reshaped_data[key]
-        else:
-            # 直接索引
-            result = memmap_data[key]
-        
-        # 确保返回实际数组而不是 memmap
-        if isinstance(result, np.memmap):
-            return np.array(result)
-        return result
+        try:
+            # 使用内存映射进行高效索引访问
+            memmap_data = self._get_memmap()
+            
+            if self._transposed:
+                # 处理转置
+                result = memmap_data.T[key]
+            elif self._reshaped and self._target_shape:
+                # 处理重塑
+                reshaped_data = memmap_data.reshape(self._target_shape)
+                result = reshaped_data[key]
+            else:
+                # 直接索引
+                result = memmap_data[key]
+            
+            # 确保返回实际数组而不是 memmap
+            if isinstance(result, np.memmap):
+                return np.array(result)
+            return result
+            
+        except Exception:
+            # 内存映射失败时回退到普通加载
+            self._cleanup_all_handles()
+            data = self.manager.load(self.array_name)
+            
+            if self._transposed:
+                data = data.T
+            if self._reshaped and self._target_shape:
+                data = data.reshape(self._target_shape)
+                
+            return data[key]
     
     def __array__(self, dtype=None, copy=None) -> np.ndarray:
         """支持 numpy 函数 - 兼容新版本 numpy"""
@@ -273,6 +356,10 @@ class NumPack:
         
         # 使用 MessagePack 兼容管理器
         self.manager = MessagePackCompatibleManager(self.filename)
+        
+        # 集成句柄管理器
+        self._handle_manager = get_handle_manager()
+        self._instance_id = f"numpack_{id(self)}_{time.time()}"
     
     def save(self, arrays: Dict[str, np.ndarray], **kwargs) -> None:
         """保存数组到 NumPack 文件 - 自动优化版本
@@ -418,7 +505,7 @@ class NumPack:
         if not self.manager.has_array(array_name):
             raise KeyError(f"Array '{array_name}' not found")
         metadata = self.manager.get_metadata(array_name)
-        return int(metadata.timestamp)
+        return int(metadata.last_modified)
     
     def get_metadata(self) -> Dict[str, Any]:
         """获取完整元数据"""
@@ -429,7 +516,7 @@ class NumPack:
                 'shape': list(rust_metadata.shape),  # 确保返回列表而不是元组
                 'dtype': str(rust_metadata.dtype),
                 'size': rust_metadata.total_elements,
-                'modify_time': int(rust_metadata.timestamp),
+                'modify_time': int(rust_metadata.last_modified),
             }
         # 包装在 'arrays' 键下以匹配 Rust 后端格式
         return {'arrays': arrays_metadata}
@@ -450,6 +537,9 @@ class NumPack:
         if not isinstance(arrays, dict):
             raise ValueError("arrays must be a dictionary")
         
+        # Windows兼容性：先清理所有内存映射文件
+        self._cleanup_windows_handles()
+        
         # 批量处理所有数组以提高效率
         updated_arrays = {}
         
@@ -458,18 +548,13 @@ class NumPack:
                 # 如果数组不存在，直接添加到更新列表
                 updated_arrays[array_name] = array
             else:
-                # 使用内存映射进行高效追加
-                try:
-                    # 尝试使用内存映射读取现有数据
-                    existing = self.manager._reader.load_array(array_name, mmap_mode='r')
-                    # 创建追加后的数组
-                    appended = np.concatenate([existing, array], axis=0)
-                    updated_arrays[array_name] = appended
-                except Exception:
-                    # 回退到普通方法
-                    existing = self.manager.load(array_name)
-                    appended = np.concatenate([existing, array], axis=0)
-                    updated_arrays[array_name] = appended
+                # 直接使用普通加载避免Windows上的内存映射问题
+                existing = self.manager.load(array_name)
+                # 确保创建可写的副本
+                if hasattr(existing, 'flags') and not existing.flags.writeable:
+                    existing = np.array(existing)
+                appended = np.concatenate([existing, array], axis=0)
+                updated_arrays[array_name] = appended
         
         # 获取所有其他未修改的数组
         existing_arrays = {}
@@ -481,6 +566,9 @@ class NumPack:
         # 合并所有数组
         all_arrays = {**existing_arrays, **updated_arrays}
         
+        # Windows兼容性：在保存前再次清理
+        self._cleanup_windows_handles()
+        
         # 一次性保存所有数组
         self.manager.save(all_arrays)
     
@@ -489,6 +577,9 @@ class NumPack:
         if not isinstance(arrays, dict):
             raise ValueError("arrays must be a dictionary")
         
+        # Windows兼容性：先清理所有内存映射文件
+        self._cleanup_windows_handles()
+        
         # 批量处理所有数组以提高效率
         updated_arrays = {}
         
@@ -496,46 +587,26 @@ class NumPack:
             if not self.manager.has_array(array_name):
                 raise KeyError(f"Array '{array_name}' not found")
             
-            # 使用内存映射进行高效替换
-            try:
-                # 尝试使用内存映射读取现有数据
-                existing = self.manager._reader.load_array(array_name, mmap_mode='r')
-                # 创建副本以便修改
-                existing_copy = np.array(existing)
+            # 直接使用普通加载避免Windows上的内存映射问题
+            existing = self.manager.load(array_name)
+            
+            # 确保创建可写的副本
+            if hasattr(existing, 'flags') and not existing.flags.writeable:
+                existing = np.array(existing)
+            
+            if isinstance(indexes, slice):
+                existing[indexes] = array
+            else:
+                if isinstance(indexes, int):
+                    indexes = [indexes]
+                elif isinstance(indexes, np.ndarray):
+                    indexes = indexes.tolist()
                 
-                # 执行替换操作
-                if isinstance(indexes, slice):
-                    existing_copy[indexes] = array
-                else:
-                    if isinstance(indexes, int):
-                        indexes = [indexes]
-                    elif isinstance(indexes, np.ndarray):
-                        indexes = indexes.tolist()
-                    
-                    # 验证索引并执行替换
-                    for i, idx in enumerate(indexes):
-                        if 0 <= idx < len(existing_copy) and i < len(array):
-                            existing_copy[idx] = array[i]
-                
-                updated_arrays[array_name] = existing_copy
-                
-            except Exception:
-                # 回退到普通方法
-                existing = self.manager.load(array_name)
-                
-                if isinstance(indexes, slice):
-                    existing[indexes] = array
-                else:
-                    if isinstance(indexes, int):
-                        indexes = [indexes]
-                    elif isinstance(indexes, np.ndarray):
-                        indexes = indexes.tolist()
-                    
-                    for i, idx in enumerate(indexes):
-                        if 0 <= idx < len(existing) and i < len(array):
-                            existing[idx] = array[i]
-                
-                updated_arrays[array_name] = existing
+                for i, idx in enumerate(indexes):
+                    if 0 <= idx < len(existing) and i < len(array):
+                        existing[idx] = array[i]
+            
+            updated_arrays[array_name] = existing
         
         # 获取所有其他未修改的数组
         existing_arrays = {}
@@ -545,6 +616,9 @@ class NumPack:
         
         # 合并所有数组
         all_arrays = {**existing_arrays, **updated_arrays}
+        
+        # Windows兼容性：在保存前再次清理
+        self._cleanup_windows_handles()
         
         # 一次性保存所有数组
         self.manager.save(all_arrays)
@@ -557,6 +631,10 @@ class NumPack:
         # 优化策略：对于小的索引集合，使用直接内存映射访问
         if len(indexes) <= 1000:
             try:
+                # 确保reader存在
+                if self.manager._reader is None:
+                    self.manager._reader = MessagePackCompatibleReader(self.manager.base_path)
+                
                 # 使用内存映射进行高效访问
                 memmap_array = self.manager._reader.get_memmap_array(array_name, mode='r')
                 
@@ -683,6 +761,41 @@ class NumPack:
         """数组数量"""
         return len(self.list_arrays())
     
+    def close(self) -> None:
+        """显式关闭NumPack实例，释放所有资源 - Windows兼容性"""
+        try:
+            # 使用句柄管理器清理所有资源
+            self._cleanup_windows_handles()
+            
+            # 强制清理句柄管理器
+            self._handle_manager.force_cleanup_and_wait(0.2)
+            
+        except Exception:
+            # 回退到传统清理
+            try:
+                import gc
+                if hasattr(self.manager, '_reader') and self.manager._reader is not None:
+                    del self.manager._reader
+                    self.manager._reader = None
+                gc.collect()
+                if os.name == 'nt':
+                    import time
+                    time.sleep(0.1)
+            except Exception:
+                pass
+    
+    def __del__(self):
+        """析构函数"""
+        self.close()
+    
+    def __enter__(self):
+        """上下文管理器入口"""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """上下文管理器出口"""
+        self.close()
+
     def __repr__(self) -> str:
         return f"NumPack({self.filename}, arrays={len(self)}, format=rust_compatible)"
     
@@ -706,6 +819,37 @@ class NumPack:
         
         return stats
         
+    def _cleanup_windows_handles(self) -> None:
+        """Windows兼容性：清理所有内存映射文件句柄"""
+        try:
+            # 使用句柄管理器清理此实例相关的所有句柄
+            self._handle_manager.cleanup_by_owner(self)
+            
+            # 按路径清理相关句柄
+            self._handle_manager.cleanup_by_path(self.filename)
+            
+            # 清理reader中的内存映射
+            if hasattr(self.manager, '_reader') and self.manager._reader is not None:
+                # 先让句柄管理器清理reader相关的句柄
+                self._handle_manager.cleanup_by_owner(self.manager._reader)
+                del self.manager._reader
+                self.manager._reader = None
+            
+            # 强制垃圾回收
+            import gc
+            gc.collect()
+                
+        except Exception:
+            # 回退到传统清理方法
+            try:
+                import gc
+                gc.collect()
+                if hasattr(self.manager, '_reader') and self.manager._reader is not None:
+                    del self.manager._reader
+                    self.manager._reader = None
+            except Exception:
+                pass
+    
     def _get_current_memory_usage(self) -> float:
         """获取当前进程的内存使用情况"""
         try:
