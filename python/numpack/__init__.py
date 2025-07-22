@@ -29,12 +29,10 @@ _USE_PYTHON_BACKEND = _should_use_python_backend()
 
 if _USE_PYTHON_BACKEND:
     # Windows platform or forced: unified format Python backend
-    print(f"NumPack: Using unified format Python backend (Platform: {platform.system()})")
     from .unified_numpack import NumPack as _NumPack, LazyArray
     _BACKEND_TYPE = "python"
 else:
     # Unix/Linux platform: try to use Rust backend
-    print(f"NumPack: Trying to use Rust backend (Platform: {platform.system()})")
     try:
         import numpack._lib_numpack as rust_backend
         _NumPack = rust_backend.NumPack
@@ -122,17 +120,8 @@ class NumPack:
             raise ValueError("The indexes must be int or list or numpy.ndarray or slice.")
             
         if self._backend_type == "python":
-            # Python 后端模拟 replace 功能
-            for array_name, array in arrays.items():
-                if self.has_array(array_name):
-                    existing = self.load(array_name)
-                    if isinstance(indexes, slice):
-                        existing[indexes] = array
-                    else:
-                        for i, idx in enumerate(indexes):
-                            if i < len(array):
-                                existing[idx] = array[i]
-                    self.save({array_name: existing})
+            # Python 后端优化的 replace 功能
+            self._npk.replace(arrays, indexes)
         else:
             # Rust 后端
             self._npk.replace(arrays, indexes)
@@ -182,9 +171,8 @@ class NumPack:
             indexes = indexes.tolist()
         
         if self._backend_type == "python":
-            # Python 后端使用延迟加载实现
-            lazy_array = self.load(array_name, lazy=True)
-            return lazy_array[indexes]
+            # Python 后端使用优化的随机访问实现
+            return self._npk.getitem_optimized(array_name, indexes)
         else:
             # Rust 后端
             return self._npk.getitem(array_name, indexes)
@@ -285,6 +273,21 @@ class NumPack:
     def backend_type(self) -> str:
         """获取当前使用的后端类型"""
         return self._backend_type
+        
+    def get_io_stats(self) -> Dict[str, Any]:
+        """获取IO性能统计信息 - 内部监控功能
+        
+        Returns:
+            Dict[str, Any]: 性能统计数据
+        """
+        # 如果是Python后端，直接从Python实例获取
+        if self._backend_type == "python" and hasattr(self._npk, "get_io_performance_stats"):
+            return self._npk.get_io_performance_stats()
+        # 否则返回基本信息
+        return {
+            "backend_type": self._backend_type,
+            "stats_available": False
+        }
 
     def __repr__(self) -> str:
         backend_info = f"backend={self._backend_type}"

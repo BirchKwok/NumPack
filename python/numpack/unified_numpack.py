@@ -15,12 +15,13 @@ from .rust_compatible_format import RustCompatibleManager, RustArrayMetadata
 
 
 class LazyArray:
-    """延迟加载数组 - 使用 Rust 兼容格式"""
+    """延迟加载数组 - 使用 Rust 兼容格式 - 优化版本"""
     
     def __init__(self, manager: RustCompatibleManager, array_name: str):
         self.manager = manager
         self.array_name = array_name
         self._metadata = None
+        self._memmap_array = None  # 内存映射数组缓存
         self._transposed = False
         self._reshaped = False
         self._original_shape = None
@@ -69,6 +70,12 @@ class LazyArray:
         """数组总字节数"""
         return self.size * self.itemsize
     
+    def _get_memmap(self) -> np.memmap:
+        """获取内存映射数组 - 懒加载核心"""
+        if self._memmap_array is None:
+            self._memmap_array = self.manager._reader.get_memmap_array(self.array_name, mode='r')
+        return self._memmap_array
+    
     @property
     def T(self) -> 'LazyArray':
         """转置（返回一个新的 LazyArray 视图）"""
@@ -98,26 +105,60 @@ class LazyArray:
         return reshaped
     
     def to_numpy(self) -> np.ndarray:
-        """转换为 numpy 数组"""
-        data = self.manager.load(self.array_name)
-        
-        # 应用转换
-        if self._transposed:
-            data = data.T
-        if self._reshaped and self._target_shape:
-            data = data.reshape(self._target_shape)
+        """转换为 numpy 数组 - 优化版本"""
+        # 优先使用内存映射，只在必要时完全加载
+        try:
+            memmap_data = self._get_memmap()
             
-        return data
+            # 应用转换并创建副本
+            if self._transposed:
+                data = np.array(memmap_data.T)
+            elif self._reshaped and self._target_shape:
+                data = np.array(memmap_data.reshape(self._target_shape))
+            else:
+                data = np.array(memmap_data)
+                
+            return data
+        except Exception:
+            # 回退到原始方法
+            data = self.manager.load(self.array_name)
+            
+            if self._transposed:
+                data = data.T
+            if self._reshaped and self._target_shape:
+                data = data.reshape(self._target_shape)
+                
+            return data
     
     def __getitem__(self, key) -> np.ndarray:
-        """支持索引访问"""
-        # 加载完整数组然后切片（简化实现）
-        data = self.to_numpy()
-        return data[key]
+        """支持索引访问 - 优化版本"""
+        # 使用内存映射进行高效索引访问
+        memmap_data = self._get_memmap()
+        
+        if self._transposed:
+            # 处理转置
+            result = memmap_data.T[key]
+        elif self._reshaped and self._target_shape:
+            # 处理重塑
+            reshaped_data = memmap_data.reshape(self._target_shape)
+            result = reshaped_data[key]
+        else:
+            # 直接索引
+            result = memmap_data[key]
+        
+        # 确保返回实际数组而不是 memmap
+        if isinstance(result, np.memmap):
+            return np.array(result)
+        return result
     
-    def __array__(self) -> np.ndarray:
-        """支持 numpy 函数"""
-        return self.to_numpy()
+    def __array__(self, dtype=None, copy=None) -> np.ndarray:
+        """支持 numpy 函数 - 兼容新版本 numpy"""
+        result = self.to_numpy()
+        if dtype is not None:
+            result = result.astype(dtype)
+        if copy is True:
+            result = result.copy()
+        return result
     
     def __len__(self) -> int:
         """支持 len()"""
@@ -234,7 +275,7 @@ class NumPack:
         self.manager = RustCompatibleManager(self.filename)
     
     def save(self, arrays: Dict[str, np.ndarray], **kwargs) -> None:
-        """保存数组到 NumPack 文件
+        """保存数组到 NumPack 文件 - 自动优化版本
         
         Parameters:
             arrays (Dict[str, np.ndarray]): 要保存的数组字典
@@ -243,41 +284,89 @@ class NumPack:
         if not isinstance(arrays, dict):
             raise ValueError("arrays must be a dictionary")
         
-        # 使用文件锁确保并发安全
-        import filelock
-        lock_file = self.filename / "save.lock"
-        lock = filelock.FileLock(lock_file)
+        # 验证数组名称和类型
+        validated_arrays = {}
+        for name, array in arrays.items():
+            if not isinstance(name, str):
+                raise ValueError("Array names must be strings")
+            
+            if not isinstance(array, np.ndarray):
+                array = np.asarray(array)
+            
+            validated_arrays[name] = array
         
-        with lock:
-            # 获取现有数组（增量保存）
-            existing_arrays = {}
-            try:
-                # 创建新的 reader 实例以确保读取最新状态
-                temp_manager = RustCompatibleManager(self.filename)
-                existing_names = temp_manager.list_arrays()
-                for name in existing_names:
-                    existing_arrays[name] = temp_manager.load(name)
-            except:
-                # 如果文件不存在或为空，忽略错误
-                pass
+        # 智能选择最佳保存策略
+        use_incremental = self._should_use_incremental_save(validated_arrays)
+        
+        if use_incremental and hasattr(self.manager, 'save_incremental'):
+            # 使用增量保存优化 - 只保存变化的数据
+            self.manager.save_incremental(validated_arrays)
+        else:
+            # 使用文件锁确保并发安全
+            import filelock
+            lock_file = self.filename / "save.lock"
+            lock = filelock.FileLock(lock_file)
             
-            # 合并新数组和现有数组
-            merged_arrays = existing_arrays.copy()
-            
-            # 转换为 numpy 数组并验证
-            for name, array in arrays.items():
-                if not isinstance(name, str):
-                    raise ValueError("Array names must be strings")
+            with lock:
+                # 获取现有数组
+                existing_arrays = {}
+                try:
+                    # 创建新的 reader 实例以确保读取最新状态
+                    temp_manager = RustCompatibleManager(self.filename)
+                    existing_names = temp_manager.list_arrays()
+                    for name in existing_names:
+                        existing_arrays[name] = temp_manager.load(name)
+                except:
+                    # 如果文件不存在或为空，忽略错误
+                    pass
                 
-                if not isinstance(array, np.ndarray):
-                    array = np.asarray(array)
+                # 合并新数组和现有数组
+                merged_arrays = existing_arrays.copy()
+                merged_arrays.update(validated_arrays)  # 更新或添加新数组
                 
-                merged_arrays[name] = array
+                # 保存合并后的数组
+                self.manager.save(merged_arrays)
+                
+        # 重新加载元数据
+        self.manager._reader = None
+        
+    def _should_use_incremental_save(self, arrays: Dict[str, np.ndarray]) -> bool:
+        """智能决定是否使用增量保存
+        
+        策略:
+        1. 如果文件不存在，使用标准保存（更快）
+        2. 如果只是更新部分数组，使用增量保存（更快）
+        3. 如果数据量非常大，总是使用内存映射增量保存（内存效率更高）
+        """
+        # 如果没有现有文件，使用标准保存
+        if not self.filename.exists() or not self.filename.is_dir():
+            return False
             
-            # 保存合并后的数组
-            self.manager.save(merged_arrays)
-            # 重新加载元数据
-            self.manager._reader = None
+        # 检查要保存的数据大小
+        total_size_mb = 0
+        for array in arrays.values():
+            total_size_mb += array.nbytes / (1024 * 1024)
+        
+        # 数据非常大（>100MB），优先选择内存效率更高的增量保存
+        if total_size_mb > 100:
+            return True
+            
+        # 检查是否为更新操作
+        existing_names = set()
+        try:
+            if self.manager._reader is None:
+                self.manager._reader = RustCompatibleReader(self.filename)
+            existing_names = set(self.manager._reader.list_arrays())
+        except:
+            pass
+            
+        # 如果是更新操作（有共同的数组名），使用增量保存
+        common_arrays = set(arrays.keys()).intersection(existing_names)
+        if common_arrays:
+            return True
+            
+        # 默认情况下对较小的新数据使用标准保存
+        return False
     
     def load(self, array_name: str, lazy: bool = False) -> Union[np.ndarray, LazyArray]:
         """加载数组
@@ -357,19 +446,147 @@ class NumPack:
         self.manager.reset()
     
     def append(self, arrays: Dict[str, np.ndarray]) -> None:
-        """追加数据到现有数组"""
+        """追加数据到现有数组 - 优化版本"""
         if not isinstance(arrays, dict):
             raise ValueError("arrays must be a dictionary")
         
+        # 批量处理所有数组以提高效率
+        updated_arrays = {}
+        
         for array_name, array in arrays.items():
             if not self.manager.has_array(array_name):
-                # 如果数组不存在，直接保存
-                self.save({array_name: array})
+                # 如果数组不存在，直接添加到更新列表
+                updated_arrays[array_name] = array
             else:
-                # 加载现有数组并追加
+                # 使用内存映射进行高效追加
+                try:
+                    # 尝试使用内存映射读取现有数据
+                    existing = self.manager._reader.load_array(array_name, mmap_mode='r')
+                    # 创建追加后的数组
+                    appended = np.concatenate([existing, array], axis=0)
+                    updated_arrays[array_name] = appended
+                except Exception:
+                    # 回退到普通方法
+                    existing = self.manager.load(array_name)
+                    appended = np.concatenate([existing, array], axis=0)
+                    updated_arrays[array_name] = appended
+        
+        # 获取所有其他未修改的数组
+        existing_arrays = {}
+        for name in self.manager.list_arrays():
+            if name not in updated_arrays:
+                # 对于未修改的数组，使用缓存机制
+                existing_arrays[name] = self.manager.load(name)
+        
+        # 合并所有数组
+        all_arrays = {**existing_arrays, **updated_arrays}
+        
+        # 一次性保存所有数组
+        self.manager.save(all_arrays)
+    
+    def replace(self, arrays: Dict[str, np.ndarray], indexes: Union[List[int], int, np.ndarray, slice]) -> None:
+        """替换数组中的特定行 - 优化版本"""
+        if not isinstance(arrays, dict):
+            raise ValueError("arrays must be a dictionary")
+        
+        # 批量处理所有数组以提高效率
+        updated_arrays = {}
+        
+        for array_name, array in arrays.items():
+            if not self.manager.has_array(array_name):
+                raise KeyError(f"Array '{array_name}' not found")
+            
+            # 使用内存映射进行高效替换
+            try:
+                # 尝试使用内存映射读取现有数据
+                existing = self.manager._reader.load_array(array_name, mmap_mode='r')
+                # 创建副本以便修改
+                existing_copy = np.array(existing)
+                
+                # 执行替换操作
+                if isinstance(indexes, slice):
+                    existing_copy[indexes] = array
+                else:
+                    if isinstance(indexes, int):
+                        indexes = [indexes]
+                    elif isinstance(indexes, np.ndarray):
+                        indexes = indexes.tolist()
+                    
+                    # 验证索引并执行替换
+                    for i, idx in enumerate(indexes):
+                        if 0 <= idx < len(existing_copy) and i < len(array):
+                            existing_copy[idx] = array[i]
+                
+                updated_arrays[array_name] = existing_copy
+                
+            except Exception:
+                # 回退到普通方法
                 existing = self.manager.load(array_name)
-                appended = np.concatenate([existing, array], axis=0)
-                self.save({array_name: appended})
+                
+                if isinstance(indexes, slice):
+                    existing[indexes] = array
+                else:
+                    if isinstance(indexes, int):
+                        indexes = [indexes]
+                    elif isinstance(indexes, np.ndarray):
+                        indexes = indexes.tolist()
+                    
+                    for i, idx in enumerate(indexes):
+                        if 0 <= idx < len(existing) and i < len(array):
+                            existing[idx] = array[i]
+                
+                updated_arrays[array_name] = existing
+        
+        # 获取所有其他未修改的数组
+        existing_arrays = {}
+        for name in self.manager.list_arrays():
+            if name not in updated_arrays:
+                existing_arrays[name] = self.manager.load(name)
+        
+        # 合并所有数组
+        all_arrays = {**existing_arrays, **updated_arrays}
+        
+        # 一次性保存所有数组
+        self.manager.save(all_arrays)
+    
+    def getitem_optimized(self, array_name: str, indexes: List[int]) -> np.ndarray:
+        """优化的随机访问实现"""
+        if not self.manager.has_array(array_name):
+            raise KeyError(f"Array '{array_name}' not found")
+        
+        # 优化策略：对于小的索引集合，使用直接内存映射访问
+        if len(indexes) <= 1000:
+            try:
+                # 使用内存映射进行高效访问
+                memmap_array = self.manager._reader.get_memmap_array(array_name, mode='r')
+                
+                # 对于连续或近似连续的索引，使用切片
+                if self._is_mostly_sequential(indexes):
+                    min_idx, max_idx = min(indexes), max(indexes)
+                    if max_idx - min_idx < len(indexes) * 2:  # 如果间隙不大
+                        chunk = memmap_array[min_idx:max_idx+1]
+                        result_indices = [i - min_idx for i in indexes]
+                        return np.array(chunk[result_indices])
+                
+                # 对于随机索引，直接访问
+                return np.array(memmap_array[indexes])
+            except Exception:
+                # 回退到完整加载
+                pass
+        
+        # 对于大的索引集合或内存映射失败，使用缓存策略
+        array = self.manager.load(array_name)
+        return array[indexes]
+    
+    def _is_mostly_sequential(self, indexes: List[int]) -> bool:
+        """检查索引是否基本连续"""
+        if len(indexes) <= 1:
+            return True
+        
+        sorted_indexes = sorted(indexes)
+        gaps = [sorted_indexes[i+1] - sorted_indexes[i] for i in range(len(sorted_indexes)-1)]
+        avg_gap = sum(gaps) / len(gaps)
+        return avg_gap <= 2  # 平均间隙小于等于2认为是连续的
     
     def stream_load(self, array_name: str, buffer_size: int = 1000) -> Iterator[np.ndarray]:
         """流式加载数组"""
@@ -420,8 +637,18 @@ class NumPack:
                 elif isinstance(indexes, np.ndarray):
                     indexes = indexes.tolist()
                 
+                # 验证索引范围，过滤掉无效索引
+                valid_indexes = []
+                for idx in indexes:
+                    if 0 <= idx < len(existing):
+                        valid_indexes.append(idx)
+                
+                if not valid_indexes:
+                    # 没有有效索引，不需要操作
+                    continue
+                
                 remaining_mask = np.ones(len(existing), dtype=bool)
-                remaining_mask[indexes] = False
+                remaining_mask[valid_indexes] = False
                 remaining_data = existing[remaining_mask]
                 
                 # 保存修改后的数组，同时保持其他数组不变
@@ -463,6 +690,30 @@ class NumPack:
     def create_high_performance_lazy_array(self, array_name: str) -> LazyArray:
         """创建高性能延迟数组（兼容别名）"""
         return self.load(array_name, lazy=True)
+        
+    def get_io_performance_stats(self) -> Dict[str, Any]:
+        """获取IO性能统计信息 - 内部监控功能"""
+        stats = {
+            "backend": "python_optimized",
+            "total_arrays": len(self.list_arrays()),
+            "memory_usage_mb": self._get_current_memory_usage() / (1024 * 1024),
+            "cache_enabled": True,
+        }
+        
+        # 添加管理器的性能统计
+        if hasattr(self.manager, '_performance_stats'):
+            stats.update(self.manager._performance_stats)
+        
+        return stats
+        
+    def _get_current_memory_usage(self) -> float:
+        """获取当前进程的内存使用情况"""
+        try:
+            import psutil
+            process = psutil.Process()
+            return process.memory_info().rss
+        except ImportError:
+            return 0.0
 
 
 def force_cleanup_windows_handles():
