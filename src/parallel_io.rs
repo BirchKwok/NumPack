@@ -2,14 +2,16 @@ use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
 use std::fs::{File, OpenOptions};
 use std::collections::{HashSet, VecDeque};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::SystemTime;
 use memmap2::MmapOptions;
 use rayon::prelude::*;
 use ndarray::{ArrayD, ArrayViewD, IxDyn};
 use numpy::Element;
 
 use crate::error::{NpkError, NpkResult};
-use crate::metadata::{ArrayMetadata, DataType, CachedMetadataStore};
+use crate::metadata::{ArrayMetadata, DataType};
+use crate::msgpack_metadata::{MessagePackMetadataStore, MessagePackCachedStore, MessagePackArrayMetadata, MessagePackDataType};
 
 // 平台特定导入
 
@@ -232,7 +234,7 @@ impl ArrayView {
     }
 
     pub fn physical_delete(&mut self, excluded_indices: &[i64]) -> NpkResult<()> {
-        let element_size = self.meta.dtype.size_bytes() as usize;
+        let element_size = self.meta.get_dtype().size_bytes() as usize;
         let shape: Vec<usize> = self.meta.shape.iter().map(|&x| x as usize).collect();
         let row_size = shape[1..].iter().product::<usize>() * element_size;
         let total_rows = shape[0];
@@ -470,7 +472,7 @@ impl ArrayView {
 #[allow(dead_code)]
 pub struct ParallelIO {
     base_dir: PathBuf,
-    metadata: Arc<CachedMetadataStore>,
+    metadata: Arc<MessagePackCachedStore>,
     metadata_path: PathBuf,
 }
 
@@ -478,7 +480,8 @@ impl ParallelIO {
     pub fn new(base_dir: PathBuf) -> NpkResult<Self> {
         let metadata_path = base_dir.join("metadata.npkm");
         let wal_path = Some(base_dir.join("metadata.wal"));
-        let metadata = CachedMetadataStore::new(&metadata_path, wal_path)?;
+        
+        let metadata = Self::load_messagepack_metadata(&metadata_path, wal_path)?;
         
         Ok(Self {
             base_dir,
@@ -486,6 +489,50 @@ impl ParallelIO {
             metadata_path,
         })
     }
+    
+    /// 直接加载MessagePack格式的元数据
+    fn load_messagepack_metadata(metadata_path: &std::path::Path, wal_path: Option<PathBuf>) -> NpkResult<MessagePackCachedStore> {
+        if !metadata_path.exists() {
+            return MessagePackCachedStore::new(metadata_path, wal_path);
+        }
+        
+        // 直接读取MessagePack格式
+        match MessagePackMetadataStore::load(metadata_path) {
+            Ok(msgpack_store) => {
+                MessagePackCachedStore::from_store(msgpack_store, metadata_path, wal_path)
+            },
+            Err(e) => {
+                MessagePackCachedStore::new(metadata_path, wal_path)
+            }
+        }
+    }
+    
+    /// 将ArrayMetadata转换为MessagePackArrayMetadata
+    fn array_metadata_to_msgpack(meta: ArrayMetadata) -> MessagePackArrayMetadata {
+        let dtype_code = meta.dtype as u8;
+        MessagePackArrayMetadata {
+            name: meta.name,
+            shape: meta.shape,
+            data_file: meta.data_file,
+            last_modified: meta.last_modified,
+            size_bytes: meta.size_bytes,
+            dtype: dtype_code,
+        }
+    }
+    
+    /// 将MessagePackArrayMetadata转换为ArrayMetadata
+    fn msgpack_to_array_metadata(meta: MessagePackArrayMetadata) -> ArrayMetadata {
+        ArrayMetadata {
+            name: meta.name,
+            shape: meta.shape,
+            data_file: meta.data_file,
+            last_modified: meta.last_modified,
+            size_bytes: meta.size_bytes,
+            dtype: meta.dtype,
+            raw_data: None,
+        }
+    }
+
 
     const WRITE_CHUNK_SIZE: usize = 8 * 1024 * 1024;  // 8MB write chunk size
 
@@ -553,9 +600,10 @@ impl ParallelIO {
             })
             .collect::<Result<Vec<_>, _>>()?;
         
-        // Batch update metadata
+        // Batch update metadata  
         for (_name, meta) in metadata_updates {
-            self.metadata.add_array(meta)?;
+            let msgpack_meta = Self::array_metadata_to_msgpack(meta);
+            self.metadata.add_array(msgpack_meta)?;
         }
         
         Ok(())
@@ -584,18 +632,20 @@ impl ParallelIO {
             .map(|(name, meta)| {
                 let data_path = self.base_dir.join(&meta.data_file);
                 let file = File::open(&data_path)?;
-                let view = ArrayView::new(meta, file, data_path.clone());
+                let array_meta = Self::msgpack_to_array_metadata(meta);
+                let view = ArrayView::new(array_meta, file, data_path.clone());
                 Ok((name, view))
             })
             .collect()
     }
 
     pub fn get_array_meta(&self, name: &str) -> Option<ArrayMetadata> {
-        self.metadata.get_array(name)
+        self.metadata.get_array(name).map(Self::msgpack_to_array_metadata)
     }
 
     pub fn get_array_metadata(&self, name: &str) -> Result<ArrayMetadata, NpkError> {
         self.metadata.get_array(name)
+            .map(Self::msgpack_to_array_metadata)
             .ok_or_else(|| NpkError::ArrayNotFound(name.to_string()))
     }
 
@@ -617,7 +667,8 @@ impl ParallelIO {
     }
 
     pub fn update_array_metadata(&self, name: &str, meta: ArrayMetadata) -> NpkResult<()> {
-        self.metadata.update_array_metadata(name, meta)
+        let msgpack_meta = Self::array_metadata_to_msgpack(meta);
+        self.metadata.update_array_metadata(name, msgpack_meta)
     }
 
     pub fn has_array(&self, name: &str) -> bool {
@@ -625,21 +676,23 @@ impl ParallelIO {
     }
 
     pub fn drop_arrays(&self, name: &str, excluded_indices: Option<&[i64]>) -> NpkResult<()> {
-        if let Some(meta) = self.metadata.get_array(name) {
-            let data_path = self.base_dir.join(&meta.data_file);
+        if let Some(msgpack_meta) = self.metadata.get_array(name) {
+            let data_path = self.base_dir.join(&msgpack_meta.data_file);
             
             {
                 let file = OpenOptions::new()
                     .read(true)
                     .write(true)
                     .open(&data_path)?;
-                let mut view = ArrayView::new(meta.clone(), file, data_path.clone());
+                let array_meta = Self::msgpack_to_array_metadata(msgpack_meta);
+                let mut view = ArrayView::new(array_meta, file, data_path.clone());
                 
                 if let Some(indices) = excluded_indices {
                     // Physical delete specified rows
                     view.physical_delete(indices)?;
                     // Update metadata
-                    self.metadata.update_array_metadata(name, view.meta)?;
+                    let updated_msgpack_meta = Self::array_metadata_to_msgpack(view.meta);
+                    self.metadata.update_array_metadata(name, updated_msgpack_meta)?;
                 }
             } // file handle is automatically dropped here
             
@@ -835,7 +888,7 @@ impl ParallelIO {
         let data_path = self.base_dir.join(format!("data_{}.npkd", name));
         
         let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
-        let row_size = shape[1..].iter().product::<usize>() * meta.dtype.size_bytes() as usize;
+        let row_size = shape[1..].iter().product::<usize>() * meta.get_dtype().size_bytes() as usize;
         
         // Validate all indices
         for &idx in indexes {

@@ -11,13 +11,13 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Tuple, Union, Optional
 import numpy as np
 
-from .rust_compatible_format import RustCompatibleManager, RustArrayMetadata
+from .msgpack_compatible_format import MessagePackCompatibleManager, MessagePackArrayMetadata, MessagePackCompatibleReader
 
 
 class LazyArray:
-    """延迟加载数组 - 使用 Rust 兼容格式 - 优化版本"""
+    """延迟加载数组 - 使用 MessagePack 兼容格式 - 优化版本"""
     
-    def __init__(self, manager: RustCompatibleManager, array_name: str):
+    def __init__(self, manager: MessagePackCompatibleManager, array_name: str):
         self.manager = manager
         self.array_name = array_name
         self._metadata = None
@@ -28,7 +28,7 @@ class LazyArray:
         self._target_shape = None
     
     @property
-    def metadata(self) -> RustArrayMetadata:
+    def metadata(self) -> MessagePackArrayMetadata:
         """获取元数据"""
         if self._metadata is None:
             self._metadata = self.manager.get_metadata(self.array_name)
@@ -223,28 +223,28 @@ class LazyArray:
 class ArrayMetadata:
     """数组元数据 - 兼容原 API"""
     
-    def __init__(self, rust_metadata: RustArrayMetadata):
-        self._rust_metadata = rust_metadata
+    def __init__(self, msgpack_metadata: MessagePackArrayMetadata):
+        self._msgpack_metadata = msgpack_metadata
     
     @property
     def name(self) -> str:
-        return self._rust_metadata.name
+        return self._msgpack_metadata.name
     
     @property
     def shape(self) -> Tuple[int, ...]:
-        return self._rust_metadata.shape
+        return self._msgpack_metadata.shape
     
     @property
     def dtype(self) -> np.dtype:
-        return self._rust_metadata.dtype
+        return self._msgpack_metadata.dtype
     
     @property
     def size(self) -> int:
-        return self._rust_metadata.total_elements
+        return self._msgpack_metadata.total_elements
     
     @property
     def modify_time(self) -> int:
-        return int(self._rust_metadata.timestamp)
+        return int(self._msgpack_metadata.last_modified)
     
     def __repr__(self) -> str:
         return f"ArrayMetadata(name='{self.name}', shape={self.shape}, dtype={self.dtype})"
@@ -271,8 +271,8 @@ class NumPack:
         # 创建目录
         self.filename.mkdir(parents=True, exist_ok=True)
         
-        # 使用 Rust 兼容管理器
-        self.manager = RustCompatibleManager(self.filename)
+        # 使用 MessagePack 兼容管理器
+        self.manager = MessagePackCompatibleManager(self.filename)
     
     def save(self, arrays: Dict[str, np.ndarray], **kwargs) -> None:
         """保存数组到 NumPack 文件 - 自动优化版本
@@ -312,7 +312,7 @@ class NumPack:
                 existing_arrays = {}
                 try:
                     # 创建新的 reader 实例以确保读取最新状态
-                    temp_manager = RustCompatibleManager(self.filename)
+                    temp_manager = MessagePackCompatibleManager(self.filename)
                     existing_names = temp_manager.list_arrays()
                     for name in existing_names:
                         existing_arrays[name] = temp_manager.load(name)
@@ -355,7 +355,7 @@ class NumPack:
         existing_names = set()
         try:
             if self.manager._reader is None:
-                self.manager._reader = RustCompatibleReader(self.filename)
+                self.manager._reader = MessagePackCompatibleReader(self.filename)
             existing_names = set(self.manager._reader.list_arrays())
         except:
             pass

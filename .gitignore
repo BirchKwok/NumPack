@@ -22,5 +22,6 @@ __pycache__/
 .kiro/
 .cursor/
 .claude/*
+dist/*
 
 *.egg-info/

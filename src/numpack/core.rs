@@ -251,12 +251,12 @@ impl NumPack {
             };
             
             let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
-            let itemsize = meta.dtype.size_bytes() as usize;
+            let itemsize = meta.get_dtype().size_bytes() as usize;
             
             let lazy_array = LazyArray::new(
                 mmap,
                 shape,
-                meta.dtype,
+                meta.get_dtype(),
                 itemsize,
                 array_path,
                 meta.last_modified as i64,
@@ -289,7 +289,7 @@ impl NumPack {
         let mmap = unsafe { memmap2::MmapOptions::new().map(&file)? };
         
         // Create array and copy data
-        let array: PyObject = match meta.dtype {
+        let array: PyObject = match meta.get_dtype() {
             DataType::Bool => {
                 let data = unsafe {
                     let slice = std::slice::from_raw_parts(mmap.as_ptr(), mmap.len());
@@ -418,7 +418,7 @@ impl NumPack {
                 array_dict.set_item("data_file", &meta.data_file)?;
                 array_dict.set_item("last_modified", meta.last_modified)?;
                 array_dict.set_item("size_bytes", meta.size_bytes)?;
-                array_dict.set_item("dtype", format!("{:?}", meta.dtype))?;
+                array_dict.set_item("dtype", format!("{:?}", meta.get_dtype()))?;
                 arrays.set_item(name, array_dict)?;
             }
         }
@@ -445,9 +445,9 @@ impl NumPack {
             }
 
             let dtype = get_array_dtype(&array)?;
-            if dtype != meta.dtype {
+            if dtype != meta.get_dtype() {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    format!("Array dtype mismatch: expected {:?}, got {:?}", meta.dtype, dtype)
+                    format!("Array dtype mismatch: expected {:?}, got {:?}", meta.get_dtype(), dtype)
                 ));
             }
 
@@ -581,11 +581,11 @@ impl NumPack {
             // Update metadata
             let mut new_meta = meta.clone();
             new_meta.shape[0] += shape[0] as u64;
-            new_meta.size_bytes = new_meta.total_elements() * new_meta.dtype.size_bytes() as u64;
+            new_meta.size_bytes = new_meta.total_elements() * new_meta.get_dtype().size_bytes() as u64;
             new_meta.last_modified = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_secs();
+                .as_micros() as u64;
             self.io.update_array_metadata(&name, new_meta)?;
         }
         
@@ -647,7 +647,7 @@ impl NumPack {
         new_shape[0] = indices.len();
         
         // Create a NumPy array based on the data type
-        let array: PyObject = match meta.dtype {
+        let array: PyObject = match meta.get_dtype() {
             DataType::Bool => {
                 let array = unsafe {
                     let slice: &[u8] = bytemuck::cast_slice(&data);
@@ -762,7 +762,7 @@ impl NumPack {
         if let Some(meta) = self.io.get_array_meta(array_name) {
             Ok(ArrayMetadata {
                 shape: meta.shape.iter().map(|&x| x as i64).collect(),
-                dtype: format!("{:?}", meta.dtype),
+                dtype: format!("{:?}", meta.get_dtype()),
                 data_file: self.base_dir.join(&meta.data_file).to_string_lossy().to_string(),
             })
         } else {
@@ -780,7 +780,7 @@ impl NumPack {
         let data_path = self.base_dir.join(format!("data_{}.npkd", array_name));
         let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
         
-        let dtype_str = match meta.dtype {
+        let dtype_str = match meta.get_dtype() {
             DataType::Bool => "bool",
             DataType::Uint8 => "uint8",
             DataType::Uint16 => "uint16",

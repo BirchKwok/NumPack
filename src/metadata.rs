@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use bitvec::prelude::*;
 use serde_bytes::ByteBuf;
+use rmp_serde::{Deserializer, Serializer};
 // use half::f16; // Will be used when f16 arrays are actually loaded
 
 use crate::error::{NpkError, NpkResult};
@@ -49,7 +50,7 @@ impl WalRecord {
 
     fn calculate_checksum(&self) -> u32 {
         let mut hasher = crc32fast::Hasher::new();
-        let op_bytes = bincode::serialize(&self.op).unwrap_or_default();
+        let op_bytes = rmp_serde::to_vec(&self.op).unwrap_or_default();
         hasher.update(&op_bytes);
         hasher.update(&self.timestamp.to_le_bytes());
         hasher.update(&self.sequence_number.to_le_bytes());
@@ -109,7 +110,7 @@ impl WalWriter {
         self.current_sequence += 1;
         let record = WalRecord::new(op, self.current_sequence);
         
-        let bytes = bincode::serialize(&record)
+        let bytes = rmp_serde::to_vec(&record)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             
         // Atomic write
@@ -132,7 +133,7 @@ impl WalWriter {
         for op in ops {
             self.current_sequence += 1;
             let record = WalRecord::new(op, self.current_sequence);
-            let bytes = bincode::serialize(&record)
+            let bytes = rmp_serde::to_vec(&record)
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
                 
             temp_buf.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
@@ -175,21 +176,22 @@ impl WalWriter {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[repr(u8)]
 pub enum DataType {
-    Bool,
-    Uint8,
-    Uint16,
-    Uint32,
-    Uint64,
-    Int8,
-    Int16,
-    Int32,
-    Int64,
-    Float16,
-    Float32,
-    Float64,
-    Complex64,
-    Complex128,
+    Bool = 0,
+    Uint8 = 1,
+    Uint16 = 2,
+    Uint32 = 3,
+    Uint64 = 4,
+    Int8 = 5,
+    Int16 = 6,
+    Int32 = 7,
+    Int64 = 8,
+    Float16 = 9,
+    Float32 = 10,
+    Float64 = 11,
+    Complex64 = 12,
+    Complex128 = 13,
 }
 
 impl DataType {
@@ -219,11 +221,11 @@ pub struct ArrayMetadata {
     pub name: String,
     pub shape: Vec<u64>,         // Data shape
     pub data_file: String,     // Data file name
-    pub last_modified: u64,    // Last modified time
+    pub last_modified: u64,    // Last modified time in microseconds
     pub size_bytes: u64,       // Data size
-    pub dtype: DataType,       // Data type
+    pub dtype: u8,             // Data type as u8 to match Python
     #[serde(skip)]
-    raw_data: Option<ByteBuf>,  // For zero-copy serialization
+    pub raw_data: Option<ByteBuf>,  // For zero-copy serialization
 }
 
 impl ArrayMetadata {
@@ -236,10 +238,31 @@ impl ArrayMetadata {
             last_modified: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_secs(),
+                .as_micros() as u64,  // Use microseconds to match Python
             size_bytes: total_elements * dtype.size_bytes() as u64,
-            dtype,
+            dtype: dtype as u8,  // Convert DataType enum to u8
             raw_data: None,
+        }
+    }
+    
+    // Helper method to get DataType from u8
+    pub fn get_dtype(&self) -> DataType {
+        match self.dtype {
+            0 => DataType::Bool,
+            1 => DataType::Uint8,
+            2 => DataType::Uint16,
+            3 => DataType::Uint32,
+            4 => DataType::Uint64,
+            5 => DataType::Int8,
+            6 => DataType::Int16,
+            7 => DataType::Int32,
+            8 => DataType::Int64,
+            9 => DataType::Float16,
+            10 => DataType::Float32,
+            11 => DataType::Float64,
+            12 => DataType::Complex64,
+            13 => DataType::Complex128,
+            _ => DataType::Int32, // Default fallback
         }
     }
 
@@ -254,9 +277,9 @@ impl ArrayMetadata {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MetadataStore {
-    version: u32,
-    arrays: HashMap<String, ArrayMetadata>,
-    total_size: u64,
+    pub version: u32,
+    pub arrays: HashMap<String, ArrayMetadata>,
+    pub total_size: u64,
     #[serde(skip)]
     bitmap: BitVec,
     #[serde(skip)]
@@ -292,8 +315,10 @@ impl MetadataStore {
                 // If it's an empty file, return a new store instance
                 Self::new(None)
             } else {
-                let reader = BufReader::new(file);
-                match bincode::deserialize_from(reader) {
+                let mut reader = BufReader::new(file);
+                let mut data = Vec::new();
+                reader.read_to_end(&mut data)?;
+                match rmp_serde::from_slice(&data) {
                     Ok(store) => store,
                     Err(_) => {
                         // If deserialization fails, return a new store instance
@@ -346,7 +371,7 @@ impl MetadataStore {
             buffer.resize(len as usize, 0);
             match file.read_exact(&mut buffer) {
                 Ok(()) => {
-                    if let Ok(record) = bincode::deserialize::<WalRecord>(&buffer) {
+                    if let Ok(record) = rmp_serde::from_slice::<WalRecord>(&buffer) {
                         if record.is_valid() && record.sequence_number > last_valid_sequence {
                             match record.op {
                                 WalOp::BeginTransaction => {
@@ -424,8 +449,9 @@ impl MetadataStore {
                 .open(&temp_path)?;
             
             let mut writer = BufWriter::new(file);
-            bincode::serialize_into(&mut writer, &self)
+            let data = rmp_serde::to_vec(&self)
                 .map_err(|e| NpkError::InvalidMetadata(e.to_string()))?;
+            writer.write_all(&data)?;
             writer.flush()?;
         }
         
@@ -600,10 +626,10 @@ impl MetadataStore {
 
 #[derive(Debug)]
 pub struct CachedMetadataStore {
-    store: Arc<RwLock<MetadataStore>>,
-    path: Arc<Path>,
-    last_sync: Arc<Mutex<SystemTime>>,
-    sync_interval: std::time::Duration,
+    pub store: Arc<RwLock<MetadataStore>>,
+    pub path: Arc<Path>,
+    pub last_sync: Arc<Mutex<SystemTime>>,
+    pub sync_interval: std::time::Duration,
 }
 
 impl CachedMetadataStore {
@@ -634,7 +660,10 @@ impl CachedMetadataStore {
 
     fn sync_to_disk(&self) -> NpkResult<()> {
         let store = self.store.read().unwrap();
+        
+        // 直接使用legacy格式保存（此实现已弃用，推荐使用MessagePackCachedStore）
         store.save(&self.path)?;
+        
         let mut last_sync = self.last_sync.lock().unwrap();
         *last_sync = SystemTime::now();
         Ok(())
