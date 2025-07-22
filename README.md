@@ -1,9 +1,9 @@
 # NumPack
 
-NumPack is a lightning-fast array manipulation engine that revolutionizes how you handle large-scale NumPy arrays. By combining Rust's raw performance with Python's ease of use, NumPack delivers up to 20x faster operations than traditional methods, while using minimal memory. Whether you're working with gigabyte-sized matrices or performing millions of array operations, NumPack makes it effortless with its zero-copy architecture and intelligent memory management.
+NumPack is a lightning-fast array manipulation engine that revolutionizes how you handle large-scale NumPy arrays. By combining Rust's raw performance with Python's ease of use, NumPack delivers up to 166x faster operations than traditional methods, while using minimal memory. Whether you're working with gigabyte-sized matrices or performing millions of array operations, NumPack makes it effortless with its zero-copy architecture and intelligent memory management.
 
 Key highlights:
-- 🚀 Up to 20x faster than traditional NumPy storage methods
+- 🚀 Up to 166x faster than traditional NumPy storage methods
 - 💾 Zero-copy operations for minimal memory footprint
 - 🔄 Seamless integration with existing NumPy workflows
 - 🛠 Battle-tested in production with arrays exceeding 1 billion rows
@@ -19,7 +19,8 @@ Key highlights:
   - Boolean
   - Unsigned integers (8-bit to 64-bit)
   - Signed integers (8-bit to 64-bit)
-  - Floating point (32-bit and 64-bit)
+  - Floating point (16-bit, 32-bit and 64-bit)
+  - Complex numbers (64-bit and 128-bit)
 
 ## Installation
 
@@ -183,78 +184,78 @@ NumPack offers significant performance improvements compared to traditional NumP
 
 ### Benchmark Results
 
-The following benchmarks were performed on an MacBook Pro (Apple Silicon) with arrays of size 1M x 10 and 500K x 5 (float32).
+The following benchmarks were performed on a MacBook Pro (Apple Silicon) with arrays of size 1M x 10 and 500K x 5 (float32).
 
 #### Storage Operations
 
-| Operation | NumPack (Best) | NumPack (Python) | NumPy NPZ | NumPy NPY |
-|-----------|----------------|------------------|-----------|-----------|
-| Save | 0.015s (0.96x NPZ, 0.55x NPY) | 0.015s (0.96x NPZ, 0.55x NPY) | 0.014s | 0.008s |
-| Full Load | 0.007s (1.89x NPZ, 1.02x NPY) | 0.009s (1.56x NPZ, 0.85x NPY) | 0.014s | 0.008s |
-| Selective Load | 0.006s (1.61x NPZ, -) | 0.006s (1.61x NPZ, -) | 0.010s | - |
+| Operation | NumPack (Python) | NumPack (Rust) | NumPy NPZ | NumPy NPY |
+|-----------|------------------|----------------|-----------|-----------|
+| Save | 0.014s (1.01x NPZ, 0.53x NPY) | 0.041s (0.35x NPZ, 0.18x NPY) | 0.015s | 0.008s |
+| Full Load | 0.008s (1.50x NPZ, 0.96x NPY) | 0.007s (1.71x NPZ, 1.09x NPY) | 0.013s | 0.008s |
+| Selective Load | 0.006s (1.61x NPZ, -) | 0.006s (1.59x NPZ, -) | 0.010s | - |
 
 #### Data Modification Operations
 
-| Operation | NumPack (Best) | NumPack (Python) | NumPy NPZ | NumPy NPY |
-|-----------|----------------|------------------|-----------|-----------|
-| Single Row Replace | 0.000s (≥156x NPZ, ≥90x NPY) | 0.000s (≥156x NPZ, ≥90x NPY) | 0.024s | 0.014s |
-| Continuous Rows (10K) | 0.001s (24.00x NPZ, 14.00x NPY) | 0.001s (24.00x NPZ, 14.00x NPY) | 0.024s | 0.014s |
-| Random Rows (10K) | 0.014s (1.71x NPZ, 1.00x NPY) | 0.014s (1.71x NPZ, 1.00x NPY) | 0.024s | 0.014s |
-| Large Data Replace (500K) | 0.018s (1.33x NPZ, 0.78x NPY) | 0.020s (1.20x NPZ, 0.70x NPY) | 0.024s | 0.014s |
+| Operation | NumPack (Python) | NumPack (Rust) | NumPy NPZ | NumPy NPY |
+|-----------|------------------|----------------|-----------|-----------|
+| Single Row Replace | 0.000s (≥154x NPZ, ≥85x NPY) | 0.000s (≥166x NPZ, ≥92x NPY) | 0.023s | 0.013s |
+| Continuous Rows (10K) | 0.001s | 0.001s | - | - |
+| Random Rows (10K) | 0.014s | 0.015s | - | - |
+| Large Data Replace (500K) | 0.020s | 0.018s | - | - |
 
 #### Drop Operations
 
-| Operation (1M rows, float32) | NumPack (Best) | NumPack (Python) | NumPy NPZ | NumPy NPY |
-|-----------|----------------|------------------|-----------|-----------|
-| Drop Array | 0.005s (2.60x NPZ, 0.16x NPY) | 0.007s (1.91x NPZ, 0.12x NPY) | 0.013s | 0.001s |
-| Drop First Row | 0.019s (2.10x NPZ, 1.50x NPY) | 0.023s (1.67x NPZ, 1.20x NPY) | 0.039s | 0.028s |
-| Drop Last Row | 0.019s (∞x NPZ, ∞x NPY) | 0.020s (∞x NPZ, ∞x NPY) | 0.039s | 0.028s |
-| Drop Middle Row | 0.020s (2.00x NPZ, 1.43x NPY) | 0.020s (2.00x NPZ, 1.43x NPY) | 0.039s | 0.028s |
-| Drop Front Continuous (10K rows) | 0.018s (2.11x NPZ, 1.52x NPY) | 0.021s (1.90x NPZ, 1.36x NPY) | 0.039s | 0.028s |
-| Drop Middle Continuous (10K rows) | 0.019s (2.04x NPZ, 1.46x NPY) | 0.019s (2.04x NPZ, 1.46x NPY) | 0.039s | 0.028s |
-| Drop End Continuous (10K rows) | 0.021s (1.87x NPZ, 1.34x NPY) | 0.021s (1.87x NPZ, 1.34x NPY) | 0.039s | 0.028s |
-| Drop Random Rows (10K rows) | 0.022s (1.77x NPZ, 1.27x NPY) | 0.024s (1.63x NPZ, 1.17x NPY) | 0.039s | 0.028s |
-| Drop Near Non-continuous (10K rows) | 0.021s (1.82x NPZ, 1.31x NPY) | 0.021s (1.82x NPZ, 1.31x NPY) | 0.039s | 0.028s |
+| Operation (1M rows, float32) | NumPack (Python) | NumPack (Rust) | NumPy NPZ | NumPy NPY |
+|-----------|------------------|----------------|-----------|-----------|
+| Drop Array | 0.008s (1.60x NPZ, 0.12x NPY) | 0.004s (2.80x NPZ, 0.22x NPY) | 0.012s | 0.001s |
+| Drop First Row | 0.023s (1.62x NPZ, 1.21x NPY) | 0.020s (1.86x NPZ, 1.39x NPY) | 0.038s | 0.028s |
+| Drop Last Row | 0.019s (∞x NPZ, ∞x NPY) | 0.020s (∞x NPZ, ∞x NPY) | 0.038s | 0.028s |
+| Drop Middle Row | 0.019s (1.96x NPZ, 1.46x NPY) | 0.019s (1.95x NPZ, 1.46x NPY) | 0.038s | 0.028s |
+| Drop Front Continuous (10K rows) | 0.021s (1.77x NPZ, 1.33x NPY) | 0.021s (1.84x NPZ, 1.37x NPY) | 0.038s | 0.028s |
+| Drop Middle Continuous (10K rows) | 0.020s (1.85x NPZ, 1.38x NPY) | 0.020s (1.86x NPZ, 1.39x NPY) | 0.038s | 0.028s |
+| Drop End Continuous (10K rows) | 0.020s (1.88x NPZ, 1.41x NPY) | 0.020s (1.85x NPZ, 1.38x NPY) | 0.038s | 0.028s |
+| Drop Random Rows (10K rows) | 0.025s (1.52x NPZ, 1.14x NPY) | 0.021s (1.76x NPZ, 1.32x NPY) | 0.038s | 0.028s |
+| Drop Near Non-continuous (10K rows) | 0.018s (2.05x NPZ, 1.53x NPY) | 0.022s (1.75x NPZ, 1.31x NPY) | 0.038s | 0.028s |
 
 #### Append Operations
 
-| Operation | NumPack (Best) | NumPack (Python) | NumPy NPZ | NumPy NPY |
-|-----------|----------------|------------------|-----------|-----------|
-| Small Append (1K rows) | 0.004s (≥6x NPZ, ≥4x NPY) | 0.006s (≥5x NPZ, ≥3x NPY) | 0.028s | 0.018s |
-| Large Append (500K rows) | 0.008s (4.86x NPZ, 3.06x NPY) | 0.008s (4.86x NPZ, 3.06x NPY) | 0.037s | 0.024s |
+| Operation | NumPack (Python) | NumPack (Rust) | NumPy NPZ | NumPy NPY |
+|-----------|------------------|----------------|-----------|-----------|
+| Small Append (1K rows) | 0.004s (≥6x NPZ, ≥4x NPY) | 0.004s (≥7x NPZ, ≥4x NPY) | 0.028s | 0.017s |
+| Large Append (500K rows) | 0.008s (4.88x NPZ, 3.28x NPY) | 0.016s (2.28x NPZ, 1.53x NPY) | 0.037s | 0.025s |
 
 #### Random Access Performance (10K indices)
 
-| Operation | NumPack (Best) | NumPack (Python) | NumPy NPZ | NumPy NPY |
-|-----------|----------------|------------------|-----------|-----------|
-| Random Access | 0.005s (2.13x NPZ, 1.54x NPY) | 0.005s (2.13x NPZ, 1.54x NPY) | 0.012s | 0.008s |
+| Operation | NumPack (Python) | NumPack (Rust) | NumPy NPZ | NumPy NPY |
+|-----------|------------------|----------------|-----------|-----------|
+| Random Access | 0.005s (2.20x NPZ, 1.45x NPY) | 0.005s (2.30x NPZ, 1.52x NPY) | 0.012s | 0.008s |
 
 #### Matrix Computation Performance (1M rows x 128 columns, Float32)
 
-| Operation | NumPack (Best) | NumPack (Python) | NumPy NPZ | NumPy NPY | In-Memory |
-|-----------|----------------|------------------|-----------|-----------|-----------|
-| Inner Product | 0.066s (2.18x NPZ, 6.23x Memory) | 0.066s (2.18x NPZ, 6.23x Memory) | 0.144s | 0.096s | 0.011s |
+| Operation | NumPack (Python) | NumPack (Rust) | NumPy NPZ | NumPy NPY | In-Memory |
+|-----------|------------------|----------------|-----------|-----------|-----------|
+| Inner Product | 0.065s (2.18x NPZ, 5.82x Memory) | 0.064s (2.22x NPZ, 5.70x Memory) | 0.142s | 0.096s | 0.011s |
 
 #### File Size Comparison
 
 | Format | Size | Ratio |
 |--------|------|-------|
 | NumPack | 47.68 MB | 1.0x |
-| NPZ | 47.68 MB | 1.0x |
-| NPY | 47.68 MB | 1.0x |
+| NPZ | 47.68 MB | 1.00x |
+| NPY | 47.68 MB | 1.00x |
 
 > **Note**: Both Python and Rust backends generate identical file sizes as they use the same underlying file format.
 
 #### Large-scale Data Operations (>1B rows, Float32)
 
-| Operation | NumPack (Best) | NumPack (Python) | NumPy NPZ | NumPy NPY |
-|-----------|----------------|------------------|-----------|-----------|
-| Replace | Zero-copy in-place modification | Efficient in-place modification | Memory exceeded | Memory exceeded |
-| Drop | Zero-copy in-place deletion | Efficient in-place deletion | Memory exceeded | Memory exceeded |
-| Append | Zero-copy in-place addition | Efficient in-place addition | Memory exceeded | Memory exceeded |
-| Random Access | Near-hardware I/O speed | High-performance I/O | Memory exceeded | Memory exceeded |
+| Operation | NumPack (Python) | NumPack (Rust) | NumPy NPZ | NumPy NPY |
+|-----------|------------------|----------------|-----------|-----------|
+| Replace | Efficient in-place modification | Zero-copy in-place modification | Memory exceeded | Memory exceeded |
+| Drop | Efficient in-place deletion | Zero-copy in-place deletion | Memory exceeded | Memory exceeded |
+| Append | Efficient in-place addition | Zero-copy in-place addition | Memory exceeded | Memory exceeded |
+| Random Access | High-performance I/O | Near-hardware I/O speed | Memory exceeded | Memory exceeded |
 
-> **Key Advantage**: NumPack provides excellent matrix computation performance (0.066s vs 0.144s NPZ mmap) with several implementation advantages:
+> **Key Advantage**: NumPack provides excellent matrix computation performance (0.065s vs 0.142s NPZ mmap) with several implementation advantages:
 > - Uses Arc<Mmap> for reference counting, ensuring automatic resource cleanup
 > - Implements MMAP_CACHE to avoid redundant data loading
 > - Linux-specific optimizations with huge pages and sequential access hints
@@ -264,44 +265,46 @@ The following benchmarks were performed on an MacBook Pro (Apple Silicon) with a
 ### Key Performance Highlights
 
 1. **Data Modification**:
-   - Single row replacement: NumPack Python backend is **≥156x faster** than NPZ and **≥90x faster** than NPY
-   - Continuous rows: NumPack is **24x faster** than NPZ and **14x faster** than NPY
-   - Random rows: NumPack is **1.71x faster** than NPZ and on par with NPY
-   - Large data replacement: NumPack Python backend is **1.20x faster** than NPZ but **0.70x slower** than NPY
+   - Single row replacement: NumPack Python backend is **≥154x faster** than NPZ and **≥85x faster** than NPY; Rust backend is **≥166x faster** than NPZ and **≥92x faster** than NPY
+   - Continuous rows: Both backends show excellent performance for bulk modifications
+   - Random rows: Both backends provide efficient random row replacement
+   - Large data replacement: Rust backend shows **10% better performance** than Python backend for large-scale modifications
 
 2. **Drop Operations**:
-   - Drop array: NumPack Python backend is **1.91x faster** than NPZ
-   - Drop rows: NumPack Python backend is **~2x faster** than NPZ and **~1.4x faster** than NPY in typical scenarios
+   - Drop array: Rust backend is **2.80x faster** than NPZ, Python backend is **1.60x faster** than NPZ
+   - Drop rows: Both backends are **~1.5-2x faster** than NPZ and **~1.3-1.5x faster** than NPY in typical scenarios
    - NumPack continues to support efficient in-place row deletion without full file rewrite
 
 3. **Append Operations**:
-   - Small append (1K rows): NumPack Python backend is **≥5x faster** than NPZ and **≥3x faster** than NPY
-   - Large append (500K rows): NumPack Python backend is **4.86x faster** than NPZ and **3.06x faster** than NPY
-   - Performance improvements in append operations are attributed to optimized buffer management
+   - Small append (1K rows): Both backends are **≥6x faster** than NPZ and **≥4x faster** than NPY
+   - Large append (500K rows): Python backend is **4.88x faster** than NPZ; Rust backend is **2.28x faster** than NPZ
+   - Python backend shows superior performance for large append operations
 
 4. **Loading Performance**:
-   - Full load: NumPack Python backend is **1.56x faster** than NPZ and **0.85x slower** than NPY
-   - Lazy load (memory-mapped): NumPack provides near-instantaneous loading
-   - Selective load: NumPack Python backend is **1.61x faster** than NPZ
+   - Full load: Rust backend is **1.71x faster** than NPZ; Python backend is **1.50x faster** than NPZ
+   - Lazy load (memory-mapped): Both backends provide near-instantaneous loading
+   - Selective load: Both backends are **~1.6x faster** than NPZ
 
 5. **Random Access**:
-   - NumPack Python backend is **2.13x faster** than NPZ and **1.54x faster** than NPY for random index access
+   - Rust backend is **2.30x faster** than NPZ and **1.52x faster** than NPY for random index access
+   - Python backend is **2.20x faster** than NPZ and **1.45x faster** than NPY
 
 6. **Storage Efficiency**:
    - All formats achieve identical compression ratios (47.68 MB)
    - Both Python and Rust backends generate identical file sizes using the same underlying format
 
 7. **Matrix Computation**:
-   - NumPack Python backend provides **2.18x faster** performance than NPZ mmap
-   - Only **6.23x slower** than pure in-memory computation, providing excellent balance of performance and memory efficiency
+   - Rust backend provides **2.22x faster** performance than NPZ mmap
+   - Python backend provides **2.18x faster** performance than NPZ mmap
+   - Only **~5.8x slower** than pure in-memory computation, providing excellent balance of performance and memory efficiency
    - Zero risk of file descriptor leaks or resource exhaustion
 
 8. **Backend Performance**:
-   - **Python backend**: Excellent overall performance, particularly strong in modification operations
-   - **Rust backend**: Optimized for specific use cases, with best-in-class performance for certain operations
+   - **Python backend**: Excellent overall performance, particularly strong in append operations and modification operations
+   - **Rust backend**: Superior performance in loading, drop operations, and single-row modifications with zero-copy optimizations
    - Both backends share the same file format ensuring perfect compatibility
 
-> Note: All benchmarks were performed with float32 arrays. Performance may vary depending on data types, array sizes, and system configurations. Numbers greater than 1.0x indicate faster performance, while numbers less than 1.0x indicate slower performance.
+> Note: All benchmarks were performed with float32 arrays in the dev conda environment. Performance may vary depending on data types, array sizes, and system configurations. Numbers greater than 1.0x indicate faster performance, while numbers less than 1.0x indicate slower performance. The Python and Rust backends demonstrate different performance characteristics - Python backend excels in append operations and large data modifications, while Rust backend shows superior performance in loading operations and drop operations.
 
 ## Contributing
 
