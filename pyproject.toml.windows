@@ -29,7 +29,8 @@ classifiers = [
 ]
 dependencies = [
     "numpy>=1.26.0",
-    "filelock>=3.0.0"
+    "filelock>=3.0.0",
+    "msgpack>=1.1.0"
 ]
 
 [tool.setuptools]

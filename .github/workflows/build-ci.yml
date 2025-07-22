@@ -113,7 +113,7 @@ jobs:
           else
             . venv/bin/activate
           fi
-          python -m pip install "maturin>=1.0,<2.0" "numpy>=1.26.0" "filelock>=3.0.0" pytest pytest-timeout
+          python -m pip install "maturin>=1.0,<2.0" "numpy>=1.26.0" "filelock>=3.0.0" pytest pytest-timeout msgpack
           
       # Install system dependencies (Linux)
       - name: Install system dependencies (Linux)
