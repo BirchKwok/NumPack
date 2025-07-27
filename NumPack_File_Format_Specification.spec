@@ -1,16 +1,17 @@
-# NumPack File Format Specification v0.2.1
+# NumPack File Format Specification v3.0
 
 ## Overview
 
-NumPack is a high-performance array storage library that provides cross-platform compatibility between Python and Rust implementations. This specification defines the unified MessagePack file format protocol used by NumPack for persistent storage of multidimensional arrays.
+NumPack is a high-performance array storage library that provides cross-platform compatibility between Python and Rust implementations. This specification defines the unified high-performance binary file format protocol used by NumPack for persistent storage of multidimensional arrays.
 
 ## Key Features
 
 - **Cross-Platform Compatibility**: Files created by Python backend can be read by Rust backend and vice versa
-- **Unified MessagePack Format**: Single, standardized format for all platforms
+- **High-Performance Binary Format**: Custom binary format optimized for speed and efficiency
 - **Zero-Copy Operations**: Memory-mapped file access for optimal performance
 - **Data Type Safety**: Strict type mapping between Python NumPy and Rust data types
 - **Concurrent Access**: File locking mechanisms for safe multi-process access
+- **Compression Support**: Built-in support for zstd compression
 
 ## Directory Structure
 
@@ -18,50 +19,58 @@ NumPack stores data as a directory containing multiple files:
 
 ```
 <numpack_directory>/
-├── metadata.npkm           # Metadata file (MessagePack format)
+├── metadata.npkm           # Metadata file (Binary format)
 ├── data_<array_name>.npkd  # Raw binary data files (one per array)
 └── metadata.npkm.lock      # File lock (temporary, for concurrent access)
 ```
 
-## MessagePack Format (Unified Standard)
+## Binary Format (High-Performance Standard)
 
-NumPack uses MessagePack as the unified format for all metadata storage. This ensures perfect compatibility between Python and Rust implementations.
+NumPack uses a custom high-performance binary format for all metadata storage. This ensures maximum speed and perfect compatibility between Python and Rust implementations.
 
 ### Metadata File Structure (`metadata.npkm`)
 
-The metadata file uses MessagePack serialization with the following schema:
+The metadata file uses a compact binary serialization with the following structure:
 
-```json
-{
-    "version": <uint32>,
-    "total_size": <uint64>, 
-    "arrays": {
-        "<array_name>": {
-            "name": "<string>",
-            "shape": [<uint64>, ...],
-            "data_file": "<string>",
-            "last_modified": <uint64>,
-            "size_bytes": <uint64>,
-            "dtype": <uint8>
-        },
-        ...
-    }
-}
+```
+Header:
+- Magic Number (4 bytes): 0x424B504E (ASCII: "NPKB")
+- Version (4 bytes): Format version (currently 1)
+- Total Size (8 bytes): Total size of all arrays in bytes
+- Array Count (4 bytes): Number of arrays in the file
+
+Array Metadata (repeated for each array):
+- Name Length (4 bytes): Length of array name
+- Name (variable): Array name in UTF-8
+- Shape Length (4 bytes): Number of dimensions
+- Shape (8 bytes × dimensions): Array dimensions as uint64
+- Data File Length (4 bytes): Length of data file name
+- Data File (variable): Data file name in UTF-8
+- Last Modified (8 bytes): Timestamp in microseconds since Unix epoch
+- Size Bytes (8 bytes): Array size in bytes
+- Data Type (1 byte): Data type code (see Data Type Mapping)
+- Compression Algorithm (1 byte): Compression algorithm code
+- Compression Level (4 bytes): Compression level
+- Original Size (8 bytes): Original uncompressed size
+- Compressed Size (8 bytes): Compressed size
+- Block Compression Flag (1 byte): Whether block compression info follows
+- [Optional] Block Compression Info: Block-level compression metadata
 ```
 
 ### Field Specifications
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `version` | uint32 | Format version (currently 1) |
-| `total_size` | uint64 | Total size of all arrays in bytes |
-| `arrays` | object | Dictionary of array metadata |
-| `name` | string | Array identifier (matches key) |
-| `shape` | array[uint64] | Array dimensions |
-| `data_file` | string | Relative path to data file (e.g., "data_array1.npkd") |
-| `last_modified` | uint64 | Timestamp in microseconds since Unix epoch |
-| `size_bytes` | uint64 | Array size in bytes |
-| `dtype` | uint8 | Data type code (see Data Type Mapping) |
+| Magic Number | uint32 | Format identifier (0x424B504E) |
+| Version | uint32 | Format version (currently 1) |
+| Total Size | uint64 | Total size of all arrays in bytes |
+| Array Count | uint32 | Number of arrays stored |
+| Name | string | Array identifier |
+| Shape | array[uint64] | Array dimensions |
+| Data File | string | Relative path to data file (e.g., "data_array1.npkd") |
+| Last Modified | uint64 | Timestamp in microseconds since Unix epoch |
+| Size Bytes | uint64 | Array size in bytes |
+| Data Type | uint8 | Data type code (see Data Type Mapping) |
 
 ### Data Files (`data_<array_name>.npkd`)
 
@@ -88,6 +97,25 @@ NumPack uses a standardized data type encoding that maps between Python NumPy an
 | 12   | np.complex64 | Complex32 | 8          | Complex (2×f32) |
 | 13   | np.complex128 | Complex64 | 16        | Complex (2×f64) |
 
+## Compression Support
+
+NumPack supports optional compression for data arrays:
+
+### Compression Algorithms
+
+| Code | Algorithm | Description |
+|------|-----------|-------------|
+| 0    | None      | No compression |
+| 1    | Zstd      | Zstandard compression |
+
+### Block Compression
+
+For large arrays, NumPack supports block-level compression:
+
+- **Block Size**: Configurable block size (default: 64KB)
+- **Independent Blocks**: Each block is compressed independently
+- **Random Access**: Allows efficient random access without full decompression
+
 ## Byte Order
 
 All multi-byte integers and floating-point numbers are stored in **little-endian** format for cross-platform compatibility.
@@ -98,7 +126,7 @@ NumPack implements file locking to ensure safe concurrent access:
 
 - **Lock File**: `<directory>/metadata.npkm.lock`
 - **Scope**: Protects metadata read/write operations
-- **Type**: Advisory file lock using `filelock` library
+- **Type**: Advisory file lock using platform-specific mechanisms
 - **Timeout**: Operations may timeout if lock cannot be acquired
 
 ## Version Control
@@ -107,19 +135,19 @@ NumPack implements file locking to ensure safe concurrent access:
 
 The version field in metadata indicates format compatibility:
 
-- **Version 1**: Unified MessagePack format
+- **Version 1**: High-performance binary format
 - **Future versions**: Will maintain backward compatibility where possible
 
 ## Cross-Platform Compatibility
 
 ### Unified Format Benefits
 
-NumPack uses MessagePack as the single, unified format across all platforms:
+NumPack uses a custom binary format as the single, unified format across all platforms:
 
-1. **No Format Conversion**: Eliminates conversion overhead and complexity
+1. **Maximum Performance**: Optimized for speed and minimal overhead
 2. **Perfect Compatibility**: 100% interoperability between Python and Rust
-3. **Simplified Implementation**: Single code path for all platforms
-4. **Better Performance**: No conversion delays
+3. **Efficient Storage**: Compact binary representation
+4. **Zero Dependencies**: No external serialization libraries required
 
 ### Endianness Handling
 
@@ -145,7 +173,7 @@ NumPack uses MessagePack as the single, unified format across all platforms:
 
 ### File Corruption Detection
 
-- **MessagePack**: Built-in validation during deserialization
+- **Magic Number**: Validates file format during load
 - **Graceful Recovery**: Partial data recovery when possible
 - **Validation**: Comprehensive metadata and data consistency checks
 
@@ -159,13 +187,13 @@ NumPack uses MessagePack as the single, unified format across all platforms:
 
 ### Python Backend
 
-- **Format**: Pure MessagePack with `msgpack` library
-- **Libraries**: `msgpack`, `numpy`, `filelock`
-- **Memory Management**: Automatic garbage collection with weak references
+- **Format**: Custom binary format with `struct` module
+- **Libraries**: Standard library only, no external dependencies
+- **Memory Management**: Automatic garbage collection with memory mapping
 
 ### Rust Backend
 
-- **Serialization**: `rmp-serde` with struct-map configuration
+- **Serialization**: Custom binary serialization for maximum performance
 - **Memory Safety**: Compile-time guarantees with explicit lifetimes
 - **Performance**: Zero-copy deserialization where possible
 
@@ -173,18 +201,17 @@ NumPack uses MessagePack as the single, unified format across all platforms:
 
 ### Automatic Conversion
 
-Previous versions of NumPack may have used different formats. The current implementation automatically:
+Previous versions of NumPack may have used MessagePack format. The current implementation:
 
-1. **Detects Legacy Files**: Attempts to read old formats
-2. **Converts Transparently**: Migrates to MessagePack format
-3. **Preserves Data**: Ensures no data loss during conversion
-4. **Updates Format**: All new writes use MessagePack format
+1. **No Backward Compatibility**: Binary format is not compatible with MessagePack
+2. **Migration Required**: Users must migrate existing data explicitly
+3. **Performance Gain**: Significant performance improvements with new format
 
 ## Future Considerations
 
 ### Potential Enhancements
 
-- **Compression**: Optional compression for data files
+- **Additional Compression**: Support for more compression algorithms
 - **Checksums**: Data integrity verification
 - **Schema Evolution**: Backward-compatible metadata schema updates
 - **Indexing**: Built-in indexing for faster array access
@@ -192,12 +219,12 @@ Previous versions of NumPack may have used different formats. The current implem
 ### Compatibility Promise
 
 NumPack guarantees:
-- **Forward Compatibility**: Newer versions can read older formats
+- **Forward Compatibility**: Newer versions can read older binary formats
 - **Cross-Language**: Files remain compatible between Python and Rust implementations
 - **Migration Path**: Clear upgrade paths for format changes
 
 ---
 
-**Document Version**: 2.0  
+**Document Version**: 3.0  
 **Last Updated**: January 2025  
 **Specification Authors**: NumPack Development Team 

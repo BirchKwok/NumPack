@@ -11,7 +11,7 @@ use numpy::Element;
 
 use crate::error::{NpkError, NpkResult};
 use crate::metadata::{ArrayMetadata, DataType};
-use crate::msgpack_metadata::{MessagePackMetadataStore, MessagePackCachedStore, MessagePackArrayMetadata, MessagePackDataType};
+use crate::binary_metadata::{BinaryMetadataStore, BinaryCachedStore, BinaryArrayMetadata, BinaryDataType};
 
 // 平台特定导入
 
@@ -472,7 +472,7 @@ impl ArrayView {
 #[allow(dead_code)]
 pub struct ParallelIO {
     base_dir: PathBuf,
-    metadata: Arc<MessagePackCachedStore>,
+    metadata: Arc<BinaryCachedStore>,
     metadata_path: PathBuf,
 }
 
@@ -481,7 +481,7 @@ impl ParallelIO {
         let metadata_path = base_dir.join("metadata.npkm");
         let wal_path = Some(base_dir.join("metadata.wal"));
         
-        let metadata = Self::load_messagepack_metadata(&metadata_path, wal_path)?;
+        let metadata = Self::load_binary_metadata(&metadata_path, wal_path)?;
         
         Ok(Self {
             base_dir,
@@ -490,45 +490,46 @@ impl ParallelIO {
         })
     }
     
-    /// 直接加载MessagePack格式的元数据
-    fn load_messagepack_metadata(metadata_path: &std::path::Path, wal_path: Option<PathBuf>) -> NpkResult<MessagePackCachedStore> {
+    /// 直接加载二进制格式的元数据
+    fn load_binary_metadata(metadata_path: &std::path::Path, wal_path: Option<PathBuf>) -> NpkResult<BinaryCachedStore> {
         if !metadata_path.exists() {
-            return MessagePackCachedStore::new(metadata_path, wal_path);
+            return BinaryCachedStore::new(metadata_path, wal_path);
         }
         
-        // 直接读取MessagePack格式
-        match MessagePackMetadataStore::load(metadata_path) {
-            Ok(msgpack_store) => {
-                MessagePackCachedStore::from_store(msgpack_store, metadata_path, wal_path)
+        // 直接读取二进制格式
+        match BinaryMetadataStore::load(metadata_path) {
+            Ok(binary_store) => {
+                BinaryCachedStore::from_store(binary_store, metadata_path, wal_path)
             },
             Err(e) => {
-                MessagePackCachedStore::new(metadata_path, wal_path)
+                BinaryCachedStore::new(metadata_path, wal_path)
             }
         }
     }
     
-    /// 将ArrayMetadata转换为MessagePackArrayMetadata
-    fn array_metadata_to_msgpack(meta: ArrayMetadata) -> MessagePackArrayMetadata {
-        let dtype_code = meta.dtype as u8;
-        MessagePackArrayMetadata {
+    /// 将ArrayMetadata转换为BinaryArrayMetadata
+    fn array_metadata_to_binary(meta: ArrayMetadata) -> BinaryArrayMetadata {
+        let binary_dtype = BinaryDataType::from_u8(meta.dtype);
+        BinaryArrayMetadata {
             name: meta.name,
             shape: meta.shape,
             data_file: meta.data_file,
             last_modified: meta.last_modified,
             size_bytes: meta.size_bytes,
-            dtype: dtype_code,
+            dtype: binary_dtype,
+            compression: crate::binary_metadata::BinaryCompressionInfo::default(),
         }
     }
     
-    /// 将MessagePackArrayMetadata转换为ArrayMetadata
-    fn msgpack_to_array_metadata(meta: MessagePackArrayMetadata) -> ArrayMetadata {
+    /// 将BinaryArrayMetadata转换为ArrayMetadata
+    fn binary_to_array_metadata(meta: BinaryArrayMetadata) -> ArrayMetadata {
         ArrayMetadata {
             name: meta.name,
             shape: meta.shape,
             data_file: meta.data_file,
             last_modified: meta.last_modified,
             size_bytes: meta.size_bytes,
-            dtype: meta.dtype,
+            dtype: meta.dtype as u8,
             raw_data: None,
         }
     }
@@ -602,8 +603,8 @@ impl ParallelIO {
         
         // Batch update metadata  
         for (_name, meta) in metadata_updates {
-            let msgpack_meta = Self::array_metadata_to_msgpack(meta);
-            self.metadata.add_array(msgpack_meta)?;
+            let binary_meta = Self::array_metadata_to_binary(meta);
+            self.metadata.add_array(binary_meta)?;
         }
         
         Ok(())
@@ -632,7 +633,7 @@ impl ParallelIO {
             .map(|(name, meta)| {
                 let data_path = self.base_dir.join(&meta.data_file);
                 let file = File::open(&data_path)?;
-                let array_meta = Self::msgpack_to_array_metadata(meta);
+                let array_meta = Self::binary_to_array_metadata(meta);
                 let view = ArrayView::new(array_meta, file, data_path.clone());
                 Ok((name, view))
             })
@@ -640,12 +641,12 @@ impl ParallelIO {
     }
 
     pub fn get_array_meta(&self, name: &str) -> Option<ArrayMetadata> {
-        self.metadata.get_array(name).map(Self::msgpack_to_array_metadata)
+        self.metadata.get_array(name).map(Self::binary_to_array_metadata)
     }
 
     pub fn get_array_metadata(&self, name: &str) -> Result<ArrayMetadata, NpkError> {
         self.metadata.get_array(name)
-            .map(Self::msgpack_to_array_metadata)
+            .map(Self::binary_to_array_metadata)
             .ok_or_else(|| NpkError::ArrayNotFound(name.to_string()))
     }
 
@@ -667,8 +668,8 @@ impl ParallelIO {
     }
 
     pub fn update_array_metadata(&self, name: &str, meta: ArrayMetadata) -> NpkResult<()> {
-        let msgpack_meta = Self::array_metadata_to_msgpack(meta);
-        self.metadata.update_array_metadata(name, msgpack_meta)
+        let binary_meta = Self::array_metadata_to_binary(meta);
+        self.metadata.update_array_metadata(name, binary_meta)
     }
 
     pub fn has_array(&self, name: &str) -> bool {
@@ -676,23 +677,23 @@ impl ParallelIO {
     }
 
     pub fn drop_arrays(&self, name: &str, excluded_indices: Option<&[i64]>) -> NpkResult<()> {
-        if let Some(msgpack_meta) = self.metadata.get_array(name) {
-            let data_path = self.base_dir.join(&msgpack_meta.data_file);
+        if let Some(binary_meta) = self.metadata.get_array(name) {
+            let data_path = self.base_dir.join(&binary_meta.data_file);
             
             {
                 let file = OpenOptions::new()
                     .read(true)
                     .write(true)
                     .open(&data_path)?;
-                let array_meta = Self::msgpack_to_array_metadata(msgpack_meta);
+                let array_meta = Self::binary_to_array_metadata(binary_meta);
                 let mut view = ArrayView::new(array_meta, file, data_path.clone());
                 
                 if let Some(indices) = excluded_indices {
                     // Physical delete specified rows
                     view.physical_delete(indices)?;
                     // Update metadata
-                    let updated_msgpack_meta = Self::array_metadata_to_msgpack(view.meta);
-                    self.metadata.update_array_metadata(name, updated_msgpack_meta)?;
+                    let updated_binary_meta = Self::array_metadata_to_binary(view.meta);
+                    self.metadata.update_array_metadata(name, updated_binary_meta)?;
                 }
             } // file handle is automatically dropped here
             

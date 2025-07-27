@@ -12,14 +12,14 @@ from typing import Any, Dict, Iterator, List, Tuple, Union, Optional
 import numpy as np
 import time
 
-from .msgpack_compatible_format import MessagePackCompatibleManager, MessagePackArrayMetadata, MessagePackCompatibleReader
+from .binary_compatible_format import BinaryCompatibleManager, BinaryArrayMetadata, BinaryCompatibleReader
 from .windows_handle_manager import get_handle_manager, force_cleanup_windows_handles
 
 
 class LazyArray:
-    """延迟加载数组 - 使用 MessagePack 兼容格式 - 优化版本"""
+    """延迟加载数组 - 使用二进制兼容格式 - 优化版本"""
     
-    def __init__(self, manager: MessagePackCompatibleManager, array_name: str):
+    def __init__(self, manager: BinaryCompatibleManager, array_name: str):
         self.manager = manager
         self.array_name = array_name
         self._metadata = None
@@ -39,7 +39,7 @@ class LazyArray:
         self._cleanup_all_handles()
     
     @property
-    def metadata(self) -> MessagePackArrayMetadata:
+    def metadata(self) -> BinaryArrayMetadata:
         """获取元数据"""
         if self._metadata is None:
             self._metadata = self.manager.get_metadata(self.array_name)
@@ -115,20 +115,16 @@ class LazyArray:
     def _get_memmap(self) -> np.memmap:
         """获取内存映射数组 - 懒加载核心"""
         if self._memmap_array is None:
-            # 确保reader存在
-            if self.manager._reader is None:
-                self.manager._reader = MessagePackCompatibleReader(self.manager.base_path)
-            
             # 使用句柄管理器管理内存映射
             try:
                 metadata = self.metadata
-                data_file = self.manager.base_path / metadata.data_file
+                data_file = self.manager.directory / metadata.data_file
                 
                 # 生成唯一的句柄ID
                 self._memmap_handle_id = f"{self._instance_id}_memmap_{self.array_name}"
                 
                 # 创建内存映射
-                memmap = np.memmap(data_file, dtype=metadata.dtype, mode='r', shape=metadata.shape)
+                memmap = np.memmap(data_file, dtype=metadata.dtype.to_numpy_dtype(), mode='r', shape=tuple(metadata.shape))
                 
                 # 注册到句柄管理器
                 self._handle_manager.register_memmap(
@@ -354,8 +350,8 @@ class NumPack:
         # 创建目录
         self.filename.mkdir(parents=True, exist_ok=True)
         
-        # 使用 MessagePack 兼容管理器
-        self.manager = MessagePackCompatibleManager(self.filename)
+        # 使用二进制兼容管理器
+        self.manager = BinaryCompatibleManager(self.filename)
         
         # 集成句柄管理器
         self._handle_manager = get_handle_manager()
@@ -441,9 +437,7 @@ class NumPack:
         # 检查是否为更新操作
         existing_names = set()
         try:
-            if self.manager._reader is None:
-                self.manager._reader = MessagePackCompatibleReader(self.filename)
-            existing_names = set(self.manager._reader.list_arrays())
+            existing_names = set(self.manager.list_arrays())
         except:
             pass
             
@@ -631,12 +625,9 @@ class NumPack:
         # 优化策略：对于小的索引集合，使用直接内存映射访问
         if len(indexes) <= 1000:
             try:
-                # 确保reader存在
-                if self.manager._reader is None:
-                    self.manager._reader = MessagePackCompatibleReader(self.manager.base_path)
-                
-                # 使用内存映射进行高效访问
-                memmap_array = self.manager._reader.get_memmap_array(array_name, mode='r')
+                # 使用二进制兼容读取器进行高效访问
+                reader = BinaryCompatibleReader(self.manager, array_name)
+                memmap_array = reader.memmap
                 
                 # 对于连续或近似连续的索引，使用切片
                 if self._is_mostly_sequential(indexes):

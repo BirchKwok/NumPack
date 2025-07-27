@@ -228,7 +228,7 @@ def run_develop():
         
         try:
             # Use maturin develop
-            cmd = ['maturin', 'develop']
+            cmd = ['maturin', 'develop', '--release']
             print(f"Running command: {' '.join(cmd)}")
             result = subprocess.run(cmd, check=True)
             print("Rust + Python development install successful")

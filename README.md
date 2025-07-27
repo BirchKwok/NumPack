@@ -1,9 +1,10 @@
 # NumPack
 
-NumPack is a lightning-fast array manipulation engine that revolutionizes how you handle large-scale NumPy arrays. By combining Rust's raw performance with Python's ease of use, NumPack delivers up to 166x faster operations than traditional methods, while using minimal memory. Whether you're working with gigabyte-sized matrices or performing millions of array operations, NumPack makes it effortless with its zero-copy architecture and intelligent memory management.
+NumPack is a lightning-fast array manipulation engine that revolutionizes how you handle large-scale NumPy arrays. By combining Rust's raw performance with Python's ease of use, NumPack delivers up to 166x faster operations than traditional methods, while using minimal memory. With our new high-performance binary format, matrix operations are now up to 5.33x faster than NumPy mmap, and lazy loading achieves throughput exceeding 100,000 MB/s. Whether you're working with gigabyte-sized matrices or performing millions of array operations, NumPack makes it effortless with its zero-copy architecture and intelligent memory management.
 
 Key highlights:
 - 🚀 Up to 166x faster than traditional NumPy storage methods
+- ⚡ Matrix operations up to 5.33x faster than NumPy mmap
 - 💾 Zero-copy operations for minimal memory footprint
 - 🔄 Seamless integration with existing NumPy workflows
 - 🛠 Battle-tested in production with arrays exceeding 1 billion rows
@@ -234,7 +235,7 @@ The following benchmarks were performed on a MacBook Pro (Apple Silicon) with ar
 
 | Operation | NumPack (Python) | NumPack (Rust) | NumPy NPZ | NumPy NPY | In-Memory |
 |-----------|------------------|----------------|-----------|-----------|-----------|
-| Inner Product | 0.065s (2.18x NPZ, 5.82x Memory) | 0.064s (2.22x NPZ, 5.70x Memory) | 0.142s | 0.096s | 0.011s |
+| Inner Product | 0.006s (5.33x NPZ, 1.83x Memory) | 0.006s (5.33x NPZ, 1.83x Memory) | 0.032s | 0.096s | 0.011s |
 
 #### File Size Comparison
 
@@ -282,7 +283,7 @@ The following benchmarks were performed on a MacBook Pro (Apple Silicon) with ar
 
 4. **Loading Performance**:
    - Full load: Rust backend is **1.71x faster** than NPZ; Python backend is **1.50x faster** than NPZ
-   - Lazy load (memory-mapped): Both backends provide near-instantaneous loading
+   - Lazy load (memory-mapped): Both backends provide near-instantaneous loading with throughput exceeding **100,000 MB/s**
    - Selective load: Both backends are **~1.6x faster** than NPZ
 
 5. **Random Access**:
@@ -294,9 +295,8 @@ The following benchmarks were performed on a MacBook Pro (Apple Silicon) with ar
    - Both Python and Rust backends generate identical file sizes using the same underlying format
 
 7. **Matrix Computation**:
-   - Rust backend provides **2.22x faster** performance than NPZ mmap
-   - Python backend provides **2.18x faster** performance than NPZ mmap
-   - Only **~5.8x slower** than pure in-memory computation, providing excellent balance of performance and memory efficiency
+   - Both backends provide **5.33x faster** performance than NPZ mmap
+   - Only **~1.8x slower** than pure in-memory computation, providing excellent balance of performance and memory efficiency
    - Zero risk of file descriptor leaks or resource exhaustion
 
 8. **Backend Performance**:

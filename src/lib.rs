@@ -4,7 +4,8 @@ extern crate lazy_static;
 // 核心模块
 mod error;
 mod metadata;
-mod msgpack_metadata;
+mod binary_metadata;
+mod hybrid_metadata;
 mod parallel_io;
 mod batch_access_engine;
 
@@ -42,7 +43,7 @@ use half::f16;
 
 use crate::parallel_io::ParallelIO;
 use crate::metadata::DataType;
-use crate::msgpack_metadata::{MessagePackMetadataStore, MessagePackArrayMetadata, MessagePackDataType};
+use crate::binary_metadata::{BinaryMetadataStore, BinaryArrayMetadata, BinaryDataType, BinaryCachedStore};
 use crate::lazy_array::{OptimizedLazyArray, FastTypeConversion};
 use rayon::prelude::*;
 
