@@ -13,6 +13,7 @@ import numpy as np
 import time
 
 from .binary_compatible_format import BinaryCompatibleManager, BinaryArrayMetadata, BinaryCompatibleReader
+from .msgpack_compatible_format import MessagePackArrayMetadata
 from .windows_handle_manager import get_handle_manager, force_cleanup_windows_handles
 
 

@@ -481,11 +481,26 @@ class TestLazyArrayAPI:
         # 加载LazyArray
         lazy_arr = numpack.load('bool_test', lazy=True)
         
+        # 添加调试信息
+        print(f"Backend type: {numpack.backend_type}")
+        print(f"Data shape: {data.shape}")
+        print(f"Mask length: {len(mask)}")
+        print(f"True count in mask: {np.sum(mask)}")
+        
         # 测试布尔索引（如果支持的话）
         try:
             result = lazy_arr[mask]
             expected = data[mask]
-            assert np.allclose(result, expected)
+            
+            print(f"Result shape: {result.shape}")
+            print(f"Expected shape: {expected.shape}")
+            
+            # 添加形状验证
+            assert result.shape == expected.shape, f"Shape mismatch: result {result.shape} vs expected {expected.shape}"
+            
+            # 只有形状匹配时才进行数值比较
+            assert np.allclose(result, expected), "Values do not match"
+            
         except (NotImplementedError, TypeError):
             # 不跳过测试，让测试失败
             raise

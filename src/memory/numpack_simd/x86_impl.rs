@@ -10,7 +10,8 @@ use std::arch::x86_64::*;
 
 impl NumPackSIMD {
     /// AVX512行拷贝实现 - 针对大数据集的高性能优化
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    /// 注意：AVX512在stable Rust中是不稳定特性，暂时禁用
+    #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), feature = "unstable_avx512"))]
     pub fn avx512_copy_rows(&self, src: &[u8], dst: &mut [u8], indices: &[usize], row_size: usize) -> Result<(), SIMDError> {
         if !self.capabilities.avx512f {
             return self.avx2_copy_rows(src, dst, indices, row_size);
@@ -38,9 +39,12 @@ impl NumPackSIMD {
                     let src_ptr = src.as_ptr().add(src_offset + copied);
                     let dst_ptr = dst.as_mut_ptr().add(dst_offset + copied);
                     
-                    // 使用AVX512加载和存储
-                    let data = _mm512_loadu_si512(src_ptr as *const __m512i);
-                    _mm512_storeu_si512(dst_ptr as *mut __m512i, data);
+                    // 使用AVX512加载和存储（需要nightly Rust）
+                    #[cfg(feature = "unstable_avx512")]
+                    {
+                        let data = _mm512_loadu_si512(src_ptr as *const __m512i);
+                        _mm512_storeu_si512(dst_ptr as *mut __m512i, data);
+                    }
                     
                     copied += avx512_chunk_size;
                 }
@@ -67,6 +71,13 @@ impl NumPackSIMD {
         }
         
         Ok(())
+    }
+
+    /// AVX512行拷贝实现的回退版本 - 当AVX512不可用时使用AVX2
+    #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), not(feature = "unstable_avx512")))]
+    pub fn avx512_copy_rows(&self, src: &[u8], dst: &mut [u8], indices: &[usize], row_size: usize) -> Result<(), SIMDError> {
+        // 回退到AVX2实现
+        self.avx2_copy_rows(src, dst, indices, row_size)
     }
 
     /// AVX2行拷贝实现 - 平衡性能和兼容性
