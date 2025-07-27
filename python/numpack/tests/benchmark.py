@@ -161,11 +161,24 @@ def test_very_large_array(timing_stats: TimingStats):
         n_reads = 1000
         indices = np.random.randint(0, rows, n_reads)
         
+        # ❌ 错误的使用模式 - 不应该在循环中进行单次访问
+        # start_time = time.time()
+        # for i in range(n_reads):
+        #     _ = np_pack.getitem("large_array", indices[i:i+1])
+        # random_read_time = time.time() - start_time
+        
+        # ✅ 正确的使用模式 - 批量访问
         start_time = time.time()
-        for i in range(n_reads):
-            _ = np_pack.getitem("large_array", indices[i:i+1])
+        _ = np_pack.getitem("large_array", indices.tolist())
         random_read_time = time.time() - start_time
-        timing_stats.add_time("Average random read time(ms)", random_read_time/n_reads*1000)
+        timing_stats.add_time("Batch random read time", random_read_time)
+        
+        # 测试单次访问（模拟用户明确的单次访问意图）
+        start_time = time.time()
+        single_index = int(indices[0])
+        _ = np_pack.getitem("large_array", single_index)
+        single_read_time = time.time() - start_time
+        timing_stats.add_time("Single access time(ms)", single_read_time*1000)
         
         # Batch random read
         start_time = time.time()

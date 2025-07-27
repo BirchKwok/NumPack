@@ -175,7 +175,8 @@ impl WalWriter {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+/// NumPack数据类型，对应NumPy的数据类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum DataType {
     Bool = 0,

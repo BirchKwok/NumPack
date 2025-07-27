@@ -171,6 +171,14 @@ enum AccessStrategy {
     Adaptive,
 }
 
+// 新增：用户意图分类
+#[derive(Debug, Clone)]
+enum UserIntent {
+    SingleAccess(i64),       // 单次访问：lazy_array[i]
+    BatchAccess(Vec<i64>),   // 批量访问：lazy_array[indices]
+    ComplexIndex,            // 复杂索引：切片、布尔掩码等
+}
+
 #[pyclass]
 struct ArrayMetadata {
     #[pyo3(get)]
@@ -381,28 +389,26 @@ impl LazyArray {
     }
 
     fn __getitem__(&self, py: Python, key: &Bound<'_, PyAny>) -> PyResult<PyObject> {
-        // 检查是否是广播情况
-        if let Ok(tuple) = key.downcast::<PyTuple>() {
-            if self.check_for_broadcasting(tuple)? {
-                return self.handle_broadcasting_directly(py, tuple);
+        // 明确的用户意图识别
+        let user_intent = self.classify_user_intent(key);
+        
+        match user_intent {
+            UserIntent::SingleAccess(index) => {
+                // 尊重用户明确的单次访问意图 - 不干预
+                self.handle_single_access(py, index)
+            }
+            UserIntent::BatchAccess(indices) => {
+                // 用户明确的批量访问 - 一次性FFI调用
+                self.handle_batch_access(py, indices)
+            }
+            UserIntent::ComplexIndex => {
+                // 复杂索引（切片、布尔掩码等）- 使用现有逻辑
+                self.handle_complex_index(py, key)
             }
         }
-        
-        // 使用新的高级索引解析器
-        let index_result = self.parse_advanced_index(py, key)?;
-        
-        // 根据索引结果选择最优的访问策略
-        let access_strategy = self.choose_access_strategy(&index_result);
-        
-        // 执行索引操作
-        match access_strategy {
-            AccessStrategy::DirectMemory => self.direct_memory_access(py, &index_result),
-            AccessStrategy::BlockCopy => self.block_copy_access(py, &index_result),
-            AccessStrategy::ParallelPointAccess => self.parallel_point_access(py, &index_result),
-            AccessStrategy::PrefetchOptimized => self.prefetch_optimized_access(py, &index_result),
-            AccessStrategy::Adaptive => self.adaptive_access(py, &index_result),
-        }
     }
+
+
 
     #[getter]
     fn shape(&self, py: Python) -> PyResult<PyObject> {
@@ -2046,6 +2052,94 @@ impl LazyArray {
         }
         
         Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>("Invalid index type. Supported types: int, slice, list of ints, boolean mask, or numpy arrays"))
+    }
+}
+
+// LazyArray内部方法实现（非Python接口）
+impl LazyArray {
+    /// 用户意图分类（内部方法）
+    fn classify_user_intent(&self, key: &Bound<'_, PyAny>) -> UserIntent {
+        // 单个整数 - 明确的单次访问意图
+        if let Ok(index) = key.extract::<i64>() {
+            return UserIntent::SingleAccess(index);
+        }
+        
+        // 列表或数组 - 明确的批量访问意图
+        if let Ok(list) = key.downcast::<PyList>() {
+            if let Ok(indices) = list.extract::<Vec<i64>>() {
+                return UserIntent::BatchAccess(indices);
+            }
+        }
+        
+        // NumPy数组 - 批量访问意图
+        if let Ok(_) = key.getattr("__array__") {
+            if let Ok(array) = key.call_method0("__array__") {
+                if let Ok(indices) = array.extract::<Vec<i64>>() {
+                    return UserIntent::BatchAccess(indices);
+                }
+            }
+        }
+        
+        // 其他复杂索引（切片、布尔掩码等）
+        UserIntent::ComplexIndex
+    }
+
+    /// 处理单次访问（尊重用户意图）
+    fn handle_single_access(&self, py: Python, index: i64) -> PyResult<PyObject> {
+        let row_data = self.get_row_data(index as usize)?;
+        let row_shape = if self.shape.len() > 1 {
+            self.shape[1..].to_vec()
+        } else {
+            vec![1]
+        };
+        self.create_numpy_array(py, row_data, &row_shape)
+    }
+
+    /// 处理批量访问（优化的一次性FFI调用）
+    fn handle_batch_access(&self, py: Python, indices: Vec<i64>) -> PyResult<PyObject> {
+        // 一次性处理所有索引，减少FFI开销
+        let mut all_data = Vec::new();
+        let _row_size = self.shape[1..].iter().product::<usize>() * self.itemsize;
+        
+        for &idx in &indices {
+            if idx < 0 || idx as usize >= self.shape[0] {
+                return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                    format!("Index {} is out of bounds", idx)
+                ));
+            }
+            let row_data = self.get_row_data(idx as usize)?;
+            all_data.extend(row_data);
+        }
+        
+        let mut result_shape = self.shape.clone();
+        result_shape[0] = indices.len();
+        
+        self.create_numpy_array(py, all_data, &result_shape)
+    }
+
+    /// 处理复杂索引（保持现有逻辑）
+    fn handle_complex_index(&self, py: Python, key: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        // 检查是否是广播情况
+        if let Ok(tuple) = key.downcast::<PyTuple>() {
+            if self.check_for_broadcasting(tuple)? {
+                return self.handle_broadcasting_directly(py, tuple);
+            }
+        }
+        
+        // 使用现有的高级索引解析器
+        let index_result = self.parse_advanced_index(py, key)?;
+        
+        // 根据索引结果选择最优的访问策略
+        let access_strategy = self.choose_access_strategy(&index_result);
+        
+        // 执行索引操作
+        match access_strategy {
+            AccessStrategy::DirectMemory => self.direct_memory_access(py, &index_result),
+            AccessStrategy::BlockCopy => self.block_copy_access(py, &index_result),
+            AccessStrategy::ParallelPointAccess => self.parallel_point_access(py, &index_result),
+            AccessStrategy::PrefetchOptimized => self.prefetch_optimized_access(py, &index_result),
+            AccessStrategy::Adaptive => self.adaptive_access(py, &index_result),
+        }
     }
 }
 

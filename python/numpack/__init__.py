@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Tuple, Union, Optional
 import numpy as np
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 # 平台检测
 def _is_windows():

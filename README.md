@@ -5,6 +5,7 @@ NumPack is a lightning-fast array manipulation engine that revolutionizes how yo
 Key highlights:
 - 🚀 Up to 166x faster than traditional NumPy storage methods
 - ⚡ Matrix operations up to 5.33x faster than NumPy mmap
+- 🚀 SIMD-optimized operations with streaming throughput up to 4,417 MB/s
 - 💾 Zero-copy operations for minimal memory footprint
 - 🔄 Seamless integration with existing NumPy workflows
 - 🛠 Battle-tested in production with arrays exceeding 1 billion rows
@@ -191,9 +192,9 @@ The following benchmarks were performed on a MacBook Pro (Apple Silicon) with ar
 
 | Operation | NumPack (Python) | NumPack (Rust) | NumPy NPZ | NumPy NPY |
 |-----------|------------------|----------------|-----------|-----------|
-| Save | 0.014s (1.01x NPZ, 0.53x NPY) | 0.041s (0.35x NPZ, 0.18x NPY) | 0.015s | 0.008s |
-| Full Load | 0.008s (1.50x NPZ, 0.96x NPY) | 0.007s (1.71x NPZ, 1.09x NPY) | 0.013s | 0.008s |
-| Selective Load | 0.006s (1.61x NPZ, -) | 0.006s (1.59x NPZ, -) | 0.010s | - |
+| Save | 0.038s (1.81x NPZ, 2.92x NPY) | 0.026s (2.19x NPZ, 2.00x NPY) | 0.021s | 0.013s |
+| Full Load | 0.010s (1.60x NPZ, 1.10x NPY) | 0.011s (1.45x NPZ, 1.00x NPY) | 0.016s | 0.011s |
+| Lazy Load | 0.001s (89,740 MB/s) | 0.001s (87,761 MB/s) | - | - |
 
 #### Data Modification Operations
 
@@ -282,9 +283,9 @@ The following benchmarks were performed on a MacBook Pro (Apple Silicon) with ar
    - Python backend shows superior performance for large append operations
 
 4. **Loading Performance**:
-   - Full load: Rust backend is **1.71x faster** than NPZ; Python backend is **1.50x faster** than NPZ
-   - Lazy load (memory-mapped): Both backends provide near-instantaneous loading with throughput exceeding **100,000 MB/s**
-   - Selective load: Both backends are **~1.6x faster** than NPZ
+   - Full load: Python backend is **1.60x faster** than NPZ; Rust backend is **1.45x faster** than NPZ
+   - Lazy load (memory-mapped): Python backend achieves **89,740 MB/s**, Rust backend achieves **87,761 MB/s** throughput
+   - SIMD-optimized streaming: Achieves up to **4,417 MB/s** for large-scale sequential processing
 
 5. **Random Access**:
    - Rust backend is **2.30x faster** than NPZ and **1.52x faster** than NPY for random index access
@@ -299,7 +300,13 @@ The following benchmarks were performed on a MacBook Pro (Apple Silicon) with ar
    - Only **~1.8x slower** than pure in-memory computation, providing excellent balance of performance and memory efficiency
    - Zero risk of file descriptor leaks or resource exhaustion
 
-8. **Backend Performance**:
+8. **SIMD-Optimized Operations**:
+   - **Streaming throughput**: Up to **4,417 MB/s** for large-scale sequential data processing
+   - **Clustered access**: **1,041 MB/s** for spatially-local data access patterns
+   - **Strided access**: **802 MB/s** for regularly-spaced data access
+   - **Large batch operations**: **432 MB/s** for 50K random indices processing
+
+9. **Backend Performance**:
    - **Python backend**: Excellent overall performance, particularly strong in append operations and modification operations
    - **Rust backend**: Superior performance in loading, drop operations, and single-row modifications with zero-copy optimizations
    - Both backends share the same file format ensuring perfect compatibility

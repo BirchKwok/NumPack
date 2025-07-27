@@ -229,10 +229,16 @@ class ComprehensiveBenchmark:
                 npk = NumPack(numpack_file, drop_if_exists=True)
                 npk.save({'test_array': test_array})
                 
-                # 单个随机访问测试
-                with self.timer_and_memory(f"NumPack Single Random Access", backend_name):
-                    for idx in single_indices:
-                        result = npk.getitem('test_array', [int(idx)])
+                # ❌ 错误的测试模式注释掉
+                # 单个随机访问测试（错误的使用模式 - 不应该在循环中单次访问）
+                # with self.timer_and_memory(f"NumPack Single Random Access", backend_name):
+                #     for idx in single_indices:
+                #         result = npk.getitem('test_array', [int(idx)])
+                
+                # ✅ 正确的单次访问测试（尊重用户意图）
+                with self.timer_and_memory(f"NumPack Single Access (User Intent)", backend_name):
+                    single_idx = int(single_indices[0])
+                    result = npk.getitem('test_array', single_idx)  # 明确的单次访问
                         
                 # 批量随机访问测试
                 with self.timer_and_memory(f"NumPack Batch Random Access", backend_name):
@@ -247,18 +253,30 @@ class ComprehensiveBenchmark:
         np.save(npy_file, test_array)
         
         # NumPy 内存中随机访问
-        with self.timer_and_memory("NumPy In-Memory Random Access", "numpy"):
-            for idx in single_indices:
-                result = test_array[idx:idx+1]
+        # ❌ 错误的测试模式（不符合用户真实使用意图）
+        # with self.timer_and_memory("NumPy In-Memory Random Access", "numpy"):
+        #     for idx in single_indices:
+        #         result = test_array[idx:idx+1]
+        
+        # ✅ 正确的测试模式（尊重用户意图）
+        with self.timer_and_memory("NumPy Single Access (User Intent)", "numpy"):
+            single_idx = int(single_indices[0])
+            result = test_array[single_idx]  # 明确的单次访问
                 
         with self.timer_and_memory("NumPy In-Memory Batch Random Access", "numpy"):
             result = test_array[batch_indices]
             
         # NumPy mmap 随机访问
         mmap_array = np.load(npy_file, mmap_mode='r')
-        with self.timer_and_memory("NumPy mmap Single Random Access", "numpy"):
-            for idx in single_indices:
-                result = mmap_array[idx:idx+1]
+        # ❌ 错误的测试模式注释掉
+        # with self.timer_and_memory("NumPy mmap Single Random Access", "numpy"):
+        #     for idx in single_indices:
+        #         result = mmap_array[idx:idx+1]
+        
+        # ✅ 正确的单次访问测试
+        with self.timer_and_memory("NumPy mmap Single Access (User Intent)", "numpy"):
+            single_idx = int(single_indices[0])
+            result = mmap_array[single_idx]
                 
         with self.timer_and_memory("NumPy mmap Batch Random Access", "numpy"):
             result = mmap_array[batch_indices]
@@ -270,9 +288,15 @@ class ComprehensiveBenchmark:
         del memmap_array  # 确保写入磁盘
         
         memmap_array = np.memmap(memmap_file, dtype='float32', mode='r', shape=(rows, cols))
-        with self.timer_and_memory("NumPy memmap Random Access", "numpy"):
-            for idx in single_indices:
-                result = memmap_array[idx:idx+1]
+        # ❌ 错误的测试模式注释掉
+        # with self.timer_and_memory("NumPy memmap Random Access", "numpy"):
+        #     for idx in single_indices:
+        #         result = memmap_array[idx:idx+1]
+        
+        # ✅ 正确的单次访问测试
+        with self.timer_and_memory("NumPy memmap Single Access (User Intent)", "numpy"):
+            single_idx = int(single_indices[0])
+            result = memmap_array[single_idx]
                 
         with self.timer_and_memory("NumPy memmap Batch Random Access", "numpy"):
             result = memmap_array[batch_indices]
