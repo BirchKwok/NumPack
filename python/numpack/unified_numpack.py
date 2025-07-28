@@ -482,13 +482,13 @@ class NumPack:
             if not self.manager.has_array(array_name):
                 raise KeyError(f"Array '{array_name}' not found")
             metadata = self.manager.get_metadata(array_name)
-            return metadata.shape
+            return tuple(metadata.shape)  # 确保返回tuple
         else:
             # 获取所有数组的形状
             shapes = {}
             for name in self.manager.list_arrays():
                 metadata = self.manager.get_metadata(name)
-                shapes[name] = metadata.shape
+                shapes[name] = tuple(metadata.shape)  # 确保返回tuple
             return shapes
     
     def get_member_list(self) -> List[str]:
