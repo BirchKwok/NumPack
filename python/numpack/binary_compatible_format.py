@@ -158,6 +158,14 @@ class BinaryArrayMetadata:
     dtype: BinaryDataType
     compression: BinaryCompressionInfo
     
+    @property
+    def total_elements(self) -> int:
+        """计算总元素数量"""
+        result = 1
+        for dim in self.shape:
+            result *= dim
+        return result
+    
     @classmethod
     def from_numpy_array(cls, name: str, array: np.ndarray, data_file: str) -> 'BinaryArrayMetadata':
         """从 NumPy 数组创建元数据"""
@@ -478,6 +486,32 @@ class BinaryCompatibleManager:
         dtype = metadata.dtype.to_numpy_dtype()
         array = np.frombuffer(data, dtype=dtype)
         return array.reshape(metadata.shape)
+    
+    def save(self, arrays: Dict[str, np.ndarray]) -> None:
+        """保存多个数组到存储"""
+        for name, array in arrays.items():
+            self.add_array(name, array)
+    
+    def load(self, name: str) -> np.ndarray:
+        """加载数组（兼容API）"""
+        result = self.load_array(name)
+        if result is None:
+            raise KeyError(f"Array '{name}' not found")
+        return result
+    
+    def reset(self) -> None:
+        """重置存储，删除所有数组和数据文件"""
+        # 删除所有数据文件
+        for name in self.list_arrays():
+            metadata = self.get_metadata(name)
+            if metadata:
+                data_path = self.directory / metadata.data_file
+                if data_path.exists():
+                    data_path.unlink()
+        
+        # 重置元数据存储
+        self._store = BinaryMetadataStore()
+        self.save_metadata()
 
 
 class BinaryCompatibleReader:

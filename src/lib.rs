@@ -2064,19 +2064,37 @@ impl LazyArray {
             return UserIntent::SingleAccess(index);
         }
         
-        // 列表或数组 - 明确的批量访问意图
-        if let Ok(list) = key.downcast::<PyList>() {
-            if let Ok(indices) = list.extract::<Vec<i64>>() {
-                return UserIntent::BatchAccess(indices);
-            }
+        // 检查布尔掩码 - 优先级高于其他数组检查
+        if let Ok(bool_mask) = key.extract::<Vec<bool>>() {
+            // 布尔掩码总是复杂索引
+            return UserIntent::ComplexIndex;
         }
         
-        // NumPy数组 - 批量访问意图
+        // NumPy数组 - 需要区分布尔数组和整数数组
         if let Ok(_) = key.getattr("__array__") {
+            // 检查dtype
+            if let Ok(dtype) = key.getattr("dtype") {
+                if let Ok(dtype_str) = dtype.str() {
+                    let dtype_string = dtype_str.to_string();
+                    if dtype_string.contains("bool") {
+                        // 布尔数组 - 复杂索引
+                        return UserIntent::ComplexIndex;
+                    }
+                }
+            }
+            
+            // 尝试作为整数数组处理
             if let Ok(array) = key.call_method0("__array__") {
                 if let Ok(indices) = array.extract::<Vec<i64>>() {
                     return UserIntent::BatchAccess(indices);
                 }
+            }
+        }
+        
+        // 列表或数组 - 明确的批量访问意图
+        if let Ok(list) = key.downcast::<PyList>() {
+            if let Ok(indices) = list.extract::<Vec<i64>>() {
+                return UserIntent::BatchAccess(indices);
             }
         }
         

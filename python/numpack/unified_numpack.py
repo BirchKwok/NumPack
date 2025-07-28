@@ -55,12 +55,12 @@ class LazyArray:
             original = self.metadata.shape
             return tuple(reversed(original))
         else:
-            return self.metadata.shape
+            return tuple(self.metadata.shape)
     
     @property
     def dtype(self) -> np.dtype:
         """数据类型"""
-        return self.metadata.dtype
+        return self.metadata.dtype.to_numpy_dtype()
     
     @property
     def size(self) -> int:
@@ -75,7 +75,7 @@ class LazyArray:
     @property
     def itemsize(self) -> int:
         """每个元素的字节大小"""
-        return self.metadata.dtype.itemsize
+        return self.metadata.dtype.size_bytes()
     
     @property
     def nbytes(self) -> int:
@@ -396,7 +396,7 @@ class NumPack:
                 existing_arrays = {}
                 try:
                     # 创建新的 reader 实例以确保读取最新状态
-                    temp_manager = MessagePackCompatibleManager(self.filename)
+                    temp_manager = BinaryCompatibleManager(self.filename)
                     existing_names = temp_manager.list_arrays()
                     for name in existing_names:
                         existing_arrays[name] = temp_manager.load(name)
