@@ -301,16 +301,28 @@ class WindowsHandleManager:
     def _windows_global_cleanup(self):
         """Windows全局清理"""
         try:
-            # 多次强制垃圾回收
-            for _ in range(5):
-                gc.collect()
-                time.sleep(0.02)
+            # 多次强制垃圾回收，每次都单独捕获异常
+            for i in range(5):
+                try:
+                    gc.collect()
+                    time.sleep(0.02)
+                except Exception as e:
+                    # 静默处理垃圾回收期间的句柄错误
+                    # 这些错误通常是因为对象已经被清理
+                    pass
             
             # 额外等待时间
-            time.sleep(self._cleanup_delay)
+            try:
+                time.sleep(self._cleanup_delay)
+            except Exception:
+                # 静默处理等待期间的任何错误
+                pass
             
         except Exception as e:
-            warnings.warn(f"Windows global cleanup warning: {e}")
+            # 只有在意外的严重错误时才警告
+            # 忽略常见的 WinError 6 (The handle is invalid)
+            if "WinError 6" not in str(e) and "handle is invalid" not in str(e).lower():
+                warnings.warn(f"Windows global cleanup warning: {e}")
     
     def force_cleanup_and_wait(self, wait_time: Optional[float] = None) -> bool:
         """强制清理并等待"""
