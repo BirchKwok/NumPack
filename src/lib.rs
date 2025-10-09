@@ -53,6 +53,11 @@ use std::os::unix::io::AsRawFd;
 
 lazy_static! {
     static ref MMAP_CACHE: Mutex<HashMap<String, (Arc<Mmap>, i64)>> = Mutex::new(HashMap::new());
+    
+    /// 【性能优化】元数据缓存 - 避免重复的元数据查询
+    /// 缓存格式: (dtype, shape, itemsize, modify_time)
+    static ref METADATA_CACHE: Mutex<HashMap<String, (DataType, Vec<usize>, usize, i64)>> = 
+        Mutex::new(HashMap::new());
 }
 
 // 清理临时文件缓存（所有平台通用）
@@ -3061,57 +3066,8 @@ impl NumPack {
         }
         
         if lazy {
-            let meta = self.io.get_array_metadata(array_name)?;
-            let data_path = self.base_dir.join(format!("data_{}.npkd", array_name));
-            
-            // Windows平台文件存在性检查，防止路径被误解析为目录
-            if !data_path.exists() {
-                return Err(PyErr::new::<pyo3::exceptions::PyFileNotFoundError, _>(
-                    format!("Data file not found: {}", data_path.display())
-                ));
-            }
-            
-            // 确保路径是文件而不是目录
-            if data_path.is_dir() {
-                return Err(PyErr::new::<pyo3::exceptions::PyIsADirectoryError, _>(
-                    format!("Expected file but found directory: {}", data_path.display())
-                ));
-            }
-            
-            let array_path = data_path.to_string_lossy().to_string();
-            
-            let mut cache = MMAP_CACHE.lock().unwrap();
-            let mmap = if let Some((cached_mmap, cached_time)) = cache.get(&array_path) {
-                if *cached_time == meta.last_modified as i64 {
-                    Arc::clone(cached_mmap)
-                } else {
-                    create_optimized_mmap(&data_path, meta.last_modified as i64, &mut cache)?
-                }
-            } else {
-                create_optimized_mmap(&data_path, meta.last_modified as i64, &mut cache)?
-            };
-            
-            let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
-            let itemsize = meta.get_dtype().size_bytes() as usize;
-            
-            // 尝试创建优化引擎
-            let optimized_engine = OptimizedLazyArray::new(
-                data_path.clone(),
-                shape.clone(),
-                meta.get_dtype()
-            ).ok(); // 如果失败则使用None
-            
-            let lazy_array = LazyArray {
-                mmap,
-                shape,
-                dtype: meta.get_dtype(),
-                itemsize,
-                array_path,
-                modify_time: meta.last_modified as i64,
-                optimized_engine,
-            };
-            
-            return Ok(Py::new(py, lazy_array)?.into());
+            // 【性能优化】快速路径 - 最小化操作
+            return self.load_lazy_optimized(py, array_name);
         }
 
         let meta = self.io.get_array_metadata(array_name)?;
@@ -3862,6 +3818,156 @@ impl NumPack {
             dtype: meta.get_dtype(),
             shape,
         })
+    }
+    
+    // ===========================
+    // 性能优化的lazy load
+    // ===========================
+    
+    /// 【性能优化】超快速lazy load实现
+    /// 
+    /// 优化策略：
+    /// 1. 元数据缓存 - 避免重复元数据查询
+    /// 2. 快速cache查找 - 跳过文件系统检查
+    /// 3. 延迟创建优化引擎
+    /// 4. 最小化字符串分配
+    /// 5. 立即释放锁减少竞争
+    #[inline(always)]
+    fn load_lazy_optimized(&self, py: Python, array_name: &str) -> PyResult<PyObject> {
+        let data_path = self.base_dir.join(format!("data_{}.npkd", array_name));
+        let array_path_string = data_path.to_string_lossy().to_string();
+        
+        // 【优化1】元数据缓存查找 - 避免重复IO操作
+        let meta_cache_key = format!("{}:{}", self.base_dir.display(), array_name);
+        
+        let (dtype, shape, itemsize, modify_time, mmap) = {
+            // 尝试从元数据缓存获取
+            let meta_cache = METADATA_CACHE.lock().unwrap();
+            if let Some((cached_dtype, cached_shape, cached_itemsize, cached_mtime)) = meta_cache.get(&meta_cache_key) {
+                // 元数据cache命中 - 超快速路径
+                let dtype = *cached_dtype;
+                let shape = cached_shape.clone();
+                let itemsize = *cached_itemsize;
+                let mtime = *cached_mtime;
+                drop(meta_cache);  // 立即释放元数据cache锁
+                
+                // 获取mmap（应该也在cache中）
+                let mut mmap_cache = MMAP_CACHE.lock().unwrap();
+                let mmap = if let Some((cached_mmap, cached_time)) = mmap_cache.get(&array_path_string) {
+                    if *cached_time == mtime {
+                        let mmap_ref = Arc::clone(cached_mmap);
+                        drop(mmap_cache);  // 立即释放mmap cache锁
+                        mmap_ref
+                    } else {
+                        // 时间不匹配，需要重建（罕见情况）
+                        let new_mmap = create_optimized_mmap(&data_path, mtime, &mut mmap_cache)?;
+                        drop(mmap_cache);
+                        new_mmap
+                    }
+                } else {
+                    // Mmap未cache，但元数据已cache（不太可能）
+                    let new_mmap = create_optimized_mmap(&data_path, mtime, &mut mmap_cache)?;
+                    drop(mmap_cache);
+                    new_mmap
+                };
+                
+                (dtype, shape, itemsize, mtime, mmap)
+            } else {
+                // 元数据未cache - 需要完整加载
+                drop(meta_cache);  // 释放读锁
+                
+                let meta = self.io.get_array_metadata(array_name)?;
+                let dtype = meta.get_dtype();
+                let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
+                let itemsize = dtype.size_bytes() as usize;
+                let mtime = meta.last_modified as i64;
+                
+                // 获取或创建mmap
+                let mut mmap_cache = MMAP_CACHE.lock().unwrap();
+                let mmap = if let Some((cached_mmap, cached_time)) = mmap_cache.get(&array_path_string) {
+                    if *cached_time == mtime {
+                        Arc::clone(cached_mmap)
+                    } else {
+                        create_optimized_mmap(&data_path, mtime, &mut mmap_cache)?
+                    }
+                } else {
+                    // 首次加载 - 需要文件检查
+                    if !data_path.exists() {
+                        return Err(PyErr::new::<pyo3::exceptions::PyFileNotFoundError, _>(
+                            format!("Data file not found: {}", data_path.display())
+                        ));
+                    }
+                    if data_path.is_dir() {
+                        return Err(PyErr::new::<pyo3::exceptions::PyIsADirectoryError, _>(
+                            format!("Expected file but found directory: {}", data_path.display())
+                        ));
+                    }
+                    create_optimized_mmap(&data_path, mtime, &mut mmap_cache)?
+                };
+                drop(mmap_cache);
+                
+                // 缓存元数据
+                let mut meta_cache = METADATA_CACHE.lock().unwrap();
+                meta_cache.insert(meta_cache_key, (dtype, shape.clone(), itemsize, mtime));
+                drop(meta_cache);
+                
+                (dtype, shape, itemsize, mtime, mmap)
+            }
+        };
+        
+        // 【优化2】直接构造LazyArray（最少字段拷贝）
+        let lazy_array = LazyArray {
+            mmap,
+            shape,
+            dtype,
+            itemsize,
+            array_path: array_path_string,
+            modify_time,
+            optimized_engine: None,  // 延迟创建
+        };
+        
+        // 【优化3】快速对象创建
+        Ok(Py::new(py, lazy_array)?.into())
+    }
+    
+    // ===========================
+    // Context Manager支持
+    // ===========================
+    
+    /// 显式关闭NumPack实例并释放所有资源
+    fn close(&mut self, py: Python) -> PyResult<()> {
+        use crate::memory::handle_manager::get_handle_manager;
+        
+        let handle_manager = get_handle_manager();
+        
+        // 清除所有临时文件缓存
+        clear_temp_files_from_cache();
+        
+        // 强制清理并等待适当的时间
+        py.allow_threads(|| {
+            if let Err(e) = handle_manager.force_cleanup_and_wait(None) {
+                eprintln!("警告：清理失败: {}", e);
+            }
+        });
+        
+        Ok(())
+    }
+    
+    /// Context manager入口
+    fn __enter__(slf: PyRef<Self>) -> PyRef<Self> {
+        slf
+    }
+    
+    /// Context manager出口
+    fn __exit__(
+        &mut self,
+        py: Python,
+        _exc_type: Option<&Bound<'_, PyAny>>,
+        _exc_val: Option<&Bound<'_, PyAny>>,
+        _exc_tb: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        self.close(py)?;
+        Ok(false)  // 不抑制异常
     }
 }
 

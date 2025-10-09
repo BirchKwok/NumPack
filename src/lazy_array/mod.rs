@@ -14,6 +14,9 @@ pub mod iterator;
 // 索引处理
 pub mod indexing;
 
+// FFI通信优化
+pub mod ffi_optimization;
+
 // Python绑定
 pub mod python_bindings;
 
@@ -25,5 +28,13 @@ pub use standard::LazyArray;
 pub use high_performance::HighPerformanceLazyArray;
 pub use iterator::LazyArrayIterator;
 pub use indexing::{IndexType, SliceInfo, IndexResult, AccessPattern, AccessStrategy};
+pub use ffi_optimization::{
+    FFIOptimizationConfig,
+    BatchDataCollector,
+    ZeroCopyArrayBuilder,
+    BatchIndexOptimizer,
+    MetadataCache,
+    FFIOptimizationStats,
+};
 
 // Python绑定不重新导出，仅供lib.rs使用 

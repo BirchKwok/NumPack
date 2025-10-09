@@ -39,6 +39,7 @@ def temp_dir():
 def numpack(temp_dir):
     """Create a NumPack instance fixture"""
     npk = NumPack(temp_dir)
+    npk.open()  # 手动打开文件
     npk.reset()
     return npk
 

@@ -18,6 +18,7 @@ def temp_dir():
 def numpack(temp_dir):
     """创建 NumPack 实例固定器"""
     npk = NumPack(temp_dir)
+    npk.open()  # 手动打开文件
     npk.reset()
     yield npk
     
@@ -89,6 +90,7 @@ class TestNumPackAdvancedAPI:
         
         # 使用 drop_if_exists=True 创建 NumPack（转换为字符串）
         npk = NumPack(str(test_path), drop_if_exists=True)
+        npk.open()  # 手动打开文件
         
         # 验证目录被清空并重新创建
         assert test_path.exists()

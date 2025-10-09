@@ -52,3 +52,34 @@ target-triple-features = [
     "aarch64-unknown-linux-gnu",
 ]
 
+# ================================
+# Phase 6: 编译优化配置
+# ================================
+
+[profile.release]
+opt-level = 3                # 最高优化级别
+lto = "fat"                  # Link-Time Optimization - 跨所有crate优化
+codegen-units = 1            # 单个代码生成单元 - 更好的优化，较慢编译
+strip = true                 # 移除调试符号
+panic = "abort"              # Panic时直接abort - 更小的二进制，更快的代码
+overflow-checks = false      # 发布版本禁用溢出检查
+
+# 优化所有依赖
+[profile.release.package."*"]
+opt-level = 3
+codegen-units = 1
+
+# Profile-Guided Optimization (PGO) 配置
+[profile.pgo-generate]
+inherits = "release"
+debug = true
+
+[profile.pgo-use]
+inherits = "release"
+
+# 开发配置 - 快速编译
+[profile.dev]
+opt-level = 0
+debug = true
+codegen-units = 16           # 快速并行编译
+

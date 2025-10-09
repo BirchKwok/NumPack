@@ -16,6 +16,7 @@ def temp_dir():
 def numpack(temp_dir):
     """创建 NumPack 实例固定器"""
     npk = NumPack(temp_dir)
+    npk.open()  # 手动打开文件
     npk.reset()
     yield npk
     

@@ -96,68 +96,132 @@ pip install target/wheels/numpack-*.whl
 import numpy as np
 from numpack import NumPack
 
-# Create a NumPack instance
-npk = NumPack("data_directory")
+# Method 1: Using context manager (Recommended)
+with NumPack("data_directory") as npk:
+    # Save arrays
+    arrays = {
+        'array1': np.random.rand(1000, 100).astype(np.float32),
+        'array2': np.random.rand(500, 200).astype(np.float32)
+    }
+    npk.save(arrays)
+    
+    # Load arrays - Normal mode
+    loaded = npk.load("array1")
+    
+    # Load arrays - Lazy mode
+    lazy_array = npk.load("array1", lazy=True)
 
-# Save arrays
+# Method 2: Manual open/close
+npk = NumPack("data_directory")
+npk.open()
+
 arrays = {
     'array1': np.random.rand(1000, 100).astype(np.float32),
     'array2': np.random.rand(500, 200).astype(np.float32)
 }
 npk.save(arrays)
-
-# Load arrays
-# Normal mode
 loaded = npk.load("array1")
 
-# lazy load
-lazy_array = npk.load("arr1", lazy=True)
+npk.close()
 ```
 
 ### Advanced Operations
 
 ```python
-# Replace specific rows
-replacement = np.random.rand(10, 100).astype(np.float32)
-npk.replace({'array1': replacement}, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])  # Using list indices
-npk.replace({'array1': replacement}, slice(0, 10))  # Using slice notation
-
-# Append new arrays
-new_arrays = {
-    'array3': np.random.rand(200, 100).astype(np.float32)
-}
-npk.append(new_arrays)
-
-# Drop arrays or specific rows
-npk.drop('array1')  # Drop entire array
-npk.drop(['array1', 'array2'])  # Drop multiple arrays
-npk.drop('array2', [0, 1, 2])  # Drop specific rows
-
-# Random access operations
-data = npk.getitem('array1', [0, 1, 2])  # Access specific rows
-data = npk.getitem('array1', slice(0, 10))  # Access using slice
-data = npk['array1']  # Dictionary-style access for entire array
-
-# Metadata operations
-shapes = npk.get_shape()  # Get shapes of all arrays
-shapes = npk.get_shape('array1')  # Get shape of specific array
-members = npk.get_member_list()  # Get list of array names
-mtime = npk.get_modify_time('array1')  # Get modification time
-metadata = npk.get_metadata()  # Get complete metadata
-
-# Stream loading for large arrays
-for batch in npk.stream_load('array1', buffer_size=1000):
-    # Process 1000 rows at a time
-    process_batch(batch)
-
-# Reset/clear storage
-npk.reset()  # Clear all arrays
-
-# Iterate over all arrays
-for array_name in npk:
-    data = npk[array_name]
-    print(f"{array_name} shape: {data.shape}")
+# All operations should be within context manager or after calling open()
+with NumPack("data_directory") as npk:
+    # Replace specific rows
+    replacement = np.random.rand(10, 100).astype(np.float32)
+    npk.replace({'array1': replacement}, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])  # Using list indices
+    npk.replace({'array1': replacement}, slice(0, 10))  # Using slice notation
+    
+    # Append new arrays
+    new_arrays = {
+        'array3': np.random.rand(200, 100).astype(np.float32)
+    }
+    npk.append(new_arrays)
+    
+    # Drop arrays or specific rows
+    npk.drop('array1')  # Drop entire array
+    npk.drop(['array1', 'array2'])  # Drop multiple arrays
+    npk.drop('array2', [0, 1, 2])  # Drop specific rows
+    
+    # Random access operations
+    data = npk.getitem('array1', [0, 1, 2])  # Access specific rows
+    data = npk.getitem('array1', slice(0, 10))  # Access using slice
+    data = npk['array1']  # Dictionary-style access for entire array
+    
+    # Metadata operations
+    shapes = npk.get_shape()  # Get shapes of all arrays
+    shapes = npk.get_shape('array1')  # Get shape of specific array
+    members = npk.get_member_list()  # Get list of array names
+    mtime = npk.get_modify_time('array1')  # Get modification time
+    metadata = npk.get_metadata()  # Get complete metadata
+    
+    # Stream loading for large arrays
+    for batch in npk.stream_load('array1', buffer_size=1000):
+        # Process 1000 rows at a time
+        process_batch(batch)
+    
+    # Reset/clear storage
+    npk.reset()  # Clear all arrays
+    
+    # Iterate over all arrays
+    for array_name in npk:
+        data = npk[array_name]
+        print(f"{array_name} shape: {data.shape}")
 ```
+
+### Manual File Control with open() and close()
+
+NumPack requires explicit file management - you must either use `open()`/`close()` methods or context manager. Files are not automatically opened during initialization.
+
+```python
+from numpack import NumPack
+import numpy as np
+
+# Method 1: Manual open/close
+npk = NumPack("data_directory")
+
+# Must manually open before use
+npk.open()
+
+# Perform operations
+npk.save({'array1': np.random.rand(100, 10)})
+data = npk.load('array1')
+
+# Manually close the file
+npk.close()
+
+# Can reopen the same instance
+npk.open()
+more_data = npk.load('array1')
+npk.close()
+
+# Check file state
+print(npk.is_opened)  # False
+print(npk.is_closed)  # True
+
+# Method 2: Context manager (Recommended)
+# Automatically handles open/close
+with NumPack("data_directory") as npk:
+    # Automatically opened when entering context
+    npk.save({'array2': np.random.rand(50, 20)})
+# Automatically closed when exiting context
+
+# Can be reused with context manager
+with npk as n:
+    data = n.load('array2')
+```
+
+**Key Features:**
+- Files are **NOT** automatically opened - you must explicitly use `open()` or context manager
+- `open()` method manually opens the file for operations
+- `close()` method releases all resources and closes files
+- After calling `close()`, you can reopen with `open()` method
+- `is_opened` and `is_closed` properties check current file state
+- Multiple `open()` or `close()` calls are safe (idempotent)
+- **Context manager (`with` statement) is recommended** - automatically handles opening and closing
 
 ### Lazy Loading and Buffer Operations
 
@@ -168,16 +232,16 @@ from numpack import NumPack
 import numpy as np
 
 # Create NumPack instance and save large-scale data
-npk = NumPack("test_data/", drop_if_exists=True)
-a = np.random.random((1000000, 128))  # Create a large array
-npk.save({"arr1": a})
-
-# Lazy loading - keeps data in buffer
-lazy_array = npk.load("arr1", lazy=True)  # LazyArray Object
-
-# Perform computations with lazy-loaded data
-# Only required data is loaded into memory
-similarity_scores = np.inner(a[0], npk.load("arr1", lazy=True))
+with NumPack("test_data/", drop_if_exists=True) as npk:
+    a = np.random.random((1000000, 128))  # Create a large array
+    npk.save({"arr1": a})
+    
+    # Lazy loading - keeps data in buffer
+    lazy_array = npk.load("arr1", lazy=True)  # LazyArray Object
+    
+    # Perform computations with lazy-loaded data
+    # Only required data is loaded into memory
+    similarity_scores = np.inner(a[0], npk.load("arr1", lazy=True))
 ```
 
 ## Performance
