@@ -239,26 +239,15 @@ class TestBackendConsistency:
     
     def test_rust_backend_available(self):
         """验证Rust backend可用"""
-        import os
-        
-        # 跳过如果显式强制Python backend
-        if os.environ.get('NUMPACK_FORCE_PYTHON_BACKEND'):
-            pytest.skip("Python backend被强制使用")
-        
         info = get_backend_info()
         
-        # 所有平台都应该使用Rust backend（除非强制）
+        # 所有平台都应该使用Rust backend
         assert info['backend_type'] == 'rust', \
             f"预期使用Rust backend，但得到: {info['backend_type']}"
     
     @windows_only
     def test_rust_backend_on_windows(self):
         """验证Windows平台使用Rust backend"""
-        import os
-        
-        if os.environ.get('NUMPACK_FORCE_PYTHON_BACKEND'):
-            pytest.skip("Python backend被强制使用")
-        
         info = get_backend_info()
         assert info['backend_type'] == 'rust', \
             "Windows应该使用Rust backend"

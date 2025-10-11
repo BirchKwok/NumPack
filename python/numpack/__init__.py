@@ -5,56 +5,32 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Tuple, Union, Optional
 import numpy as np
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 # 平台检测
 def _is_windows():
     """Detect if running on Windows platform"""
     return platform.system().lower() == 'windows'
 
-def _should_use_python_backend():
-    """Decide whether to use Python backend
-    
-    By default, Rust backend is now used on ALL platforms including Windows.
-    The Python backend can still be forced via environment variable if needed.
-    """
-    # Allow forcing Python backend via environment variable
-    # Useful for debugging, testing, or as fallback
-    if os.environ.get('NUMPACK_FORCE_PYTHON_BACKEND', '').lower() in ['1', 'true', 'yes']:
-        return True
-    
-    # Check if Rust backend is explicitly disabled
-    if os.environ.get('NUMPACK_DISABLE_RUST', '').lower() in ['1', 'true', 'yes']:
-        return True
-    
-    # Default: Try to use Rust backend on all platforms
-    return False
-
-# 后端选择和导入
-_USE_PYTHON_BACKEND = _should_use_python_backend()
-
-if _USE_PYTHON_BACKEND:
-    # Windows platform or forced: unified format Python backend
-    from .unified_numpack import NumPack as _NumPack, LazyArray
-    _BACKEND_TYPE = "python"
-else:
-    # Unix/Linux platform: try to use Rust backend
-    try:
-        import numpack._lib_numpack as rust_backend
-        _NumPack = rust_backend.NumPack
-        LazyArray = rust_backend.LazyArray
-        _BACKEND_TYPE = "rust"
-    except ImportError as e:
-        print(f"Warning: Cannot import Rust backend, falling back to unified format Python backend: {e}")
-        from .unified_numpack import NumPack as _NumPack, LazyArray
-        _BACKEND_TYPE = "python"
+# 后端选择和导入 - 始终使用Rust后端以获得最高性能
+try:
+    import numpack._lib_numpack as rust_backend
+    _NumPack = rust_backend.NumPack
+    LazyArray = rust_backend.LazyArray
+    _BACKEND_TYPE = "rust"
+except ImportError as e:
+    raise ImportError(
+        f"无法导入Rust后端: {e}\n"
+        "NumPack现在只使用高性能的Rust后端。请确保:\n"
+        "1. 已正确编译和安装Rust扩展\n"
+        "2. 使用 python build.py 重新构建项目"
+    )
 
 
 class NumPack:
-    """NumPack - High-performance array storage library (hybrid architecture)
+    """NumPack - 高性能数组存储库 (仅使用Rust后端)
     
-    - Windows platform: Use pure Python implementation for compatibility
-    - Unix/Linux platform: Use Rust backend for maximum performance, fallback to Python backend on failure
+    使用高性能的Rust后端实现,在所有平台上提供一致的最佳性能。
     """
     
     def __init__(
@@ -76,7 +52,7 @@ class NumPack:
             strict_context_mode (bool): If True, requires usage within 'with' statement
             warn_no_context (bool): If True, warns when not using context manager
         """
-        self._backend_type = _BACKEND_TYPE
+        self._backend_type = _BACKEND_TYPE  # 始终为 "rust"
         self._strict_context_mode = strict_context_mode
         self._context_entered = False
         self._closed = False
@@ -136,13 +112,8 @@ class NumPack:
         # 创建目录
         self._filename.mkdir(parents=True, exist_ok=True)
         
-        # 初始化后端
-        if self._backend_type == "python":
-            # Python 后端支持 drop_if_exists 参数
-            self._npk = _NumPack(str(self._filename), self._drop_if_exists)
-        else:
-            # Rust 后端只接受一个参数
-            self._npk = _NumPack(str(self._filename))
+        # 初始化Rust后端 (只接受一个参数)
+        self._npk = _NumPack(str(self._filename))
         
         # 更新状态
         self._opened = True
@@ -179,11 +150,8 @@ class NumPack:
         if not isinstance(arrays, dict):
             raise ValueError("arrays must be a dictionary")
             
-        if self._backend_type == "python":
-            self._npk.save(arrays)
-        else:
-            # Rust 后端需要额外的参数
-            self._npk.save(arrays, None)
+        # Rust 后端需要额外的参数
+        self._npk.save(arrays, None)
 
     def load(self, array_name: str, lazy: bool = False) -> Union[np.ndarray, LazyArray]:
         """Load arrays from NumPack file
@@ -217,12 +185,8 @@ class NumPack:
         elif not isinstance(indexes, (list, slice)):
             raise ValueError("The indexes must be int or list or numpy.ndarray or slice.")
             
-        if self._backend_type == "python":
-            # Python 后端优化的 replace 功能
-            self._npk.replace(arrays, indexes)
-        else:
-            # Rust 后端
-            self._npk.replace(arrays, indexes)
+        # Rust 后端
+        self._npk.replace(arrays, indexes)
 
     def append(self, arrays: Dict[str, np.ndarray]) -> None:
         """Append arrays to NumPack file
@@ -250,12 +214,8 @@ class NumPack:
         if isinstance(array_name, str):
             array_name = [array_name]
             
-        if self._backend_type == "python":
-            # Python 后端使用新实现的 drop 方法
-            self._npk.drop(array_name, indexes)
-        else:
-            # Rust 后端
-            self._npk.drop(array_name, indexes)
+        # Rust 后端
+        self._npk.drop(array_name, indexes)
 
     def getitem(self, array_name: str, indexes: Union[List[int], int, np.ndarray]) -> np.ndarray:
         """Randomly access the data of specified rows from NumPack file
@@ -274,12 +234,8 @@ class NumPack:
         elif isinstance(indexes, np.ndarray):
             indexes = indexes.tolist()
         
-        if self._backend_type == "python":
-            # Python 后端使用优化的随机访问实现
-            return self._npk.getitem_optimized(array_name, indexes)
-        else:
-            # Rust 后端
-            return self._npk.getitem(array_name, indexes)
+        # Rust 后端
+        return self._npk.getitem(array_name, indexes)
     
     def get_shape(self, array_name: str) -> Tuple[int, int]:
         """Get the shape of specified arrays in NumPack file
@@ -291,11 +247,7 @@ class NumPack:
             tuple: the shape of the array
         """
         self._check_context_mode()
-        
-        if self._backend_type == "python":
-            return self._npk.get_shape(array_name)
-        else:
-            return self._npk.get_shape(array_name)
+        return self._npk.get_shape(array_name)
     
     def get_member_list(self) -> List[str]:
         """Get the list of array names in NumPack file
@@ -304,11 +256,7 @@ class NumPack:
             A list containing the names of the arrays
         """
         self._check_context_mode()
-        
-        if self._backend_type == "python":
-            return self._npk.list_arrays()
-        else:
-            return self._npk.get_member_list()
+        return self._npk.get_member_list()
     
     def get_modify_time(self, array_name: str) -> Optional[int]:
         """Get the modify time of specified array in NumPack file
@@ -320,11 +268,7 @@ class NumPack:
             The modify time of the array, if the array does not exist, return None
         """
         self._check_context_mode()
-        
-        if self._backend_type == "python":
-            return self._npk.get_modify_time(array_name)
-        else:
-            return self._npk.get_modify_time(array_name)
+        return self._npk.get_modify_time(array_name)
     
     def reset(self) -> None:
         """Clear all arrays in NumPack file"""
@@ -359,15 +303,9 @@ class NumPack:
         if buffer_size is not None and buffer_size <= 0:
             raise ValueError("buffer_size must be greater than 0")
         
-        if self._backend_type == "python":
-            # Python 后端的实现
-            # 当buffer_size为None时，逐行返回（buffer_size=1）
-            effective_buffer_size = buffer_size if buffer_size is not None else 1
-            return self._npk.stream_load(array_name, effective_buffer_size)
-        else:
-            # Rust 后端：使用新实现的stream_load方法
-            effective_buffer_size = buffer_size if buffer_size is not None else 1
-            return self._npk.stream_load(array_name, effective_buffer_size)
+        # Rust 后端：使用stream_load方法
+        effective_buffer_size = buffer_size if buffer_size is not None else 1
+        return self._npk.stream_load(array_name, effective_buffer_size)
 
     def has_array(self, array_name: str) -> bool:
         """Check if array exists
@@ -379,11 +317,7 @@ class NumPack:
             bool: True if array exists
         """
         self._check_context_mode()
-        
-        if self._backend_type == "python":
-            return self._npk.has_array(array_name)
-        else:
-            return array_name in self._npk.get_member_list()
+        return array_name in self._npk.get_member_list()
 
     @property 
     def backend_type(self) -> str:
@@ -406,10 +340,7 @@ class NumPack:
         Returns:
             Dict[str, Any]: 性能统计数据
         """
-        # 如果是Python后端，直接从Python实例获取
-        if self._backend_type == "python" and hasattr(self._npk, "get_io_performance_stats"):
-            return self._npk.get_io_performance_stats()
-        # 否则返回基本信息
+        # Rust后端性能统计
         return {
             "backend_type": self._backend_type,
             "stats_available": False
@@ -539,24 +470,12 @@ class NumPack:
 # LazyArray类 - 导出到模块级别
 # （LazyArray的实际实现来自后端模块）
 
-# 提供向后兼容的空函数
+# 提供向后兼容的空函数(Rust后端自动管理内存)
 def force_cleanup_windows_handles():
-    """强制清理Windows句柄 - 使用统一句柄管理器"""
-    try:
-        # 尝试使用新的句柄管理器
-        from .windows_handle_manager import force_cleanup_windows_handles as _force_cleanup
-        return _force_cleanup()
-    except ImportError:
-        # 如果句柄管理器不可用，使用传统方法
-        import gc
-        import time
-        import os
-        
-        gc.collect()
-        if os.name == 'nt':
-            time.sleep(0.1)
-            gc.collect()
-        return True
+    """强制清理Windows句柄 - Rust后端自动管理,保留此函数以兼容旧代码"""
+    import gc
+    gc.collect()
+    return True
 
 # 导出的公共API
 __all__ = ['NumPack', 'LazyArray', 'force_cleanup_windows_handles', 'get_backend_info']
@@ -569,9 +488,10 @@ def get_backend_info():
         Dict: 包含后端类型、平台、版本等信息的字典
     """
     return {
-        'backend_type': _BACKEND_TYPE,
+        'backend_type': _BACKEND_TYPE,  # 始终为 "rust"
         'platform': platform.system(),
         'is_windows': _is_windows(),
-        'use_python_backend': _USE_PYTHON_BACKEND,
-        'version': __version__
+        'version': __version__,
+        'description': '高性能Rust后端',
+        'use_python_backend': False  # 兼容旧代码
     }

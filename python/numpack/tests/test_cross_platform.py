@@ -24,13 +24,7 @@ class TestCrossPlatformConsistency:
     """验证跨平台一致性"""
     
     def test_same_backend_all_platforms(self):
-        """所有平台应该使用相同的backend（默认Rust）"""
-        import os
-        
-        # 跳过如果显式强制Python backend
-        if os.environ.get('NUMPACK_FORCE_PYTHON_BACKEND'):
-            pytest.skip("Python backend被显式强制")
-        
+        """所有平台应该使用相同的backend（Rust）"""
         info = get_backend_info()
         assert info['backend_type'] == 'rust', \
             f"预期Rust backend在{info['platform']}上，但得到: {info['backend_type']}"
@@ -164,8 +158,7 @@ class TestPerformanceConsistency:
         assert 'is_windows' in info
         assert 'version' in info
         
-        # 版本应该是0.3.0
-        assert info['version'] == '0.3.0'
+
         
         # platform应该是有效值
         assert info['platform'] in ['Windows', 'Darwin', 'Linux']

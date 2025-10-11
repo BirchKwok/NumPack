@@ -31,13 +31,11 @@ import logging
 # 添加 numpack 路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-# 强制使用特定后端进行测试
+# 注意: NumPack现在只使用Rust后端
 def set_backend(backend_type: str):
-    """设置要使用的后端类型"""
-    if backend_type == 'python':
-        os.environ['NUMPACK_FORCE_PYTHON_BACKEND'] = '1'
-    else:
-        os.environ.pop('NUMPACK_FORCE_PYTHON_BACKEND', None)
+    """设置要使用的后端类型(保留此函数以兼容,但现在只有rust后端)"""
+    # NumPack现在只使用Rust后端,忽略backend_type参数
+    pass
 
 @dataclass
 class BenchmarkResult:
@@ -126,39 +124,39 @@ class ComprehensiveBenchmark:
         test_data = self.generate_test_data(rows, cols, 3)
         data_size_mb = sum(arr.nbytes for arr in test_data.values()) / 1024 / 1024
         
-        for backend_name in ['python', 'rust']:
-            try:
-                set_backend(backend_name)
-                from numpack import NumPack
-                
-                # NumPack 保存测试
-                numpack_file = os.path.join(self.temp_dir, f'test_numpack_{backend_name}')
-                with self.timer_and_memory(f"NumPack Save", backend_name):
-                    npk = NumPack(numpack_file, drop_if_exists=True)
-                    npk.save(test_data)
-                
-                # 记录文件大小
-                numpack_size = self.get_file_size_mb(numpack_file)
-                self.results[-1].file_size_mb = numpack_size
-                self.results[-1].throughput_mb_s = data_size_mb / self.results[-1].time_seconds
-                
-                # NumPack 加载测试
-                with self.timer_and_memory(f"NumPack Load", backend_name):
-                    for key in test_data.keys():
-                        loaded = npk.load(key)
-                        
-                self.results[-1].throughput_mb_s = data_size_mb / self.results[-1].time_seconds
-                
-                # NumPack 懒加载测试
-                with self.timer_and_memory(f"NumPack Lazy Load", backend_name):
-                    for key in test_data.keys():
-                        lazy_loaded = npk.load(key, lazy=True)
-                        
-                self.results[-1].throughput_mb_s = data_size_mb / self.results[-1].time_seconds
-                
-            except Exception as e:
-                self.logger.error(f"NumPack {backend_name} 后端测试失败: {e}")
-                continue
+        # NumPack测试 (只有Rust后端)
+        backend_name = 'rust'
+        try:
+            set_backend(backend_name)
+            from numpack import NumPack
+            
+            # NumPack 保存测试
+            numpack_file = os.path.join(self.temp_dir, f'test_numpack_{backend_name}')
+            with self.timer_and_memory(f"NumPack Save", backend_name):
+                npk = NumPack(numpack_file, drop_if_exists=True)
+                npk.save(test_data)
+            
+            # 记录文件大小
+            numpack_size = self.get_file_size_mb(numpack_file)
+            self.results[-1].file_size_mb = numpack_size
+            self.results[-1].throughput_mb_s = data_size_mb / self.results[-1].time_seconds
+            
+            # NumPack 加载测试
+            with self.timer_and_memory(f"NumPack Load", backend_name):
+                for key in test_data.keys():
+                    loaded = npk.load(key)
+                    
+            self.results[-1].throughput_mb_s = data_size_mb / self.results[-1].time_seconds
+            
+            # NumPack 懒加载测试
+            with self.timer_and_memory(f"NumPack Lazy Load", backend_name):
+                for key in test_data.keys():
+                    lazy_loaded = npk.load(key, lazy=True)
+                    
+            self.results[-1].throughput_mb_s = data_size_mb / self.results[-1].time_seconds
+            
+        except Exception as e:
+            self.logger.error(f"NumPack {backend_name} 后端测试失败: {e}")
         
         # NumPy .npy 测试
         npy_files = []
@@ -219,8 +217,13 @@ class ComprehensiveBenchmark:
         single_indices = random_indices[:1000]  # 单个索引访问
         batch_indices = random_indices  # 批量索引访问
         
-        for backend_name in ['python', 'rust']:
-            try:
+        # NumPack只使用Rust后端
+
+        
+        backend_name = 'rust'
+
+        
+        try:
                 set_backend(backend_name)
                 from numpack import NumPack
                 
@@ -245,8 +248,7 @@ class ComprehensiveBenchmark:
                     result = npk.getitem('test_array', batch_indices.tolist())
                     
             except Exception as e:
-                self.logger.error(f"NumPack {backend_name} 随机访问测试失败: {e}")
-                continue
+                self.logger.error(f\"NumPack {backend_name} 随机访问测试失败: {e}\")
         
         # NumPy 比较测试
         npy_file = os.path.join(self.temp_dir, 'random_access.npy')
@@ -308,8 +310,13 @@ class ComprehensiveBenchmark:
         test_data = self.generate_test_data(rows, cols, 1)
         test_array = test_data['array_0']
         
-        for backend_name in ['python', 'rust']:
-            try:
+        # NumPack只使用Rust后端
+
+        
+        backend_name = 'rust'
+
+        
+        try:
                 set_backend(backend_name)
                 from numpack import NumPack
                 
@@ -327,8 +334,7 @@ class ComprehensiveBenchmark:
                             break
                             
             except Exception as e:
-                self.logger.error(f"NumPack {backend_name} 流读取测试失败: {e}")
-                continue
+                self.logger.error(f\"NumPack {backend_name} 流读取测试失败: {e}\")
         
         # NumPy 分块读取对比
         npy_file = os.path.join(self.temp_dir, 'streaming.npy')
@@ -351,8 +357,13 @@ class ComprehensiveBenchmark:
         replace_data = np.random.randn(rows // 4, cols).astype(np.float32)
         replace_indices = list(range(rows // 4))
         
-        for backend_name in ['python', 'rust']:
-            try:
+        # NumPack只使用Rust后端
+
+        
+        backend_name = 'rust'
+
+        
+        try:
                 set_backend(backend_name)
                 from numpack import NumPack
                 
@@ -375,8 +386,7 @@ class ComprehensiveBenchmark:
                     npk.drop('test_array', delete_indices)
                     
             except Exception as e:
-                self.logger.error(f"NumPack {backend_name} 批量操作测试失败: {e}")
-                continue
+                self.logger.error(f\"NumPack {backend_name} 批量操作测试失败: {e}\")
         
         # NumPy 对比操作
         numpy_array = test_array.copy()
@@ -401,8 +411,11 @@ class ComprehensiveBenchmark:
         data_size_mb = test_array.nbytes / 1024 / 1024
         
         # 测试懒加载内存效率
-        for backend_name in ['python', 'rust']:
-            try:
+        # NumPack只使用Rust后端
+
+        backend_name = 'rust'
+
+        try:
                 set_backend(backend_name)
                 from numpack import NumPack
                 
@@ -426,8 +439,7 @@ class ComprehensiveBenchmark:
                 self.results.append(result)
                 
             except Exception as e:
-                self.logger.error(f"NumPack {backend_name} 内存效率测试失败: {e}")
-                continue
+                self.logger.error(f\"NumPack {backend_name} 内存效率测试失败: {e}\")
         
         # NumPy 内存使用对比
         npy_file = os.path.join(self.temp_dir, 'memory_test.npy')
@@ -480,8 +492,13 @@ class ComprehensiveBenchmark:
             fibonacci_indices.append(b)
             a, b = b, a + b
         
-        for backend_name in ['python', 'rust']:
-            try:
+        # NumPack只使用Rust后端
+
+        
+        backend_name = 'rust'
+
+        
+        try:
                 set_backend(backend_name)
                 from numpack import NumPack
                 
@@ -502,8 +519,7 @@ class ComprehensiveBenchmark:
                     result = npk.getitem('test_array', fibonacci_indices)
                     
             except Exception as e:
-                self.logger.error(f"NumPack {backend_name} 非连续访问测试失败: {e}")
-                continue
+                self.logger.error(f\"NumPack {backend_name} 非连续访问测试失败: {e}\")
         
         # NumPy 对比测试
         npy_file = os.path.join(self.temp_dir, 'non_contiguous.npy')
@@ -542,8 +558,13 @@ class ComprehensiveBenchmark:
             
             data_size_mb = test_array.nbytes / 1024 / 1024
             
-            for backend_name in ['python', 'rust']:
-                try:
+            # NumPack只使用Rust后端
+
+            
+            backend_name = 'rust'
+
+            
+            try:
                     set_backend(backend_name)
                     from numpack import NumPack
                     
@@ -565,8 +586,7 @@ class ComprehensiveBenchmark:
                     self.results[-1].throughput_mb_s = data_size_mb / self.results[-1].time_seconds
                     
                 except Exception as e:
-                    self.logger.error(f"NumPack {backend_name} {dtype_name} 测试失败: {e}")
-                    continue
+                    self.logger.error(f\"NumPack {backend_name} {dtype_name} 测试失败: {e}\")
             
             # NumPy 对比
             npy_file = os.path.join(self.temp_dir, f'dtype_{dtype_name}.npy')
@@ -591,8 +611,13 @@ class ComprehensiveBenchmark:
         test_array = test_data['array_0']
         query_vector = np.random.randn(1, cols).astype(np.float32)
         
-        for backend_name in ['python', 'rust']:
-            try:
+        # NumPack只使用Rust后端
+
+        
+        backend_name = 'rust'
+
+        
+        try:
                 set_backend(backend_name)
                 from numpack import NumPack
                 
@@ -610,8 +635,7 @@ class ComprehensiveBenchmark:
                     result = np.inner(query_vector, lazy_array)
                     
             except Exception as e:
-                self.logger.error(f"NumPack {backend_name} 矩阵运算测试失败: {e}")
-                continue
+                self.logger.error(f\"NumPack {backend_name} 矩阵运算测试失败: {e}\")
         
         # NumPy 对比
         npy_file = os.path.join(self.temp_dir, 'matrix_ops.npy')
@@ -652,8 +676,13 @@ class ComprehensiveBenchmark:
         for test_name, test_array in test_cases:
             original_size_mb = test_array.nbytes / 1024 / 1024
             
-            for backend_name in ['python', 'rust']:
-                try:
+            # NumPack只使用Rust后端
+
+            
+            backend_name = 'rust'
+
+            
+            try:
                     set_backend(backend_name)
                     from numpack import NumPack
                     
@@ -677,8 +706,7 @@ class ComprehensiveBenchmark:
                     self.results.append(result)
                     
                 except Exception as e:
-                    self.logger.error(f"NumPack {backend_name} 压缩测试失败: {e}")
-                    continue
+                    self.logger.error(f\"NumPack {backend_name} 压缩测试失败: {e}\")
             
             # NumPy 对比
             npy_file = os.path.join(self.temp_dir, f'compression_{test_name.replace(" ", "_")}.npy')

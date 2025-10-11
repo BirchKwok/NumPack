@@ -9,6 +9,13 @@ mod hybrid_metadata;
 mod parallel_io;
 mod batch_access_engine;
 
+// 性能优化模块
+mod optimized_metadata;      // 优化的元数据格式
+mod fast_metadata;           // 快速元数据存储（兼容层）
+mod adaptive_compression;    // 自适应压缩
+mod simd_optimized;          // SIMD向量化
+mod multilevel_cache;        // 多级缓存
+
 // 新的模块化结构
 mod access_pattern;
 mod performance;
@@ -3937,6 +3944,14 @@ impl NumPack {
     /// 显式关闭NumPack实例并释放所有资源
     fn close(&mut self, py: Python) -> PyResult<()> {
         use crate::memory::handle_manager::get_handle_manager;
+        
+        // 🚀 在关闭时同步元数据到磁盘（只此一次）
+        // 这样save()操作本身不同步，close()时一次性写入
+        py.allow_threads(|| {
+            if let Err(e) = self.io.sync_metadata() {
+                eprintln!("警告：元数据同步失败: {}", e);
+            }
+        });
         
         let handle_manager = get_handle_manager();
         
