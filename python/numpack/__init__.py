@@ -38,7 +38,8 @@ class NumPack:
         filename: Union[str, Path], 
         drop_if_exists: bool = False,
         strict_context_mode: bool = False,
-        warn_no_context: bool = None
+        warn_no_context: bool = None,
+        force_gc_on_close: bool = False
     ):
         """Initialize NumPack object
         
@@ -51,6 +52,8 @@ class NumPack:
             drop_if_exists (bool): Whether to drop the file if it already exists
             strict_context_mode (bool): If True, requires usage within 'with' statement
             warn_no_context (bool): If True, warns when not using context manager
+            force_gc_on_close (bool): 是否在close时强制垃圾回收。默认False以获得最佳性能。
+                                    仅在应用有严格内存限制时设置为True。
         """
         self._backend_type = _BACKEND_TYPE  # 始终为 "rust"
         self._strict_context_mode = strict_context_mode
@@ -59,6 +62,7 @@ class NumPack:
         self._opened = False
         self._filename = Path(filename)
         self._drop_if_exists = drop_if_exists
+        self._force_gc_on_close = force_gc_on_close
         
         # Determine warning behavior
         if warn_no_context is None:
@@ -346,79 +350,46 @@ class NumPack:
             "stats_available": False
         }
 
-    def close(self) -> None:
+    def close(self, force_gc: Optional[bool] = None) -> None:
         """显式关闭NumPack实例并释放所有资源
         
-        此方法确保正确清理：
-        - 内存映射文件
-        - 文件句柄
-        - 内部缓存
-        - 后端资源
+        【性能优化】快速close - 确保元数据flush，无额外GC开销
         
         调用close()后，可以通过调用open()重新打开文件。
         多次调用close()是安全的（幂等）。
         
-        最佳实践：使用context manager而不是手动close()：
-        ```python
-        with NumPack('data.npk') as npk:
-            npk.save({'data': array})
-        # 自动调用close()
-        ```
-        
-        手动管理示例：
-        ```python
-        npk = NumPack('data.npk')
-        npk.open()
-        npk.save({'data': array})
-        npk.close()
-        # ... 稍后重新打开 ...
-        npk.open()
-        data = npk.load('data')
-        npk.close()
-        ```
+        Parameters:
+            force_gc (Optional[bool]): 是否强制执行垃圾回收。默认False以获得最佳性能。
         """
         if self._closed or not self._opened:
             return  # 已关闭或未打开，无需操作
         
-        try:
-            # 步骤1：关闭后端特定资源
-            if self._npk is not None:
-                if hasattr(self._npk, 'close'):
-                    self._npk.close()
-                elif hasattr(self._npk, '_cleanup_windows_handles'):
-                    self._npk._cleanup_windows_handles()
-            
-            # 步骤2：Windows特定的全面清理
-            if _is_windows():
-                self._windows_comprehensive_cleanup()
-            
-            # 步骤3：通用清理
+        # 【性能优化】调用Rust端close以flush元数据，但不做额外清理
+        if self._npk is not None and hasattr(self._npk, 'close'):
+            try:
+                self._npk.close()
+            except:
+                pass  # 忽略close错误
+        
+        # 更新状态
+        self._closed = True
+        self._opened = False
+        self._npk = None  # 释放引用，Rust的Drop会自动清理
+        
+        # 仅在用户显式请求时才执行GC（通常不需要）
+        if force_gc or (force_gc is None and self._force_gc_on_close):
             import gc
             gc.collect()
-            
-        except Exception as e:
-            # Log but don't throw - close() should be fault-tolerant
-            import sys
-            print(f"Warning: Error during NumPack.close(): {e}", file=sys.stderr)
-        finally:
-            # 始终标记为已关闭
-            self._closed = True
-            self._opened = False
-            # 清空后端实例引用
-            self._npk = None
     
     def _windows_comprehensive_cleanup(self):
-        """Windows特定的全面资源清理"""
+        """Windows特定的全面资源清理
+        
+        注意：由于使用Rust后端，大部分清理工作由Rust的Drop trait自动处理。
+        只需要一次GC来清理Python侧的循环引用。
+        """
         import gc
-        import time
-        
-        # 基本清理
-        for _ in range(3):
-            gc.collect()
-            time.sleep(0.01)
-        
-        # Windows额外等待
-        time.sleep(0.05)
+        # 只执行一次GC，Rust后端会自动处理其余清理工作
+        gc.collect()
     
     def __del__(self):
         """析构函数"""

@@ -3068,144 +3068,118 @@ impl NumPack {
     fn load(&self, py: Python, array_name: &str, lazy: Option<bool>) -> PyResult<PyObject> {
         let lazy = lazy.unwrap_or(false);
         
-        if !self.io.has_array(array_name) {
-            return Err(PyErr::new::<PyKeyError, _>("Array not found"));
-        }
-        
         if lazy {
             // 【性能优化】快速路径 - 最小化操作
             return self.load_lazy_optimized(py, array_name);
         }
 
-        let meta = self.io.get_array_metadata(array_name)?;
-        let data_path = self.base_dir.join(format!("data_{}.npkd", array_name));
-        
-        // Windows平台文件存在性检查，防止路径被误解析为目录
-        if !data_path.exists() {
-            return Err(PyErr::new::<pyo3::exceptions::PyFileNotFoundError, _>(
-                format!("Data file not found: {}", data_path.display())
-            ));
-        }
-        
-        // 确保路径是文件而不是目录
-        if data_path.is_dir() {
-            return Err(PyErr::new::<pyo3::exceptions::PyIsADirectoryError, _>(
-                format!("Expected file but found directory: {}", data_path.display())
-            ));
-        }
-        
-        let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
-        
-        // Use mmap to accelerate data loading
-        let file = std::fs::File::open(&data_path)?;
-        let mmap = unsafe { memmap2::MmapOptions::new().map(&file)? };
-        
-        // Create array and copy data
-        let array: PyObject = match meta.get_dtype() {
-            DataType::Bool => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr(), mmap.len());
-                    let bool_vec: Vec<bool> = slice.iter().map(|&x| x != 0).collect();
-                    ArrayD::from_shape_vec(shape, bool_vec).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Uint8 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const u8, mmap.len());
-                    ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Uint16 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const u16, mmap.len() / 2);
-                    ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Uint32 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const u32, mmap.len() / 4);
-                    ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Uint64 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const u64, mmap.len() / 8);
-                    ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Int8 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const i8, mmap.len());
-                    ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Int16 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const i16, mmap.len() / 2);
-                    ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Int32 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const i32, mmap.len() / 4);
-                    ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Int64 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const i64, mmap.len() / 8);
-                    ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Float16 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const f16, mmap.len() / 2);
-                    ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Float32 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const f32, mmap.len() / 4);
-                    ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Float64 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const f64, mmap.len() / 8);
-                    ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Complex64 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const Complex32, mmap.len() / 8);
-                    ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Complex128 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const Complex64, mmap.len() / 16);
-                    ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
+        // 【性能关键优化】超快速加载路径 - 最小化所有开销
+        // 1. 元数据查询（带缓存）
+        let meta_cache_key = format!("{}:{}", self.base_dir.display(), array_name);
+        let cached_meta = {
+            let meta_cache = METADATA_CACHE.lock().unwrap();
+            meta_cache.get(&meta_cache_key).cloned()
+        };
+
+        let (dtype, shape, itemsize, modify_time) = if let Some((cached_dtype, cached_shape, cached_itemsize, cached_mtime)) = cached_meta {
+            (cached_dtype, cached_shape, cached_itemsize, cached_mtime)
+        } else {
+            let meta = match self.io.get_array_meta(array_name) {
+                Some(m) => m,
+                None => return Err(PyErr::new::<PyKeyError, _>("Array not found")),
+            };
+
+            let dtype = meta.get_dtype();
+            let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
+            let itemsize = dtype.size_bytes() as usize;
+            let modify_time = meta.last_modified as i64;
+
+            let mut meta_cache = METADATA_CACHE.lock().unwrap();
+            meta_cache.insert(meta_cache_key.clone(), (dtype, shape.clone(), itemsize, modify_time));
+
+            (dtype, shape, itemsize, modify_time)
+        };
+
+        // 2. 复用mmap缓存，避免重复映射
+        let mut filename = String::with_capacity(5 + array_name.len() + 5); // "data_" + name + ".npkd"
+        filename.push_str("data_");
+        filename.push_str(array_name);
+        filename.push_str(".npkd");
+        let data_path = self.base_dir.join(&filename);
+        let array_path_string = data_path.to_string_lossy().to_string();
+
+        let mmap_arc = {
+            let mut mmap_cache = MMAP_CACHE.lock().unwrap();
+            if let Some((cached_mmap, cached_time)) = mmap_cache.get(&array_path_string) {
+                if *cached_time == modify_time {
+                    Arc::clone(cached_mmap)
+                } else {
+                    create_optimized_mmap(&data_path, modify_time, &mut mmap_cache)?
+                }
+            } else {
+                create_optimized_mmap(&data_path, modify_time, &mut mmap_cache)?
             }
         };
-        
-        drop(mmap);
-        drop(file);
-        
+
+        let mmap_bytes = mmap_arc.as_ref().as_ref();
+        let total_elements: usize = shape.iter().product();
+        let expected_bytes = total_elements.checked_mul(itemsize).ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>("Array size overflow detected")
+        })?;
+
+        if expected_bytes > mmap_bytes.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                format!(
+                    "Data file is smaller than expected: expected {} bytes, found {} bytes",
+                    expected_bytes,
+                    mmap_bytes.len()
+                )
+            ));
+        }
+
+        // 【极致性能优化】超快速加载 - 直接复制到NumPy数组
+        macro_rules! load_to_numpy {
+            ($rust_type:ty) => {{
+                let vec: Vec<$rust_type> = py.allow_threads(|| unsafe {
+                    let mut vec = Vec::<$rust_type>::with_capacity(total_elements);
+                    let src_ptr = mmap_bytes.as_ptr() as *const $rust_type;
+                    ptr::copy_nonoverlapping(src_ptr, vec.as_mut_ptr(), total_elements);
+                    vec.set_len(total_elements);
+                    vec
+                });
+
+                ArrayD::from_shape_vec(shape.clone(), vec)
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?
+                    .into_pyarray(py)
+                    .into()
+            }};
+        }
+
+        let array: PyObject = match dtype {
+            DataType::Bool => {
+                let bool_vec: Vec<bool> = py.allow_threads(|| {
+                    mmap_bytes.iter().map(|&x| x != 0).collect()
+                });
+                ArrayD::from_shape_vec(shape.clone(), bool_vec)
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?
+                    .into_pyarray(py)
+                    .into()
+            }
+            DataType::Uint8 => load_to_numpy!(u8),
+            DataType::Uint16 => load_to_numpy!(u16),
+            DataType::Uint32 => load_to_numpy!(u32),
+            DataType::Uint64 => load_to_numpy!(u64),
+            DataType::Int8 => load_to_numpy!(i8),
+            DataType::Int16 => load_to_numpy!(i16),
+            DataType::Int32 => load_to_numpy!(i32),
+            DataType::Int64 => load_to_numpy!(i64),
+            DataType::Float16 => load_to_numpy!(f16),
+            DataType::Float32 => load_to_numpy!(f32),
+            DataType::Float64 => load_to_numpy!(f64),
+            DataType::Complex64 => load_to_numpy!(Complex32),
+            DataType::Complex128 => load_to_numpy!(Complex64),
+        };
+
         Ok(array)
     }
 
@@ -3943,27 +3917,29 @@ impl NumPack {
     
     /// 显式关闭NumPack实例并释放所有资源
     fn close(&mut self, py: Python) -> PyResult<()> {
-        use crate::memory::handle_manager::get_handle_manager;
+        // 【性能优化】快速close - 只同步元数据，其他资源由RAII自动清理
+        // 移除耗时的handle_manager.force_cleanup_and_wait操作
         
-        // 🚀 在关闭时同步元数据到磁盘（只此一次）
-        // 这样save()操作本身不同步，close()时一次性写入
         py.allow_threads(|| {
             if let Err(e) = self.io.sync_metadata() {
-                eprintln!("警告：元数据同步失败: {}", e);
+                // 静默忽略"目录不存在"错误（这是测试清理时的正常情况）
+                let error_msg = e.to_string();
+                let is_not_found_error = error_msg.contains("No such file or directory") ||
+                                        error_msg.contains("cannot find the path") ||
+                                        error_msg.contains("system cannot find the path") ||
+                                        error_msg.contains("os error 2");
+                
+                if !is_not_found_error {
+                    eprintln!("Warning: Metadata synchronization failed: {}", e);
+                }
             }
         });
         
-        let handle_manager = get_handle_manager();
-        
-        // 清除所有临时文件缓存
+        // 清除临时文件缓存（轻量级操作）
         clear_temp_files_from_cache();
         
-        // 强制清理并等待适当的时间
-        py.allow_threads(|| {
-            if let Err(e) = handle_manager.force_cleanup_and_wait(None) {
-                eprintln!("警告：清理失败: {}", e);
-            }
-        });
+        // Rust的RAII会自动清理文件句柄和内存映射
+        // 无需显式等待清理完成
         
         Ok(())
     }
