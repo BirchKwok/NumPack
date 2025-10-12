@@ -218,6 +218,18 @@ class NumPack:
         if isinstance(array_name, str):
             array_name = [array_name]
             
+        if indexes is not None:
+            if isinstance(indexes, int):
+                indexes = [int(indexes)]
+            elif isinstance(indexes, np.ndarray):
+                indexes = indexes.tolist()
+            elif isinstance(indexes, tuple):
+                indexes = list(indexes)
+            elif isinstance(indexes, list):
+                indexes = [int(idx) for idx in indexes]
+            elif not isinstance(indexes, slice):
+                raise ValueError("The indexes must be int, list, tuple, numpy.ndarray or slice.")
+        
         # Rust 后端
         self._npk.drop(array_name, indexes)
 

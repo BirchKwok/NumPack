@@ -176,6 +176,27 @@ def test_array_deletion(numpack, dtype, test_values, ndim, shape):
     member_list = numpack.get_member_list()
     assert len(member_list) == 0
 
+
+def test_drop_various_index_types_1d(numpack):
+    """Ensure drop works correctly for multiple index representations on 1D arrays."""
+    def run_case(indexes, expected_indexes):
+        with tempfile.TemporaryDirectory() as tmp:
+            npk = NumPack(tmp)
+            npk.open()
+            base = np.arange(6, dtype=np.int32)
+            npk.save({'array': base})
+            npk.drop('array', indexes)
+            loaded = npk.load('array')
+            expected = np.delete(base, expected_indexes)
+            assert np.array_equal(loaded, expected)
+            assert npk.get_shape('array') == expected.shape
+
+    run_case(0, 0)
+    run_case([1, 3], [1, 3])
+    run_case((2,), [2])
+    run_case(np.array([4, -1]), [4, 5])
+    run_case(slice(1, 4), [1, 2, 3])
+
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
 @pytest.mark.parametrize("ndim,shape", ARRAY_DIMS)
 def test_concurrent_operations(numpack, dtype, test_values, ndim, shape):

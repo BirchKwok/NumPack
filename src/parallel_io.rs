@@ -233,9 +233,19 @@ impl ArrayView {
     pub fn physical_delete(&mut self, excluded_indices: &[i64]) -> NpkResult<()> {
         let element_size = self.meta.get_dtype().size_bytes() as usize;
         let shape: Vec<usize> = self.meta.shape.iter().map(|&x| x as usize).collect();
-        let row_size = shape[1..].iter().product::<usize>() * element_size;
-        let total_rows = shape[0];
+        let total_rows = shape.get(0).copied().unwrap_or(0);
 
+        if total_rows == 0 {
+            return Ok(());
+        }
+
+        let row_size = if shape.len() <= 1 {
+            element_size
+        } else {
+            shape[1..].iter().product::<usize>() * element_size
+        };
+
+        // normalize indices to remove duplicates and ensure bounds
         let mut excluded_vec: Vec<usize> = excluded_indices
             .iter()
             .filter_map(|&idx| normalize_index(idx, total_rows))
@@ -340,8 +350,12 @@ impl ArrayView {
         // optimize block size and alignment
         const CACHE_LINE_SIZE: usize = 64;
         let aligned_row_size = (row_size + CACHE_LINE_SIZE - 1) & !(CACHE_LINE_SIZE - 1);
-        let optimal_block_rows = BUFFER_SIZE / aligned_row_size;
-        let num_blocks = (total_rows + optimal_block_rows - 1) / optimal_block_rows;
+        let optimal_block_rows = if aligned_row_size == 0 {
+            1
+        } else {
+            std::cmp::max(1, BUFFER_SIZE / aligned_row_size)
+        };
+        let num_blocks = std::cmp::max(1, (total_rows + optimal_block_rows - 1) / optimal_block_rows);
 
         // pre-calculate write positions
         let mut write_positions = vec![0usize; num_blocks];
@@ -410,20 +424,47 @@ impl ArrayView {
                     if (word >> bit_idx) & 1 == 1 {
                         let row = word_idx * 64 + bit_idx;
                         let src_offset = row * row_size;
+                        if src_offset + row_size > source_mmap.len() {
+                            return Err(NpkError::IoError(std::io::Error::new(
+                                std::io::ErrorKind::UnexpectedEof,
+                                format!(
+                                    "drop physical_delete attempted to copy row {} beyond file bounds (row_size={}, file_len={})",
+                                    row,
+                                    row_size,
+                                    source_mmap.len()
+                                )
+                            )));
+                        }
+
+                        let dst_end = current_offset + row_size;
+
+                        let src_slice = if row_size == 0 {
+                            &[]
+                        } else {
+                            &source_mmap[src_offset..src_offset + row_size]
+                        };
+
+                        if dst_end > write_buffer.len() {
+                            write_buffer.resize(dst_end, 0);
+                        }
+
+                        let dst_slice = if row_size == 0 {
+                            &mut []
+                        } else {
+                            &mut write_buffer[current_offset..dst_end]
+                        };
+
                         // 🚀 SIMD优化: 使用向量化拷贝 (4-8x faster)
-                        simd_optimized::fast_copy(
-                            &source_mmap[src_offset..src_offset + row_size],
-                            &mut write_buffer[current_offset..current_offset + row_size]
-                        );
-                        current_offset += row_size;
+                        simd_optimized::fast_copy(src_slice, dst_slice);
+                        current_offset = dst_end;
                     }
                     bit_idx += 1;
                 }
             }
             
             // set actual buffer size
-            unsafe {
-                write_buffer.set_len(current_offset);
+            if write_buffer.len() < current_offset {
+                write_buffer.resize(current_offset, 0);
             }
             
             // write data
