@@ -41,7 +41,7 @@ impl LazyArrayIterator {
 impl LazyArrayIterator {
     /// 创建新的LazyArrayIterator实例
     pub fn new(array: LazyArray) -> Self {
-        let total_rows = array.shape[0];
+        let total_rows = array.len_logical();
         Self {
             array,
             current_index: 0,

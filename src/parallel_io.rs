@@ -1,5 +1,5 @@
 use std::io::{self, BufWriter, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::fs::{File, OpenOptions};
 use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
@@ -13,6 +13,7 @@ use crate::error::{NpkError, NpkResult};
 use crate::metadata::{ArrayMetadata, DataType};
 use crate::binary_metadata::{BinaryMetadataStore, BinaryCachedStore, BinaryArrayMetadata, BinaryDataType};
 use crate::simd_optimized;
+use crate::deletion_bitmap::DeletionBitmap;
 
 // 平台特定导入
 
@@ -259,14 +260,33 @@ impl ArrayView {
 
         let new_rows = total_rows - excluded_vec.len();
         let new_size = new_rows * row_size;
+        
+        // 特殊处理：如果删除所有行，直接清空文件
+        if new_rows == 0 {
+            self.file.set_len(0)?;
+            self.meta.shape[0] = 0;
+            self.meta.size_bytes = 0;
+            return Ok(());
+        }
+        
+        // 特殊处理：如果源文件为空，直接返回
+        if self.meta.size_bytes == 0 {
+            return Ok(());
+        }
 
-        let mut retain_bitmap = vec![0u64; (total_rows + 63) / 64];
+        let bitmap_len = (total_rows + 63) / 64;
+        if bitmap_len == 0 {
+            // 边界情况：bitmap长度为0，不应该发生但添加保护
+            return Ok(());
+        }
+        
+        let mut retain_bitmap = vec![0u64; bitmap_len];
         let full_words = total_rows / 64;
         let remaining_bits = total_rows % 64;
 
         // initialize retain_bitmap to all 1
         retain_bitmap.iter_mut().take(full_words).for_each(|word| *word = !0u64);
-        if remaining_bits > 0 {
+        if remaining_bits > 0 && full_words < retain_bitmap.len() {
             retain_bitmap[full_words] = (1u64 << remaining_bits) - 1;
         }
 
@@ -274,7 +294,9 @@ impl ArrayView {
         for &idx in &excluded_vec {
             let word_idx = idx / 64;
             let bit_idx = idx % 64;
-            retain_bitmap[word_idx] &= !(1u64 << bit_idx);
+            if word_idx < retain_bitmap.len() {
+                retain_bitmap[word_idx] &= !(1u64 << bit_idx);
+            }
         }
 
         // create temp file
@@ -368,7 +390,12 @@ impl ArrayView {
             let end_row = std::cmp::min(start_row + optimal_block_rows, total_rows);
             
             let start_word = start_row / 64;
-            let end_word = (end_row + 63) / 64;
+            let end_word = std::cmp::min((end_row + 63) / 64, retain_bitmap.len());
+            
+            // 边界检查：确保start_word不超出bitmap范围
+            if start_word >= retain_bitmap.len() {
+                continue;
+            }
             
             for word_idx in start_word..end_word {
                 let word = retain_bitmap[word_idx];
@@ -403,15 +430,20 @@ impl ArrayView {
             
             // calculate bitmap range for current block
             let start_word = start_row / 64;
-            let end_word = (end_row + 63) / 64;
-            let retain_bitmap = &*retain_bitmap;
+            let retain_bitmap_ref = &*retain_bitmap;
+            let end_word = std::cmp::min((end_row + 63) / 64, retain_bitmap_ref.len());
             let source_mmap = &*source_mmap;
+            
+            // 边界检查：确保start_word不超出bitmap范围
+            if start_word >= retain_bitmap_ref.len() {
+                return Ok(());
+            }
             
             let mut current_offset = 0;
             
             // use SIMD optimized memory copy
             for word_idx in start_word..end_word {
-                let word = retain_bitmap[word_idx];
+                let word = retain_bitmap_ref[word_idx];
                 let start_bit = if word_idx == start_word { start_row % 64 } else { 0 };
                 let end_bit = if word_idx == end_word - 1 && end_row % 64 != 0 {
                     end_row % 64
@@ -787,36 +819,97 @@ impl ParallelIO {
     pub fn has_array(&self, name: &str) -> bool {
         self.metadata.has_array(name)
     }
+    
+    /// 获取base_dir的引用
+    pub fn get_base_dir(&self) -> &Path {
+        &self.base_dir
+    }
 
     pub fn drop_arrays(&self, name: &str, excluded_indices: Option<&[i64]>) -> NpkResult<()> {
         if let Some(binary_meta) = self.metadata.get_array(name) {
             let data_path = self.base_dir.join(&binary_meta.data_file);
             
-            {
-                let file = OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .open(&data_path)?;
+            if let Some(indices) = excluded_indices {
+                // 逻辑删除：使用bitmap标记已删除的行
                 let array_meta = Self::binary_to_array_metadata(binary_meta);
-                let mut view = ArrayView::new(array_meta, file, data_path.clone());
+                let total_rows = array_meta.shape[0] as usize;
                 
-                if let Some(indices) = excluded_indices {
-                    // Physical delete specified rows
-                    view.physical_delete(indices)?;
-                    // Update metadata
-                    let updated_binary_meta = Self::array_metadata_to_binary(view.meta);
-                    self.metadata.update_array_metadata(name, updated_binary_meta)?;
+                // 加载或创建deletion bitmap
+                let mut bitmap = DeletionBitmap::new(&self.base_dir, name, total_rows)?;
+                
+                // 检查bitmap是否已存在（有过删除操作）
+                let bitmap_exists = bitmap.deleted_count() > 0;
+                
+                // 将逻辑索引转换为物理索引
+                let physical_indices: Vec<usize> = if bitmap_exists {
+                    // 有bitmap，indices是逻辑索引，需要映射到物理索引
+                    let logical_count = bitmap.active_count();
+                    indices
+                        .iter()
+                        .filter_map(|&idx| {
+                            let logical_idx = if idx < 0 {
+                                (logical_count as i64 + idx) as usize
+                            } else {
+                                idx as usize
+                            };
+                            
+                            if logical_idx >= logical_count {
+                                None
+                            } else {
+                                bitmap.logical_to_physical(logical_idx)
+                            }
+                        })
+                        .collect()
+                } else {
+                    // 没有bitmap，indices是物理索引
+                    indices
+                        .iter()
+                        .filter_map(|&idx| {
+                            let normalized = if idx < 0 {
+                                (total_rows as i64 + idx) as usize
+                            } else {
+                                idx as usize
+                            };
+                            if normalized < total_rows {
+                                Some(normalized)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                };
+                
+                bitmap.mark_deleted_batch(&physical_indices)?;
+                
+                // 检查是否删除了所有行
+                if bitmap.active_count() == 0 {
+                    // 所有行都被删除了，转为物理删除整个数组
+                    // 删除数据文件
+                    std::fs::remove_file(&data_path)?;
+                    // 删除元数据
+                    self.metadata.delete_array(name)?;
+                    // 删除bitmap文件（如果已经保存）
+                    let bitmap_path = DeletionBitmap::get_bitmap_path(&self.base_dir, name);
+                    if bitmap_path.exists() {
+                        std::fs::remove_file(bitmap_path)?;
+                    }
+                } else {
+                    // 还有活跃行，保存bitmap
+                    bitmap.save()?;
+                    // 不修改实际数据文件，不更新元数据中的shape
+                    // 用户看到的逻辑大小由bitmap决定
                 }
-            } // file handle is automatically dropped here
-            
-            if excluded_indices.is_none() {
-                // If no specified row indices, delete the entire array
+            } else {
+                // 删除整个数组（物理删除）
                 std::fs::remove_file(&data_path)?;
                 // Delete array from metadata
                 self.metadata.delete_array(name)?;
-                // 🚀 延迟同步优化：不立即写入磁盘
-            } else {
-                // 🚀 延迟同步优化：不立即写入磁盘
+                
+                // 也删除bitmap文件（如果存在）
+                let bitmap_path = DeletionBitmap::get_bitmap_path(&self.base_dir, name);
+                if bitmap_path.exists() {
+                    std::fs::remove_file(bitmap_path)?;
+                }
             }
         }
         Ok(())
@@ -916,20 +1009,54 @@ impl ParallelIO {
             meta.shape[1..].iter().product::<u64>() as usize * element_size
         };
         
+        let total_rows = meta.shape[0] as usize;
+        
+        // 检查是否存在deletion bitmap，并进行索引映射
+        let bitmap_opt = if DeletionBitmap::exists(&self.base_dir, name) {
+            Some(DeletionBitmap::new(&self.base_dir, name, total_rows)?)
+        } else {
+            None
+        };
+        
+        // 将逻辑索引转换为物理索引
+        let physical_indices: Vec<i64> = if let Some(ref bitmap) = bitmap_opt {
+            let logical_count = bitmap.active_count();
+            indices
+                .iter()
+                .map(|&idx| {
+                    let logical_idx = if idx < 0 {
+                        (logical_count as i64 + idx) as usize
+                    } else {
+                        idx as usize
+                    };
+                    
+                    if logical_idx >= logical_count {
+                        return Err(NpkError::IndexOutOfBounds(idx, logical_count as u64));
+                    }
+                    
+                    bitmap.logical_to_physical(logical_idx)
+                        .ok_or_else(|| NpkError::IndexOutOfBounds(idx, logical_count as u64))
+                        .map(|p| p as i64)
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            indices.to_vec()
+        };
+        
         let file_path = self.base_dir.join(&meta.data_file);
         let file = OpenOptions::new()
             .read(true)
             .write(true)
             .open(&file_path)?;
             
-        if let Some((start, len)) = Self::is_continuous_indices(indices) {
+        if let Some((start, len)) = Self::is_continuous_indices(&physical_indices) {
             let normalized_start = if start < 0 {
-                (meta.shape[0] as i64 + start) as u64
+                (total_rows as i64 + start) as u64
             } else {
                 start as u64
             };
             
-            if normalized_start + len as u64 > meta.shape[0] {
+            if normalized_start + len as u64 > total_rows as u64 {
                 return Err(NpkError::IoError(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     format!("Index range {}:{} is out of bounds", start, start + len as i64)
@@ -945,7 +1072,7 @@ impl ParallelIO {
             };
             write_all_at_offset(&file, data_slice, offset)?;
         } else {
-            let groups = Self::group_indices(indices, row_size, meta.shape[0]);
+            let groups = Self::group_indices(&physical_indices, row_size, total_rows as u64);
             
             groups.par_iter().try_for_each(|group| -> NpkResult<()> {
                 if group.is_empty() {
@@ -953,13 +1080,13 @@ impl ParallelIO {
                 }
                 
                 let first_idx = if group[0].1 < 0 {
-                    meta.shape[0] as i64 + group[0].1
+                    total_rows as i64 + group[0].1
                 } else {
                     group[0].1
                 } as u64;
                 
                 let last_idx = if group[group.len() - 1].1 < 0 {
-                    meta.shape[0] as i64 + group[group.len() - 1].1
+                    total_rows as i64 + group[group.len() - 1].1
                 } else {
                     group[group.len() - 1].1
                 } as u64;
@@ -970,12 +1097,12 @@ impl ParallelIO {
                 
                 for &(data_idx, file_idx) in group {
                     let normalized_idx = if file_idx < 0 {
-                        (meta.shape[0] as i64 + file_idx) as u64
+                        (total_rows as i64 + file_idx) as u64
                     } else {
                         file_idx as u64
                     };
                     
-                    if normalized_idx >= meta.shape[0] {
+                    if normalized_idx >= total_rows as u64 {
                         return Err(NpkError::IoError(io::Error::new(
                             io::ErrorKind::InvalidInput,
                             format!("Index {} is out of bounds", file_idx)
@@ -1008,22 +1135,68 @@ impl ParallelIO {
         
         let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
         let row_size = shape[1..].iter().product::<usize>() * meta.get_dtype().size_bytes() as usize;
+        let total_rows = shape[0];
         
-        // Validate all indices
-        for &idx in indexes {
-            if idx < 0 || idx >= meta.shape[0] as i64 {
-                return Err(NpkError::IndexOutOfBounds(idx, meta.shape[0]));
-            }
-        }
+        // 检查是否存在deletion bitmap
+        let bitmap_opt = if DeletionBitmap::exists(&self.base_dir, name) {
+            Some(DeletionBitmap::new(&self.base_dir, name, total_rows)?)
+        } else {
+            None
+        };
+        
+        // 将逻辑索引转换为物理索引
+        let physical_indices: Vec<usize> = if let Some(ref bitmap) = bitmap_opt {
+            // 有bitmap，需要进行索引映射
+            let logical_count = bitmap.active_count();
+            
+            indexes
+                .iter()
+                .map(|&idx| {
+                    // 标准化索引
+                    let logical_idx = if idx < 0 {
+                        (logical_count as i64 + idx) as usize
+                    } else {
+                        idx as usize
+                    };
+                    
+                    // 验证逻辑索引范围
+                    if logical_idx >= logical_count {
+                        return Err(NpkError::IndexOutOfBounds(idx, logical_count as u64));
+                    }
+                    
+                    // 转换为物理索引
+                    bitmap.logical_to_physical(logical_idx)
+                        .ok_or_else(|| NpkError::IndexOutOfBounds(idx, logical_count as u64))
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            // 没有bitmap，直接使用索引
+            indexes
+                .iter()
+                .map(|&idx| {
+                    let normalized = if idx < 0 {
+                        (total_rows as i64 + idx) as usize
+                    } else {
+                        idx as usize
+                    };
+                    
+                    if normalized >= total_rows {
+                        return Err(NpkError::IndexOutOfBounds(idx, total_rows as u64));
+                    }
+                    
+                    Ok(normalized)
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
 
         // Open file and create memory mapping
         let file = std::fs::File::open(&data_path)?;
         let mmap = unsafe { memmap2::MmapOptions::new().map(&file)? };
-        let mut data = Vec::with_capacity(indexes.len() * row_size);
+        let mut data = Vec::with_capacity(physical_indices.len() * row_size);
 
-        // Copy data from memory mapping directly
-        for &idx in indexes {
-            let offset = (idx as usize) * row_size;
+        // Copy data from memory mapping using physical indices
+        for physical_idx in physical_indices {
+            let offset = physical_idx * row_size;
             let row_slice = &mmap[offset..offset + row_size];
             data.extend_from_slice(row_slice);
         }
@@ -1038,5 +1211,123 @@ impl ParallelIO {
         } else {
             Err(NpkError::ArrayNotFound(name.to_string()))
         }
+    }
+    
+    /// 物理整合数组：将逻辑删除的行真正删除，并清空bitmap
+    /// 
+    /// 该方法会：
+    /// 1. 创建新的临时数据文件
+    /// 2. 将未删除的行复制到新文件（小批量复制，阈值100000行）
+    /// 3. 删除原数据文件
+    /// 4. 重命名临时文件为原文件名
+    /// 5. 更新元数据
+    /// 6. 删除bitmap文件
+    pub fn compact_array(&self, name: &str) -> NpkResult<()> {
+        // 获取数组元数据
+        let meta = self.get_array_metadata(name)?;
+        let data_path = self.base_dir.join(&meta.data_file);
+        
+        // 检查bitmap是否存在
+        if !DeletionBitmap::exists(&self.base_dir, name) {
+            // 没有bitmap，无需整合
+            return Ok(());
+        }
+        
+        let total_rows = meta.shape[0] as usize;
+        let bitmap = DeletionBitmap::new(&self.base_dir, name, total_rows)?;
+        
+        // 如果没有删除任何行，也无需整合
+        if bitmap.deleted_count() == 0 {
+            bitmap.delete_file()?;
+            return Ok(());
+        }
+        
+        // 计算行大小
+        let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
+        let row_size = if shape.len() == 1 {
+            meta.get_dtype().size_bytes() as usize
+        } else {
+            shape[1..].iter().product::<usize>() * meta.get_dtype().size_bytes() as usize
+        };
+        
+        // 创建临时文件
+        let temp_path = self.base_dir.join(format!("data_{}.npkd.tmp", name));
+        let mut temp_file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&temp_path)?;
+        
+        // 打开源文件进行读取
+        let source_file = File::open(&data_path)?;
+        let source_mmap = unsafe { MmapOptions::new().map(&source_file)? };
+        
+        // 获取所有活跃行的索引
+        let active_indices = bitmap.get_active_indices();
+        let active_count = active_indices.len();
+        
+        // 分批复制，阈值100000行
+        const BATCH_SIZE: usize = 100_000;
+        let num_batches = (active_count + BATCH_SIZE - 1) / BATCH_SIZE;
+        
+        for batch_idx in 0..num_batches {
+            let start_idx = batch_idx * BATCH_SIZE;
+            let end_idx = std::cmp::min(start_idx + BATCH_SIZE, active_count);
+            let batch_indices = &active_indices[start_idx..end_idx];
+            
+            // 创建写入缓冲区
+            let batch_size_bytes = batch_indices.len() * row_size;
+            let mut write_buffer = Vec::with_capacity(batch_size_bytes);
+            
+            // 复制这批数据
+            for &physical_idx in batch_indices {
+                let src_offset = physical_idx * row_size;
+                if src_offset + row_size > source_mmap.len() {
+                    return Err(NpkError::IoError(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        format!(
+                            "compact_array attempted to copy row {} beyond file bounds (row_size={}, file_len={})",
+                            physical_idx,
+                            row_size,
+                            source_mmap.len()
+                        )
+                    )));
+                }
+                
+                let row_data = &source_mmap[src_offset..src_offset + row_size];
+                write_buffer.extend_from_slice(row_data);
+            }
+            
+            // 写入到临时文件
+            temp_file.write_all(&write_buffer)?;
+        }
+        
+        // 同步到磁盘
+        temp_file.sync_all()?;
+        drop(temp_file);
+        drop(source_mmap);
+        drop(source_file);
+        
+        // 删除原文件
+        std::fs::remove_file(&data_path)?;
+        
+        // 重命名临时文件为原文件名
+        std::fs::rename(&temp_path, &data_path)?;
+        
+        // 更新元数据中的shape
+        let mut new_meta = meta.clone();
+        new_meta.shape[0] = active_count as u64;
+        new_meta.size_bytes = new_meta.total_elements() * new_meta.get_dtype().size_bytes() as u64;
+        new_meta.last_modified = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_micros() as u64;
+        
+        self.metadata.update_array_metadata(name, Self::array_metadata_to_binary(new_meta))?;
+        
+        // 删除bitmap文件
+        bitmap.delete_file()?;
+        
+        Ok(())
     }
 }

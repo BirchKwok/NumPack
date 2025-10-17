@@ -19,9 +19,10 @@ NumPack stores data as a directory containing multiple files:
 
 ```
 <numpack_directory>/
-├── metadata.npkm           # Metadata file (Binary format)
-├── data_<array_name>.npkd  # Raw binary data files (one per array)
-└── metadata.npkm.lock      # File lock (temporary, for concurrent access)
+├── metadata.npkm               # Metadata file (Binary format)
+├── data_<array_name>.npkd      # Raw binary data files (one per array)
+├── deleted_<array_name>.npkb   # Deletion bitmap files (one per array, optional)
+└── metadata.npkm.lock          # File lock (temporary, for concurrent access)
 ```
 
 ## Binary Format (High-Performance Standard)
@@ -75,6 +76,23 @@ Array Metadata (repeated for each array):
 ### Data Files (`data_<array_name>.npkd`)
 
 Raw binary data stored in little-endian format, containing array elements in C-contiguous (row-major) order.
+
+### Deletion Bitmap Files (`deleted_<array_name>.npkb`)
+
+Bitmap files used for logical deletion tracking. These files are optional and only created when rows are deleted using the `drop` operation.
+
+**File Format:**
+- **Bitmap Format**: Compact bit array where each bit represents one row
+  - Bit value 0: Row is deleted
+  - Bit value 1: Row is active (not deleted)
+- **Storage**: Packed 64-bit words (u64) in little-endian format
+- **Size Calculation**: `ceil(num_rows / 64) * 8` bytes
+- **Initial State**: When created, all bits are set to 1 (all rows active)
+
+**Operations:**
+- **Logical Deletion**: `drop` operation sets corresponding bits to 0
+- **Index Mapping**: All read/write operations automatically map logical indices (user view) to physical indices (actual storage). Lazy loading (`lazy=True`) must expose only active rows in its reported shape and iteration semantics by accounting for the bitmap. Dense loading and metadata queries follow the same logical view.
+- **Physical Compaction**: `update` operation physically removes deleted rows and resets the bitmap
 
 ## Data Type Mapping
 

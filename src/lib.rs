@@ -8,6 +8,7 @@ mod binary_metadata;
 mod hybrid_metadata;
 mod parallel_io;
 mod batch_access_engine;
+mod deletion_bitmap;
 
 // 性能优化模块
 mod optimized_metadata;      // 优化的元数据格式
@@ -53,6 +54,8 @@ use crate::metadata::DataType;
 use crate::binary_metadata::{BinaryMetadataStore, BinaryArrayMetadata, BinaryDataType, BinaryCachedStore};
 use crate::lazy_array::{OptimizedLazyArray, FastTypeConversion};
 use rayon::prelude::*;
+use crate::deletion_bitmap::DeletionBitmap;
+use crate::lazy_array::LogicalRowMap;
 
 #[cfg(target_family = "unix")]
 #[allow(unused_imports)]
@@ -80,9 +83,8 @@ struct NumPack {
     base_dir: PathBuf,
 }
 
-#[allow(dead_code)]
 #[pyclass]
-struct LazyArray {
+pub struct LazyArray {
     mmap: Arc<Mmap>,
     shape: Vec<usize>,
     dtype: DataType,
@@ -91,6 +93,8 @@ struct LazyArray {
     modify_time: i64,
     // 内置优化引擎，可选字段
     optimized_engine: Option<OptimizedLazyArray>,
+    // 逻辑视图：可选的删除位图信息
+    logical_rows: Option<LogicalRowMap>,
 }
 
 #[allow(dead_code)]
@@ -424,7 +428,8 @@ impl LazyArray {
 
     #[getter]
     fn shape(&self, py: Python) -> PyResult<PyObject> {
-        let shape_tuple = pyo3::types::PyTuple::new(py, &self.shape)?;
+        let logical_shape = self.logical_shape();
+        let shape_tuple = pyo3::types::PyTuple::new(py, &logical_shape)?;
         Ok(shape_tuple.into())
     }
 
@@ -493,6 +498,7 @@ impl LazyArray {
             array_path: format!("{}_T", self.array_path),
             modify_time: self.modify_time,
             optimized_engine: None, // 转置视图暂不支持优化引擎
+            logical_rows: self.logical_rows.clone(),
         })
     }
 
@@ -628,6 +634,7 @@ impl LazyArray {
             array_path: self.array_path.clone(),
             modify_time: self.modify_time,
             optimized_engine: None, // 重塑视图暂不支持优化引擎
+            logical_rows: self.logical_rows.clone(),
         };
 
         // Return the new LazyArray as a Python object
@@ -851,31 +858,46 @@ impl LazyArray {
 
     // 辅助方法
     fn get_row_data(&self, row_idx: usize) -> PyResult<Vec<u8>> {
-        if row_idx >= self.shape[0] {
-            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>("Row index out of bounds"));
-        }
-        
-        // 优先使用优化引擎
+        let physical_idx = match self.logical_rows.clone() {
+            Some(mut map) => map
+                .logical_to_physical(row_idx)
+                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
+                    "Index {} is out of bounds for array with {} rows",
+                    row_idx,
+                    map.logical_len()
+                )))?,
+            None => row_idx,
+        };
+
         if let Some(ref engine) = self.optimized_engine {
-            let row_data = engine.get_row(row_idx);
+            let row_data = engine.get_row(physical_idx);
             if !row_data.is_empty() {
                 return Ok(row_data);
             }
         }
-        
-        // 回退到基础实现
-        let row_size = self.shape[1..].iter().product::<usize>() * self.itemsize;
-        let offset = row_idx * row_size;
-        
+
+        let row_size = if self.shape.len() > 1 {
+            self.shape[1..].iter().product::<usize>() * self.itemsize
+        } else {
+            self.itemsize
+        };
+        let offset = physical_idx * row_size;
+
         if offset + row_size > self.mmap.len() {
-            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>("Data access out of bounds"));
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Data access out of bounds",
+            ));
         }
-        
+
         Ok(self.mmap[offset..offset + row_size].to_vec())
     }
 
     fn bytes_to_numpy(&self, py: Python, data: Vec<u8>) -> PyResult<PyObject> {
-        let row_shape = vec![self.shape[1..].iter().product::<usize>()];
+        let row_shape = if self.shape.len() > 1 {
+            vec![self.shape[1..].iter().product::<usize>()]
+        } else {
+            vec![1]
+        };
         self.create_numpy_array(py, data, &row_shape)
     }
 
@@ -885,9 +907,32 @@ impl LazyArray {
                 "len() of unsized object"
             ));
         }
-        Ok(self.shape[0])
+        Ok(self.len_logical())
     }
 
+    fn len_logical(&self) -> usize {
+        self.logical_rows
+            .as_ref()
+            .map(|map| map.active_count)
+            .unwrap_or_else(|| self.shape.get(0).cloned().unwrap_or(0))
+    }
+
+    fn physical_rows(&self) -> usize {
+        self.logical_rows
+            .as_ref()
+            .map(|map| map.physical_rows)
+            .unwrap_or_else(|| self.shape.get(0).cloned().unwrap_or(0))
+    }
+
+    fn logical_shape(&self) -> Vec<usize> {
+        let mut shape = self.shape.clone();
+        if let Some(map) = &self.logical_rows {
+            if !shape.is_empty() {
+                shape[0] = map.active_count;
+            }
+        }
+        shape
+    }
 
 }
 
@@ -915,6 +960,14 @@ impl Drop for HighPerformanceLazyArray {
 
 // 新增：LazyArray的内部方法实现
 impl LazyArray {
+    fn logical_rows_mut(&mut self) -> Option<&mut LogicalRowMap> {
+        self.logical_rows.as_mut()
+    }
+
+    fn logical_rows(&self) -> Option<&LogicalRowMap> {
+        self.logical_rows.as_ref()
+    }
+
     // 新增：高级索引解析器
     fn parse_advanced_index(&self, py: Python, key: &Bound<'_, PyAny>) -> Result<IndexResult, PyErr> {
         let mut index_types = Vec::new();
@@ -2116,7 +2169,15 @@ impl LazyArray {
 
     /// 处理单次访问（尊重用户意图）
     fn handle_single_access(&self, py: Python, index: i64) -> PyResult<PyObject> {
-        let row_data = self.get_row_data(index as usize)?;
+        let logical_len = self.len_logical() as i64;
+        let normalized = if index < 0 { logical_len + index } else { index };
+        if normalized < 0 || normalized >= logical_len {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                format!("Index {} is out of bounds", index)
+            ));
+        }
+
+        let row_data = self.get_row_data(normalized as usize)?;
         let row_shape = if self.shape.len() > 1 {
             self.shape[1..].to_vec()
         } else {
@@ -2129,21 +2190,54 @@ impl LazyArray {
     fn handle_batch_access(&self, py: Python, indices: Vec<i64>) -> PyResult<PyObject> {
         // 一次性处理所有索引，减少FFI开销
         let mut all_data = Vec::new();
-        let _row_size = self.shape[1..].iter().product::<usize>() * self.itemsize;
-        
+        let logical_len = self.len_logical() as i64;
+        let mut logical_indices = Vec::with_capacity(indices.len());
+
         for &idx in &indices {
-            if idx < 0 || idx as usize >= self.shape[0] {
+            let normalized = if idx < 0 { logical_len + idx } else { idx };
+            if normalized < 0 || normalized >= logical_len {
                 return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                     format!("Index {} is out of bounds", idx)
                 ));
             }
-            let row_data = self.get_row_data(idx as usize)?;
-            all_data.extend(row_data);
+            logical_indices.push(normalized as usize);
         }
-        
+
+        let physical_indices = if let Some(mut map) = self.logical_rows.clone() {
+            map.logical_indices(&logical_indices)?
+        } else {
+            logical_indices
+        };
+
+        let row_size = if self.shape.len() > 1 {
+            self.shape[1..].iter().product::<usize>() * self.itemsize
+        } else {
+            self.itemsize
+        };
+
+        for phys_idx in physical_indices {
+            if let Some(ref engine) = self.optimized_engine {
+                let row_data = engine.get_row(phys_idx);
+                if !row_data.is_empty() {
+                    all_data.extend(row_data);
+                    continue;
+                }
+            }
+
+            let offset = phys_idx * row_size;
+            if offset + row_size > self.mmap.len() {
+                return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                    "Data access out of bounds"
+                ));
+            }
+            all_data.extend(&self.mmap[offset..offset + row_size]);
+        }
+
         let mut result_shape = self.shape.clone();
-        result_shape[0] = indices.len();
-        
+        if !result_shape.is_empty() {
+            result_shape[0] = indices.len();
+        }
+
         self.create_numpy_array(py, all_data, &result_shape)
     }
 
@@ -2624,6 +2718,10 @@ impl HighPerformanceLazyArray {
             ));
         }
         Ok(self.shape[0])
+    }
+    
+    fn len_logical(&self) -> usize {
+        self.shape.get(0).cloned().unwrap_or(0)
     }
     
     // 添加上下文管理器支持
@@ -3155,7 +3253,160 @@ impl NumPack {
             }};
         }
 
-        let array: PyObject = match dtype {
+        // 检查是否存在deletion bitmap
+        use crate::deletion_bitmap::DeletionBitmap;
+        let base_dir = self.io.get_base_dir();
+        let (bitmap_opt, actual_physical_rows) = if DeletionBitmap::exists(base_dir, array_name) {
+            let bitmap = DeletionBitmap::new(base_dir, array_name, shape[0])
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            let physical_rows = bitmap.get_total_rows();
+            (Some(bitmap), physical_rows)
+        } else {
+            (None, shape[0])
+        };
+        
+        // 如果有bitmap，使用实际的物理行数更新shape
+        let mut actual_shape = shape.clone();
+        if bitmap_opt.is_some() {
+            actual_shape[0] = actual_physical_rows;
+        }
+
+        let array: PyObject = if let Some(bitmap) = bitmap_opt {
+            // 有deletion bitmap，需要过滤已删除的行
+            let active_indices = bitmap.get_active_indices();
+            let active_count = active_indices.len();
+            
+            if active_count == 0 {
+                // 所有行都被删除了，返回空数组
+                let empty_shape = if shape.len() > 1 {
+                    let mut new_shape = shape.clone();
+                    new_shape[0] = 0;
+                    new_shape
+                } else {
+                    vec![0]
+                };
+                
+                match dtype {
+                    DataType::Bool => {
+                        ArrayD::from_shape_vec(empty_shape, Vec::<bool>::new())
+                            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?
+                            .into_pyarray(py)
+                            .into()
+                    }
+                    DataType::Uint8 => ArrayD::from_shape_vec(empty_shape, Vec::<u8>::new())
+                        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?
+                        .into_pyarray(py).into(),
+                    DataType::Uint16 => ArrayD::from_shape_vec(empty_shape, Vec::<u16>::new())
+                        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?
+                        .into_pyarray(py).into(),
+                    DataType::Uint32 => ArrayD::from_shape_vec(empty_shape, Vec::<u32>::new())
+                        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?
+                        .into_pyarray(py).into(),
+                    DataType::Uint64 => ArrayD::from_shape_vec(empty_shape, Vec::<u64>::new())
+                        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?
+                        .into_pyarray(py).into(),
+                    DataType::Int8 => ArrayD::from_shape_vec(empty_shape, Vec::<i8>::new())
+                        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?
+                        .into_pyarray(py).into(),
+                    DataType::Int16 => ArrayD::from_shape_vec(empty_shape, Vec::<i16>::new())
+                        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?
+                        .into_pyarray(py).into(),
+                    DataType::Int32 => ArrayD::from_shape_vec(empty_shape, Vec::<i32>::new())
+                        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?
+                        .into_pyarray(py).into(),
+                    DataType::Int64 => ArrayD::from_shape_vec(empty_shape, Vec::<i64>::new())
+                        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?
+                        .into_pyarray(py).into(),
+                    DataType::Float16 => ArrayD::from_shape_vec(empty_shape, Vec::<f16>::new())
+                        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?
+                        .into_pyarray(py).into(),
+                    DataType::Float32 => ArrayD::from_shape_vec(empty_shape, Vec::<f32>::new())
+                        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?
+                        .into_pyarray(py).into(),
+                    DataType::Float64 => ArrayD::from_shape_vec(empty_shape, Vec::<f64>::new())
+                        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?
+                        .into_pyarray(py).into(),
+                    DataType::Complex64 => ArrayD::from_shape_vec(empty_shape, Vec::<Complex32>::new())
+                        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?
+                        .into_pyarray(py).into(),
+                    DataType::Complex128 => ArrayD::from_shape_vec(empty_shape, Vec::<Complex64>::new())
+                        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?
+                        .into_pyarray(py).into(),
+                }
+            } else {
+                // 计算行大小（使用actual_shape以获取正确的物理行数）
+                let row_size = if actual_shape.len() > 1 {
+                    actual_shape[1..].iter().product::<usize>() * itemsize
+                } else {
+                    itemsize
+                };
+                
+                // 构建新的shape（只包含活跃行）
+                let mut new_shape = actual_shape.clone();
+                new_shape[0] = active_count;
+                let new_total_elements = new_shape.iter().product::<usize>();
+                
+                // 根据数据类型过滤行
+                macro_rules! filter_rows {
+                    ($rust_type:ty) => {{
+                        let mut vec = Vec::<$rust_type>::with_capacity(new_total_elements);
+                        py.allow_threads(|| unsafe {
+                            let src_ptr = mmap_bytes.as_ptr() as *const $rust_type;
+                            let elements_per_row = row_size / itemsize;
+                            
+                            for &physical_idx in &active_indices {
+                                let src_offset = physical_idx * elements_per_row;
+                                ptr::copy_nonoverlapping(
+                                    src_ptr.add(src_offset),
+                                    vec.as_mut_ptr().add(vec.len()),
+                                    elements_per_row
+                                );
+                                vec.set_len(vec.len() + elements_per_row);
+                            }
+                        });
+                        
+                        ArrayD::from_shape_vec(new_shape.clone(), vec)
+                            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?
+                            .into_pyarray(py)
+                            .into()
+                    }};
+                }
+                
+                match dtype {
+                    DataType::Bool => {
+                        let mut bool_vec = Vec::<bool>::with_capacity(new_total_elements);
+                        py.allow_threads(|| {
+                            let elements_per_row = row_size;
+                            for &physical_idx in &active_indices {
+                                let src_offset = physical_idx * elements_per_row;
+                                for i in 0..elements_per_row {
+                                    bool_vec.push(mmap_bytes[src_offset + i] != 0);
+                                }
+                            }
+                        });
+                        ArrayD::from_shape_vec(new_shape.clone(), bool_vec)
+                            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?
+                            .into_pyarray(py)
+                            .into()
+                    }
+                    DataType::Uint8 => filter_rows!(u8),
+                    DataType::Uint16 => filter_rows!(u16),
+                    DataType::Uint32 => filter_rows!(u32),
+                    DataType::Uint64 => filter_rows!(u64),
+                    DataType::Int8 => filter_rows!(i8),
+                    DataType::Int16 => filter_rows!(i16),
+                    DataType::Int32 => filter_rows!(i32),
+                    DataType::Int64 => filter_rows!(i64),
+                    DataType::Float16 => filter_rows!(f16),
+                    DataType::Float32 => filter_rows!(f32),
+                    DataType::Float64 => filter_rows!(f64),
+                    DataType::Complex64 => filter_rows!(Complex32),
+                    DataType::Complex128 => filter_rows!(Complex64),
+                }
+            }
+        } else {
+            // 没有deletion bitmap，正常加载
+            match dtype {
             DataType::Bool => {
                 let bool_vec: Vec<bool> = py.allow_threads(|| {
                     mmap_bytes.iter().map(|&x| x != 0).collect()
@@ -3178,6 +3429,7 @@ impl NumPack {
             DataType::Float64 => load_to_numpy!(f64),
             DataType::Complex64 => load_to_numpy!(Complex32),
             DataType::Complex128 => load_to_numpy!(Complex64),
+            }
         };
 
         Ok(array)
@@ -3185,7 +3437,20 @@ impl NumPack {
 
     fn get_shape(&self, py: Python, array_name: &str) -> PyResult<Py<PyTuple>> {
         if let Some(meta) = self.io.get_array_meta(array_name) {
-            let shape: Vec<i64> = meta.shape.iter().map(|&x| x as i64).collect();
+            let mut shape: Vec<i64> = meta.shape.iter().map(|&x| x as i64).collect();
+            
+            // 检查是否存在deletion bitmap
+            // 如果存在，shape[0]应该返回逻辑行数（active_count）而不是物理行数
+            if !shape.is_empty() {
+                use crate::deletion_bitmap::DeletionBitmap;
+                let base_dir = self.io.get_base_dir();
+                if DeletionBitmap::exists(base_dir, array_name) {
+                    if let Ok(bitmap) = DeletionBitmap::new(base_dir, array_name, shape[0] as usize) {
+                        shape[0] = bitmap.active_count() as i64;
+                    }
+                }
+            }
+            
             let shape_tuple = PyTuple::new(py, &shape)?;
             Ok(shape_tuple.unbind())
         } else {
@@ -3228,6 +3493,27 @@ impl NumPack {
 
     fn reset(&self) -> PyResult<()> {
         self.io.reset()?;
+        Ok(())
+    }
+    
+    /// 物理整合数组：将逻辑删除的行真正删除
+    /// 
+    /// 该方法会创建一个新的数组文件，只包含未删除的行，然后替换原文件。
+    /// 适用于在执行大量删除操作后释放磁盘空间。
+    /// 
+    /// Parameters:
+    ///     array_name (str): 要整合的数组名称
+    /// 
+    /// Example:
+    ///     ```python
+    ///     # 删除一些行
+    ///     npk.drop('my_array', indexes=[0, 1, 2])
+    ///     
+    ///     # 物理整合，真正删除这些行并释放空间
+    ///     npk.update('my_array')
+    ///     ```
+    fn update(&self, array_name: &str) -> PyResult<()> {
+        self.io.compact_array(array_name)?;
         Ok(())
     }
 
@@ -3381,7 +3667,27 @@ impl NumPack {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_micros() as u64;
+            
+            // 如果存在deletion bitmap，需要扩展它以包含新增的行
+            use crate::deletion_bitmap::DeletionBitmap;
+            if DeletionBitmap::exists(&self.base_dir, &name) {
+                let old_total_rows = meta.shape[0] as usize;
+                
+                // 加载bitmap（使用追加前的行数）
+                let mut bitmap = DeletionBitmap::new(&self.base_dir, &name, old_total_rows)?;
+                // 扩展bitmap以包含新追加的行
+                bitmap.extend(shape[0]);
+                bitmap.save()?;
+            }
+            
             self.io.update_array_metadata(&name, new_meta)?;
+            
+            // 清除元数据缓存，以便下次load时使用新的元数据
+            let meta_cache_key = format!("{}:{}", self.base_dir.display(), name);
+            {
+                let mut meta_cache = METADATA_CACHE.lock().unwrap();
+                meta_cache.remove(&meta_cache_key);
+            }
         }
         
         Ok(())
@@ -3430,12 +3736,29 @@ impl NumPack {
                         ));
                     };
                     self.io.drop_arrays(name, Some(&deleted_indices))?;
+                    
+                    // 清除元数据缓存
+                    let meta_cache_key = format!("{}:{}", self.base_dir.display(), name);
+                    {
+                        let mut meta_cache = METADATA_CACHE.lock().unwrap();
+                        meta_cache.remove(&meta_cache_key);
+                    }
                 }
             }
             
             Ok(())
         } else {
             self.io.batch_drop_arrays(&names, None)?;
+            
+            // 清除所有被删除数组的元数据缓存
+            for name in &names {
+                let meta_cache_key = format!("{}:{}", self.base_dir.display(), name);
+                {
+                    let mut meta_cache = METADATA_CACHE.lock().unwrap();
+                    meta_cache.remove(&meta_cache_key);
+                }
+            }
+            
             Ok(())
         }
     }
@@ -3896,6 +4219,10 @@ impl NumPack {
             }
         };
         
+        // 【关键修复】检测并加载deletion bitmap以支持逻辑视图
+        let base_dir = self.io.get_base_dir();
+        let logical_map = LogicalRowMap::new(base_dir, array_name, shape[0])?;
+        
         // 【优化2】直接构造LazyArray（最少字段拷贝）
         let lazy_array = LazyArray {
             mmap,
@@ -3905,6 +4232,7 @@ impl NumPack {
             array_path: array_path_string,
             modify_time,
             optimized_engine: None,  // 延迟创建
+            logical_rows: logical_map,
         };
         
         // 【优化3】快速对象创建

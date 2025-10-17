@@ -27,3 +27,9 @@ dist/*
 .venv/
 
 *.egg-info/
+
+*.npkb
+
+
+claude_code_env.sh
+.claude/

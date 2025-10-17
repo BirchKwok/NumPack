@@ -28,6 +28,7 @@ pub use standard::LazyArray;
 pub use high_performance::HighPerformanceLazyArray;
 pub use iterator::LazyArrayIterator;
 pub use indexing::{IndexType, SliceInfo, IndexResult, AccessPattern, AccessStrategy};
+pub use standard::LogicalRowMap;
 pub use ffi_optimization::{
     FFIOptimizationConfig,
     BatchDataCollector,

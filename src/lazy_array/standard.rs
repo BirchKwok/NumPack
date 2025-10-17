@@ -18,6 +18,76 @@ use crate::metadata::DataType;
 use crate::lazy_array::traits::FastTypeConversion;
 use crate::lazy_array::indexing::{IndexType, SliceInfo, IndexResult, AccessPattern, AccessStrategy};
 
+#[derive(Clone)]
+pub struct LogicalRowMap {
+    pub active_count: usize,
+    pub physical_rows: usize,
+    pub active_indices: Option<Vec<usize>>,
+    pub bitmap: Option<Arc<crate::deletion_bitmap::DeletionBitmap>>,
+}
+
+impl LogicalRowMap {
+    pub fn new(base_dir: &Path, array_name: &str, total_rows: usize) -> PyResult<Option<Self>> {
+        use crate::deletion_bitmap::DeletionBitmap;
+        if !DeletionBitmap::exists(base_dir, array_name) {
+            return Ok(None);
+        }
+        let bitmap = Arc::new(
+            DeletionBitmap::new(base_dir, array_name, total_rows).map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
+            })?,
+        );
+        let active_count = bitmap.active_count();
+        Ok(Some(Self {
+            active_count,
+            physical_rows: bitmap.get_total_rows(),
+            active_indices: None,
+            bitmap: Some(bitmap),
+        }))
+    }
+
+    pub fn logical_len(&self) -> usize {
+        self.active_count
+    }
+
+    pub fn ensure_indices(&mut self) {
+        if self.active_indices.is_some() {
+            return;
+        }
+        if let Some(bitmap) = &self.bitmap {
+            self.active_indices = Some(bitmap.get_active_indices());
+        }
+    }
+
+    pub fn logical_to_physical(&mut self, logical_idx: usize) -> Option<usize> {
+        if logical_idx >= self.active_count {
+            return None;
+        }
+        if let Some(ref cache) = self.active_indices {
+            return cache.get(logical_idx).cloned();
+        }
+        if let Some(bitmap) = &self.bitmap {
+            bitmap.logical_to_physical(logical_idx)
+        } else {
+            Some(logical_idx)
+        }
+    }
+
+    pub fn logical_indices(&mut self, logical_indices: &[usize]) -> PyResult<Vec<usize>> {
+        let mut result = Vec::with_capacity(logical_indices.len());
+        for &idx in logical_indices {
+            let phys = self.logical_to_physical(idx).ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
+                    "Index {} is out of bounds for logical length {}",
+                    idx, self.active_count
+                ))
+            })?;
+            result.push(phys);
+        }
+        Ok(result)
+    }
+}
+
 /// 标准LazyArray结构体 - 提供基本的懒加载数组功能
 #[pyclass]
 pub struct LazyArray {
@@ -27,6 +97,7 @@ pub struct LazyArray {
     pub(crate) itemsize: usize,
     pub(crate) array_path: String,
     pub(crate) modify_time: i64,
+    pub(crate) logical_rows: Option<LogicalRowMap>,
 }
 
 #[pymethods]
@@ -332,6 +403,7 @@ impl LazyArray {
             itemsize: self.itemsize,
             array_path: self.array_path.clone(),
             modify_time: self.modify_time,
+            logical_rows: self.logical_rows.clone(),
         };
 
         // Return the new LazyArray as a Python object
@@ -534,6 +606,7 @@ impl LazyArray {
             itemsize,
             array_path,
             modify_time,
+            logical_rows: None,
         }
     }
     
@@ -570,6 +643,7 @@ impl LazyArray {
             itemsize,
             array_path,
             modify_time,
+            logical_rows: None,
         })
     }
 
@@ -647,28 +721,6 @@ impl LazyArray {
         Ok(result)
     }
 
-    /// 获取行数据【Inline优化】
-    #[inline(always)]
-    pub(crate) fn get_row_data(&self, row_idx: usize) -> PyResult<Vec<u8>> {
-        if row_idx >= self.shape[0] {
-            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>("Row index out of bounds"));
-        }
-
-        let row_size = if self.shape.len() > 1 {
-            self.shape[1..].iter().product::<usize>() * self.itemsize
-        } else {
-            self.itemsize
-        };
-
-        let offset = row_idx * row_size;
-        
-        if offset + row_size > self.mmap.len() {
-            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>("Row data out of bounds"));
-        }
-
-        let row_data = &self.mmap[offset..offset + row_size];
-        Ok(row_data.to_vec())
-    }
     
     /// 【FFI优化】批量获取多行数据 - 减少FFI调用次数
     /// 
@@ -932,6 +984,54 @@ impl LazyArray {
         self.create_numpy_array(py, Vec::new(), &[0])
     }
 }
+
+impl LazyArray {
+    pub(crate) fn len_logical(&self) -> usize {
+        self.logical_rows
+            .as_ref()
+            .map(|map| map.active_count)
+            .unwrap_or_else(|| self.shape.get(0).cloned().unwrap_or(0))
+    }
+
+    pub(crate) fn logical_shape(&self) -> Vec<usize> {
+        let mut shape = self.shape.clone();
+        if let Some(map) = &self.logical_rows {
+            if !shape.is_empty() {
+                shape[0] = map.active_count;
+            }
+        }
+        shape
+    }
+
+    pub(crate) fn get_row_data(&self, row_idx: usize) -> PyResult<Vec<u8>> {
+        let physical_idx = match self.logical_rows.clone() {
+            Some(mut map) => map
+                .logical_to_physical(row_idx)
+                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
+                    "Index {} is out of bounds for array with {} rows",
+                    row_idx,
+                    map.logical_len()
+                )))?,
+            None => row_idx,
+        };
+
+        let row_size = if self.shape.len() > 1 {
+            self.shape[1..].iter().product::<usize>() * self.itemsize
+        } else {
+            self.itemsize
+        };
+        let offset = physical_idx * row_size;
+
+        if offset + row_size > self.mmap.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Data access out of bounds",
+            ));
+        }
+
+        Ok(self.mmap[offset..offset + row_size].to_vec())
+    }
+}
+
 
 #[cfg(target_family = "windows")]
 pub fn release_windows_file_handle(path: &Path) {

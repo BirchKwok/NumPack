@@ -290,6 +290,36 @@ class NumPack:
         """Clear all arrays in NumPack file"""
         self._check_context_mode()
         self._npk.reset()
+    
+    def update(self, array_name: str) -> None:
+        """Physically compact array by removing logically deleted rows
+        
+        This method creates a new array file containing only the non-deleted rows,
+        then replaces the original file. It's useful for reclaiming disk space after
+        many delete operations.
+        
+        The compaction is done in batches (batch size: 100,000 rows) to handle
+        large arrays efficiently.
+        
+        Parameters:
+            array_name (str): The name of the array to compact
+            
+        Example:
+            ```python
+            # Delete some rows (logical deletion)
+            npk.drop('my_array', indexes=[0, 1, 2])
+            
+            # Physically compact the array to reclaim space
+            npk.update('my_array')
+            ```
+        
+        Note:
+            - This operation modifies the physical file on disk
+            - After compaction, the deletion bitmap is removed
+            - If no rows were deleted, the operation is a no-op
+        """
+        self._check_context_mode()
+        self._npk.update(array_name)
 
     def get_metadata(self) -> Dict[str, Any]:
         """Get the metadata of NumPack file"""
@@ -474,7 +504,5 @@ def get_backend_info():
         'backend_type': _BACKEND_TYPE,  # 始终为 "rust"
         'platform': platform.system(),
         'is_windows': _is_windows(),
-        'version': __version__,
-        'description': '高性能Rust后端',
-        'use_python_backend': False  # 兼容旧代码
+        'version': __version__
     }
