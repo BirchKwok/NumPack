@@ -552,6 +552,368 @@ impl LazyArray {
         self.close(py)?;
         Ok(false)  // 不抑制异常
     }
+
+    // ===========================
+    // 算术操作符支持
+    // ===========================
+
+    /// 加法操作符：lazy_array + other
+    fn __add__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__add__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 减法操作符：lazy_array - other
+    fn __sub__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__sub__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 乘法操作符：lazy_array * other
+    fn __mul__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__mul__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 真除法操作符：lazy_array / other
+    fn __truediv__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__truediv__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 地板除法操作符：lazy_array // other
+    fn __floordiv__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__floordiv__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 取模操作符：lazy_array % other
+    fn __mod__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__mod__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 幂操作符：lazy_array ** other
+    fn __pow__(&self, py: Python, other: &Bound<'_, PyAny>, _modulo: Option<&Bound<'_, PyAny>>) -> PyResult<PyObject> {
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__pow__", (other,))?;
+        Ok(result.into())
+    }
+
+    // ===========================
+    // 原地算术操作符支持
+    // ===========================
+
+    /// 原地加法操作符：lazy_array += other
+    fn __iadd__(&mut self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<()> {
+        let _self_array = self.to_numpy_array(py)?;
+        let _result = _self_array.call_method1(py, "__iadd__", (other,))?;
+
+        // 将结果写回到文件（这里简化为不支持，实际可能需要实现可写的LazyArray）
+        Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
+            "In-place operations are not supported for read-only LazyArray. Use: result = lazy_array + other"
+        ))
+    }
+
+    /// 原地减法操作符：lazy_array -= other
+    fn __isub__(&mut self, _py: Python, _other: &Bound<'_, PyAny>) -> PyResult<()> {
+        Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
+            "In-place operations are not supported for read-only LazyArray. Use: result = lazy_array - other"
+        ))
+    }
+
+    /// 原地乘法操作符：lazy_array *= other
+    fn __imul__(&mut self, _py: Python, _other: &Bound<'_, PyAny>) -> PyResult<()> {
+        Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
+            "In-place operations are not supported for read-only LazyArray. Use: result = lazy_array * other"
+        ))
+    }
+
+    /// 原地真除法操作符：lazy_array /= other
+    fn __itruediv__(&mut self, _py: Python, _other: &Bound<'_, PyAny>) -> PyResult<()> {
+        Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
+            "In-place operations are not supported for read-only LazyArray. Use: result = lazy_array / other"
+        ))
+    }
+
+    /// 原地地板除法操作符：lazy_array //= other
+    fn __ifloordiv__(&mut self, _py: Python, _other: &Bound<'_, PyAny>) -> PyResult<()> {
+        Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
+            "In-place operations are not supported for read-only LazyArray. Use: result = lazy_array // other"
+        ))
+    }
+
+    /// 原地取模操作符：lazy_array %= other
+    fn __imod__(&mut self, _py: Python, _other: &Bound<'_, PyAny>) -> PyResult<()> {
+        Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
+            "In-place operations are not supported for read-only LazyArray. Use: result = lazy_array % other"
+        ))
+    }
+
+    /// 原地幂操作符：lazy_array **= other
+    fn __ipow__(&mut self, _py: Python, _other: &Bound<'_, PyAny>, _modulo: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
+            "In-place operations are not supported for read-only LazyArray. Use: result = lazy_array ** other"
+        ))
+    }
+
+    // ===========================
+    // 比较操作符支持
+    // ===========================
+
+    /// 等于操作符：lazy_array == other
+    fn __eq__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__eq__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 不等于操作符：lazy_array != other
+    fn __ne__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__ne__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 小于操作符：lazy_array < other
+    fn __lt__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__lt__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 小于等于操作符：lazy_array <= other
+    fn __le__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__le__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 大于操作符：lazy_array > other
+    fn __gt__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__gt__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 大于等于操作符：lazy_array >= other
+    fn __ge__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__ge__", (other,))?;
+        Ok(result.into())
+    }
+
+    // ===========================
+    // 一元操作符支持
+    // ===========================
+
+    /// 一元正号：+lazy_array
+    fn __pos__(&self, py: Python) -> PyResult<PyObject> {
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method0(py, "__pos__")?;
+        Ok(result.into())
+    }
+
+    /// 一元负号：-lazy_array
+    fn __neg__(&self, py: Python) -> PyResult<PyObject> {
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method0(py, "__neg__")?;
+        Ok(result.into())
+    }
+
+    /// 一元位运算取反：~lazy_array
+    fn __invert__(&self, py: Python) -> PyResult<PyObject> {
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method0(py, "__invert__")?;
+        Ok(result.into())
+    }
+
+    // ===========================
+    // 位操作符支持（仅适用于整数类型）
+    // ===========================
+
+    /// 位与操作符：lazy_array & other
+    fn __and__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        if !self.is_integer_type() {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "Bitwise operations are only supported for integer arrays"
+            ));
+        }
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__and__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 位或操作符：lazy_array | other
+    fn __or__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        if !self.is_integer_type() {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "Bitwise operations are only supported for integer arrays"
+            ));
+        }
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__or__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 位异或操作符：lazy_array ^ other
+    fn __xor__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        if !self.is_integer_type() {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "Bitwise operations are only supported for integer arrays"
+            ));
+        }
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__xor__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 左移操作符：lazy_array << other
+    fn __lshift__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        if !self.is_integer_type() {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "Bitwise operations are only supported for integer arrays"
+            ));
+        }
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__lshift__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 右移操作符：lazy_array >> other
+    fn __rshift__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        if !self.is_integer_type() {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "Bitwise operations are only supported for integer arrays"
+            ));
+        }
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__rshift__", (other,))?;
+        Ok(result.into())
+    }
+
+    // ===========================
+    // 反向算术操作符支持
+    // ===========================
+
+    /// 反向加法操作符：other + lazy_array
+    fn __radd__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__radd__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 反向减法操作符：other - lazy_array
+    fn __rsub__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__rsub__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 反向乘法操作符：other * lazy_array
+    fn __rmul__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__rmul__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 反向真除法操作符：other / lazy_array
+    fn __rtruediv__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__rtruediv__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 反向地板除法操作符：other // lazy_array
+    fn __rfloordiv__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__rfloordiv__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 反向取模操作符：other % lazy_array
+    fn __rmod__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__rmod__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 反向幂操作符：other ** lazy_array
+    fn __rpow__(&self, py: Python, other: &Bound<'_, PyAny>, _modulo: Option<&Bound<'_, PyAny>>) -> PyResult<PyObject> {
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__rpow__", (other,))?;
+        Ok(result.into())
+    }
+
+    // ===========================
+    // 反向位操作符支持
+    // ===========================
+
+    /// 反向位与操作符：other & lazy_array
+    fn __rand__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        if !self.is_integer_type() {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "Bitwise operations are only supported for integer arrays"
+            ));
+        }
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__rand__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 反向位或操作符：other | lazy_array
+    fn __ror__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        if !self.is_integer_type() {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "Bitwise operations are only supported for integer arrays"
+            ));
+        }
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__ror__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 反向位异或操作符：other ^ lazy_array
+    fn __rxor__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        if !self.is_integer_type() {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "Bitwise operations are only supported for integer arrays"
+            ));
+        }
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__rxor__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 反向左移操作符：other << lazy_array
+    fn __rlshift__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        if !self.is_integer_type() {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "Bitwise operations are only supported for integer arrays"
+            ));
+        }
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__rlshift__", (other,))?;
+        Ok(result.into())
+    }
+
+    /// 反向右移操作符：other >> lazy_array
+    fn __rrshift__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        if !self.is_integer_type() {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "Bitwise operations are only supported for integer arrays"
+            ));
+        }
+        let self_array = self.to_numpy_array(py)?;
+        let result = self_array.call_method1(py, "__rrshift__", (other,))?;
+        Ok(result.into())
+    }
 }
 
 // 实现Drop特性以确保Windows平台上的资源正确释放
@@ -991,6 +1353,32 @@ impl LazyArray {
             .as_ref()
             .map(|map| map.active_count)
             .unwrap_or_else(|| self.shape.get(0).cloned().unwrap_or(0))
+    }
+
+    /// 将整个LazyArray转换为NumPy数组
+    /// 这是所有算术操作符的基础方法
+    fn to_numpy_array(&self, py: Python) -> PyResult<PyObject> {
+        let total_size = self.size()?;
+        let mut all_data = Vec::with_capacity(total_size * self.itemsize);
+
+        // 批量读取所有数据
+        let logical_length = self.len_logical();
+        for i in 0..logical_length {
+            let row_data = self.get_row_data(i)?;
+            all_data.extend(row_data);
+        }
+
+        self.create_numpy_array(py, all_data, &self.logical_shape())
+    }
+
+    /// 检查数组是否为整数类型（用于位操作符）
+    fn is_integer_type(&self) -> bool {
+        match self.dtype {
+            DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 |
+            DataType::Uint8 | DataType::Uint16 | DataType::Uint32 | DataType::Uint64 |
+            DataType::Bool => true,
+            _ => false,
+        }
     }
 
     pub(crate) fn logical_shape(&self) -> Vec<usize> {

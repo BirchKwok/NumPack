@@ -606,6 +606,80 @@ impl ParallelIO {
 
     const WRITE_CHUNK_SIZE: usize = 8 * 1024 * 1024;  // 8MB write chunk size
 
+    /// 保存单个数组的优化实现
+    /// 
+    /// 🚀 性能优化：智能路径选择
+    /// - 如果数组已存在且形状相同 → 直接调用replace_rows全量替换（最快）
+    /// - 如果数组不存在或形状不同 → 创建新文件并写入
+    fn save_single_array<T: Element + Copy + Send + Sync>(
+        &self,
+        name: &str,
+        array: &ArrayD<T>,
+        dtype: &DataType
+    ) -> NpkResult<(String, ArrayMetadata)> {
+        let data_file = format!("data_{}.npkd", name);
+        let data_path = self.base_dir.join(&data_file);
+        let array_shape: Vec<u64> = array.shape().iter().map(|&x| x as u64).collect();
+        
+        // 🚀 性能关键优化：检查是否可以使用replace路径（共用逻辑）
+        // 如果数组已存在且形状完全相同，直接调用replace_rows进行全量替换
+        // 这样可以完全复用replace的高度优化代码，避免代码重复
+        if let Some(existing_meta) = self.get_array_meta(name) {
+            if existing_meta.shape == array_shape && existing_meta.get_dtype() == *dtype {
+                // 数组已存在且形状、类型完全相同
+                // 生成全量索引 [0, 1, 2, ..., n-1] 并调用replace_rows
+                let total_rows = array_shape[0] as i64;
+                let indices: Vec<i64> = (0..total_rows).collect();
+                
+                // 直接调用replace_rows，复用其高度优化的写入逻辑
+                self.replace_rows(name, array, &indices)?;
+                
+                // 返回现有元数据（时间戳会由replace_rows更新）
+                let meta = ArrayMetadata::new(
+                    name.to_string(),
+                    array_shape,
+                    data_file,
+                    *dtype,
+                );
+                return Ok((name.to_string(), meta));
+            }
+        }
+        
+        // 数组不存在或形状/类型不同：创建新文件
+        let total_size = array.shape().iter().product::<usize>() * std::mem::size_of::<T>();
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&data_path)?;
+        file.set_len(total_size as u64)?;
+        
+        // 使用BufWriter进行分块写入
+        let mut writer = BufWriter::with_capacity(Self::WRITE_CHUNK_SIZE, &file);
+        let data_ptr = array.as_ptr() as *const u8;
+        let mut offset = 0;
+        
+        while offset < total_size {
+            let chunk_size = std::cmp::min(Self::WRITE_CHUNK_SIZE, total_size - offset);
+            let chunk = unsafe {
+                std::slice::from_raw_parts(data_ptr.add(offset), chunk_size)
+            };
+            writer.write_all(chunk)?;
+            offset += chunk_size;
+        }
+        writer.flush()?;
+        
+        // 创建元数据
+        let meta = ArrayMetadata::new(
+            name.to_string(),
+            array_shape,
+            data_file,
+            *dtype,
+        );
+        
+        Ok((name.to_string(), meta))
+    }
+
     pub fn save_arrays<T: Element + Copy + Send + Sync>(&self, arrays: &[(String, ArrayD<T>, DataType)]) -> NpkResult<()> {
         // 🚀 性能优化：单个数组不使用并行（避免线程开销）
         let use_parallel = arrays.len() > 1;
@@ -614,113 +688,14 @@ impl ParallelIO {
             // 多个数组：使用并行处理
             arrays.par_iter()
             .map(|(name, array, dtype)| -> NpkResult<(String, ArrayMetadata)> {
-                let data_file = format!("data_{}.npkd", name);
-                let data_path = self.base_dir.join(&data_file);
-                
-                // Calculate total size
-                let total_size = array.shape().iter().product::<usize>() * std::mem::size_of::<T>();
-                
-                // Create and preallocate file
-                let file = OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .create(true)
-                    .open(&data_path)?;
-                file.set_len(total_size as u64)?;
-                
-                // Use direct write instead of memory mapping
-                let mut writer = BufWriter::with_capacity(Self::WRITE_CHUNK_SIZE, &file);
-                
-                // Get data pointer
-                let data_ptr = array.as_ptr() as *const u8;
-                let mut offset = 0;
-                
-                // Write data in chunks
-                while offset < total_size {
-                    let chunk_size = std::cmp::min(Self::WRITE_CHUNK_SIZE, total_size - offset);
-                    let chunk = unsafe {
-                        std::slice::from_raw_parts(data_ptr.add(offset), chunk_size)
-                    };
-                    
-                    writer.write_all(chunk)?;
-                    
-                    offset += chunk_size;
-                }
-                
-                // 🚀 性能优化：移除强制同步，让操作系统管理刷盘时机
-                // 
-                // 之前的问题：
-                // - writer.flush() + file.sync_all() + fsync() 导致每次保存都强制同步
-                // - 这使得保存速度从 5000+ MB/s 降到 2000 MB/s（2-3x slower）
-                // - NumPy的np.save()不会强制同步，所以它更快
-                // 
-                // 优化后：
-                // - 只flush缓冲区，不强制fsync到磁盘
-                // - 操作系统会在适当时机自动同步
-                // - 与NumPy的行为一致
-                // - 数据安全性：操作系统会在几秒内自动同步，异常关闭风险极低
-                
-                writer.flush()?;
-                
-                // Create metadata
-                let meta = ArrayMetadata::new(
-                    name.clone(),
-                    array.shape().iter().map(|&x| x as u64).collect(),
-                    data_file,
-                    *dtype,
-                );
-                
-                Ok((name.clone(), meta))
+                self.save_single_array(name, array, dtype)
             })
             .collect::<Result<Vec<_>, _>>()?
         } else {
             // 单个数组：使用顺序处理（避免并行开销）
             arrays.iter()
                 .map(|(name, array, dtype)| -> NpkResult<(String, ArrayMetadata)> {
-                    let data_file = format!("data_{}.npkd", name);
-                    let data_path = self.base_dir.join(&data_file);
-                    
-                    // Calculate total size
-                    let total_size = array.shape().iter().product::<usize>() * std::mem::size_of::<T>();
-                    
-                    // Create and preallocate file
-                    let file = OpenOptions::new()
-                        .read(true)
-                        .write(true)
-                        .create(true)
-                        .open(&data_path)?;
-                    file.set_len(total_size as u64)?;
-                    
-                    // Use direct write instead of memory mapping
-                    let mut writer = BufWriter::with_capacity(Self::WRITE_CHUNK_SIZE, &file);
-                    
-                    // Get data pointer
-                    let data_ptr = array.as_ptr() as *const u8;
-                    let mut offset = 0;
-                    
-                    // Write data in chunks
-                    while offset < total_size {
-                        let chunk_size = std::cmp::min(Self::WRITE_CHUNK_SIZE, total_size - offset);
-                        let chunk = unsafe {
-                            std::slice::from_raw_parts(data_ptr.add(offset), chunk_size)
-                        };
-                        
-                        writer.write_all(chunk)?;
-                        
-                        offset += chunk_size;
-                    }
-                    
-                    writer.flush()?;
-                    
-                    // Create metadata
-                    let meta = ArrayMetadata::new(
-                        name.clone(),
-                        array.shape().iter().map(|&x| x as u64).collect(),
-                        data_file,
-                        *dtype,
-                    );
-                    
-                    Ok((name.clone(), meta))
+                    self.save_single_array(name, array, dtype)
                 })
                 .collect::<Result<Vec<_>, _>>()?
         };

@@ -4223,18 +4223,19 @@ impl NumPack {
         let base_dir = self.io.get_base_dir();
         let logical_map = LogicalRowMap::new(base_dir, array_name, shape[0])?;
         
-        // 【优化2】直接构造LazyArray（最少字段拷贝）
-        let lazy_array = LazyArray {
+        // 【优化2】使用新的 LazyArray（支持算术操作符）
+        let mut lazy_array = crate::lazy_array::standard::LazyArray::new(
             mmap,
             shape,
             dtype,
             itemsize,
-            array_path: array_path_string,
+            array_path_string,
             modify_time,
-            optimized_engine: None,  // 延迟创建
-            logical_rows: logical_map,
-        };
-        
+        );
+
+        // 设置 logical_rows 字段
+        lazy_array.logical_rows = logical_map;
+
         // 【优化3】快速对象创建
         Ok(Py::new(py, lazy_array)?.into())
     }
@@ -4498,16 +4499,17 @@ fn create_optimized_mmap(path: &Path, modify_time: i64, cache: &mut MutexGuard<H
 fn _lib_numpack(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // 注册核心类
     m.add_class::<NumPack>()?;
-    m.add_class::<LazyArray>()?;
+    // 注释掉旧的 LazyArray，使用新的模块化版本
+    // m.add_class::<LazyArray>()?;
     m.add_class::<LazyArrayIterator>()?;
     m.add_class::<ArrayMetadata>()?;
     m.add_class::<HighPerformanceLazyArray>()?;
     m.add_class::<StreamLoader>()?;
-    
+
     // 注册清理函数
-    
-    // 注册新模块的Python绑定（如果有）
-    // numpack::python_bindings::register_python_bindings(m)?;
+
+    // 注册新模块的Python绑定
+    numpack::python_bindings::register_python_bindings(m)?;
     
     Ok(())
 }
