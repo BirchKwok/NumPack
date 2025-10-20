@@ -89,6 +89,8 @@ impl LogicalRowMap {
 }
 
 /// 标准LazyArray结构体 - 提供基本的懒加载数组功能
+/// 
+/// 🚀 性能优化：支持可写mmap，允许直接修改数据
 #[pyclass]
 pub struct LazyArray {
     pub(crate) mmap: Arc<Mmap>,
@@ -98,6 +100,10 @@ pub struct LazyArray {
     pub(crate) array_path: String,
     pub(crate) modify_time: i64,
     pub(crate) logical_rows: Option<LogicalRowMap>,
+    /// 🚀 可写标志：如果为true，表示这是可写的mmap
+    pub(crate) is_writable: bool,
+    /// 🚀 脏标志：如果为true，表示数据已被修改，需要sync
+    pub(crate) is_dirty: bool,
 }
 
 #[pymethods]
@@ -404,6 +410,8 @@ impl LazyArray {
             array_path: self.array_path.clone(),
             modify_time: self.modify_time,
             logical_rows: self.logical_rows.clone(),
+            is_writable: self.is_writable,
+            is_dirty: self.is_dirty,
         };
 
         // Return the new LazyArray as a Python object
@@ -609,59 +617,9 @@ impl LazyArray {
     // ===========================
     // 原地算术操作符支持
     // ===========================
-
-    /// 原地加法操作符：lazy_array += other
-    fn __iadd__(&mut self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<()> {
-        let _self_array = self.to_numpy_array(py)?;
-        let _result = _self_array.call_method1(py, "__iadd__", (other,))?;
-
-        // 将结果写回到文件（这里简化为不支持，实际可能需要实现可写的LazyArray）
-        Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
-            "In-place operations are not supported for read-only LazyArray. Use: result = lazy_array + other"
-        ))
-    }
-
-    /// 原地减法操作符：lazy_array -= other
-    fn __isub__(&mut self, _py: Python, _other: &Bound<'_, PyAny>) -> PyResult<()> {
-        Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
-            "In-place operations are not supported for read-only LazyArray. Use: result = lazy_array - other"
-        ))
-    }
-
-    /// 原地乘法操作符：lazy_array *= other
-    fn __imul__(&mut self, _py: Python, _other: &Bound<'_, PyAny>) -> PyResult<()> {
-        Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
-            "In-place operations are not supported for read-only LazyArray. Use: result = lazy_array * other"
-        ))
-    }
-
-    /// 原地真除法操作符：lazy_array /= other
-    fn __itruediv__(&mut self, _py: Python, _other: &Bound<'_, PyAny>) -> PyResult<()> {
-        Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
-            "In-place operations are not supported for read-only LazyArray. Use: result = lazy_array / other"
-        ))
-    }
-
-    /// 原地地板除法操作符：lazy_array //= other
-    fn __ifloordiv__(&mut self, _py: Python, _other: &Bound<'_, PyAny>) -> PyResult<()> {
-        Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
-            "In-place operations are not supported for read-only LazyArray. Use: result = lazy_array // other"
-        ))
-    }
-
-    /// 原地取模操作符：lazy_array %= other
-    fn __imod__(&mut self, _py: Python, _other: &Bound<'_, PyAny>) -> PyResult<()> {
-        Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
-            "In-place operations are not supported for read-only LazyArray. Use: result = lazy_array % other"
-        ))
-    }
-
-    /// 原地幂操作符：lazy_array **= other
-    fn __ipow__(&mut self, _py: Python, _other: &Bound<'_, PyAny>, _modulo: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
-        Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
-            "In-place operations are not supported for read-only LazyArray. Use: result = lazy_array ** other"
-        ))
-    }
+    // 注意：原地操作符未在 Rust 层实现，而是在 Python 包装层处理。
+    // 这是因为 PyO3 对原地操作符的返回类型有严格限制。
+    // Python 层会自动将原地操作转换为非原地操作。
 
     // ===========================
     // 比较操作符支持
@@ -969,6 +927,30 @@ impl LazyArray {
             array_path,
             modify_time,
             logical_rows: None,
+            is_writable: false,
+            is_dirty: false,
+        }
+    }
+    
+    /// 🚀 创建可写LazyArray实例
+    pub fn new_writable(
+        mmap: Arc<Mmap>,
+        shape: Vec<usize>,
+        dtype: DataType,
+        itemsize: usize,
+        array_path: String,
+        modify_time: i64,
+    ) -> Self {
+        Self {
+            mmap,
+            shape,
+            dtype,
+            itemsize,
+            array_path,
+            modify_time,
+            logical_rows: None,
+            is_writable: true,
+            is_dirty: false,
         }
     }
     
@@ -1006,6 +988,8 @@ impl LazyArray {
             array_path,
             modify_time,
             logical_rows: None,
+            is_writable: false,
+            is_dirty: false,
         })
     }
 
