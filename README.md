@@ -149,7 +149,7 @@ with NumPack("data.npk") as npk:
 
 ## Performance
 
-All benchmarks were conducted on macOS (Apple Silicon) using the Rust backend with precise timeit measurements, excluding I/O overhead.
+All benchmarks were conducted on macOS (Apple Silicon) using the Rust backend with precise timeit measurements.
 
 ### Performance Comparison (1M rows × 10 columns, Float32, 38.1MB)
 
