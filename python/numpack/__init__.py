@@ -1,5 +1,5 @@
 import shutil
-import os
+
 import platform
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Tuple, Union, Optional
@@ -7,12 +7,12 @@ import numpy as np
 
 __version__ = "0.4.0"
 
-# 平台检测
+# Platform detection
 def _is_windows():
     """Detect if running on Windows platform"""
     return platform.system().lower() == 'windows'
 
-# 后端选择和导入 - 始终使用Rust后端以获得最高性能
+# Backend selection and import - always use Rust backend for highest performance
 try:
     import numpack._lib_numpack as rust_backend
     _NumPack = rust_backend.NumPack
@@ -20,17 +20,18 @@ try:
     _BACKEND_TYPE = "rust"
 except ImportError as e:
     raise ImportError(
-        f"无法导入Rust后端: {e}\n"
-        "NumPack现在只使用高性能的Rust后端。请确保:\n"
-        "1. 已正确编译和安装Rust扩展\n"
-        "2. 使用 python build.py 重新构建项目"
+        f"Failed to import Rust backend: {e}\n"
+        "NumPack now only uses the high-performance Rust backend. Please ensure:\n"
+        "1. Rust extension is correctly compiled and installed\n"
+        "2. Run 'python build.py' to rebuild the project"
     )
 
 
 class NumPack:
-    """NumPack - 高性能数组存储库 (仅使用Rust后端)
+    """NumPack - High-performance array storage library (Rust backend only)
     
-    使用高性能的Rust后端实现,在所有平台上提供一致的最佳性能。
+    Uses high-performance Rust backend implementation to provide consistent 
+    optimal performance across all platforms.
     """
     
     def __init__(
@@ -43,19 +44,20 @@ class NumPack:
     ):
         """Initialize NumPack object
         
-        文件不会自动打开。用户必须：
-        1. 手动调用 open() 方法
-        2. 使用 context manager (with 语句)
+        The file is NOT automatically opened. Users must:
+        1. Manually call the open() method
+        2. Use context manager (with statement)
         
         Parameters:
             filename (Union[str, Path]): The name of the NumPack file
             drop_if_exists (bool): Whether to drop the file if it already exists
             strict_context_mode (bool): If True, requires usage within 'with' statement
             warn_no_context (bool): If True, warns when not using context manager
-            force_gc_on_close (bool): 是否在close时强制垃圾回收。默认False以获得最佳性能。
-                                    仅在应用有严格内存限制时设置为True。
+            force_gc_on_close (bool): Force garbage collection on close. Default False 
+                                    for best performance. Set to True only if your 
+                                    application has strict memory constraints.
         """
-        self._backend_type = _BACKEND_TYPE  # 始终为 "rust"
+        self._backend_type = _BACKEND_TYPE  # Always "rust"
         self._strict_context_mode = strict_context_mode
         self._context_entered = False
         self._closed = False
@@ -64,9 +66,9 @@ class NumPack:
         self._drop_if_exists = drop_if_exists
         self._force_gc_on_close = force_gc_on_close
         
-        # 🚀 性能优化：内存缓存
-        self._memory_cache = {}  # 数组名 -> NumPy数组
-        self._cache_enabled = False  # 是否启用缓存模式
+        # Performance optimization: Memory cache
+        self._memory_cache = {}  # Array name -> NumPy array
+        self._cache_enabled = False  # Whether cache mode is enabled
         
         # Determine warning behavior
         if warn_no_context is None:
@@ -85,49 +87,49 @@ class NumPack:
                 stacklevel=2
             )
         
-        # 初始化后端实例为None - 不自动打开
-        # 用户必须显式调用 open() 或使用 context manager
+        # Initialize backend instance to None - not automatically opened
+        # Users must explicitly call open() or use context manager
         self._npk = None
     
     def open(self) -> None:
-        """手动打开NumPack文件
+        """Manually open NumPack file
         
-        如果文件已打开，此方法将不执行任何操作。
-        如果文件已关闭，此方法将重新打开文件。
+        If the file is already open, this method does nothing.
+        If the file has been closed, this method reopens it.
         
-        示例:
+        Example:
             ```python
             npk = NumPack('data.npk')
-            npk.open()  # 手动打开
+            npk.open()  # Manually open
             npk.save({'array': data})
-            npk.close()  # 手动关闭
-            npk.open()  # 重新打开
+            npk.close()  # Manually close
+            npk.open()  # Reopen
             data = npk.load('array')
             npk.close()
             ```
         """
         if self._opened and not self._closed:
-            # 文件已打开且未关闭，不需要操作
+            # File is already open and not closed, no operation needed
             return
         
-        # 处理文件删除（如果需要）
+        # Handle file deletion (if needed)
         if self._drop_if_exists and self._filename.exists():
             if self._filename.is_dir():
                 shutil.rmtree(self._filename)
             else:
                 self._filename.unlink()
         
-        # 创建目录
+        # Create directory
         self._filename.mkdir(parents=True, exist_ok=True)
         
-        # 初始化Rust后端 (只接受一个参数)
+        # Initialize Rust backend (only accepts one parameter)
         self._npk = _NumPack(str(self._filename))
         
-        # 更新状态
+        # Update state
         self._opened = True
         self._closed = False
         
-        # 第一次打开后，不再自动删除文件
+        # After first open, no longer automatically delete file
         self._drop_if_exists = False
     
     def _check_context_mode(self):
@@ -151,69 +153,61 @@ class NumPack:
         """Save arrays to NumPack file
         
         Parameters:
-            arrays (Dict[str, np.ndarray]): The arrays to save
+            arrays (Dict[str, np.ndarray]): Dictionary mapping array names to numpy arrays
         """
         self._check_context_mode()
         
         if not isinstance(arrays, dict):
             raise ValueError("arrays must be a dictionary")
         
-        # 🚀 性能优化：如果启用缓存模式，只更新缓存
+        # Performance optimization: If cache mode is enabled, only update cache
         if self._cache_enabled:
             for name, arr in arrays.items():
-                # 🚀 关键优化：检查是否是已缓存数组的引用
-                # 如果是，则不需要更新（因为已经直接修改了）
+                # Critical optimization: Check if it's a reference to a cached array
+                # If so, no update needed (already modified in-place)
                 if name in self._memory_cache:
                     cached_arr = self._memory_cache[name]
-                    # 检查是否是同一个数组对象（已经就地修改）
+                    # Check if it's the same array object (already in-place modified)   
                     if arr is cached_arr:
-                        # 已经是同一个对象，无需操作
+                        # Already the same object, no operation needed
                         continue
-                self._memory_cache[name] = arr  # 不复制，直接引用
+                self._memory_cache[name] = arr  # No copy, directly reference
             return
             
-        # Rust 后端需要额外的参数
         self._npk.save(arrays, None)
 
-    def load(self, array_name: str, lazy: bool = False, writable: bool = False) -> Union[np.ndarray, LazyArray]:
-        """Load arrays from NumPack file
+    def load(self, array_name: str, lazy: bool = False) -> Union[np.ndarray, LazyArray]:
+        """Load array from NumPack file
         
         Parameters:
             array_name (str): The name of the array to load
             lazy (bool): Whether to load the array in lazy mode (memory mapped)
-            writable (bool): 🚀 性能优化：如果为True，返回可直接修改的数组（需要lazy=True）
         
         Returns:
             Union[np.ndarray, LazyArray]: The loaded array
         """
         self._check_context_mode()
         
-        # 🚀 性能优化：如果启用缓存模式，从缓存加载
+        # Performance optimization: If cache mode is enabled, load from cache
         if self._cache_enabled:
             if array_name in self._memory_cache:
-                # 🚀 关键优化：直接返回缓存中的数组，不复制
-                # 这样可以直接在原数组上修改，避免额外的复制开销
+                # Critical optimization: Return array from cache without copying
+                # This allows direct modification on the original array, avoiding extra copy overhead
                 return self._memory_cache[array_name]
             else:
-                # 第一次加载，从文件读取并缓存
-                arr = self._npk.load(array_name, lazy=False)  # 强制eager模式
+                # First load, read from file and cache
+                arr = self._npk.load(array_name, lazy=False)  # Force eager mode
                 self._memory_cache[array_name] = arr
                 return arr
-        
-        #  🚀 性能优化：writable模式
-        if writable and lazy:
-            # TODO: 实现可写LazyArray
-            import warnings
-            warnings.warn("writable模式暂未实现，将使用标准lazy模式", UserWarning)
         
         return self._npk.load(array_name, lazy=lazy)
 
     def replace(self, arrays: Dict[str, np.ndarray], indexes: Union[List[int], int, np.ndarray, slice]) -> None:
-        """Replace arrays in NumPack file
+        """Replace array values at specified indexes
         
         Parameters:
-            arrays (Dict[str, np.ndarray]): The arrays to replace
-            indexes (Union[List[int], int, np.ndarray, slice]): The indexes to replace
+            arrays (Dict[str, np.ndarray]): Dictionary mapping array names to new values
+            indexes (Union[List[int], int, np.ndarray, slice]): Row indexes to replace
         """
         self._check_context_mode()
         
@@ -227,29 +221,30 @@ class NumPack:
         elif not isinstance(indexes, (list, slice)):
             raise ValueError("The indexes must be int or list or numpy.ndarray or slice.")
             
-        # Rust 后端
+        # Rust backend
         self._npk.replace(arrays, indexes)
 
     def append(self, arrays: Dict[str, np.ndarray]) -> None:
-        """Append arrays to NumPack file
+        """Append new rows to existing arrays
         
         Parameters:
-            arrays (Dict[str, np.ndarray]): The arrays to append
+            arrays (Dict[str, np.ndarray]): Dictionary mapping array names to rows to append
         """
         self._check_context_mode()
         
         if not isinstance(arrays, dict):
             raise ValueError("arrays must be a dictionary")
         
-        # 两个后端现在都期望字典参数
+        # Both backends now expect dictionary parameters
         self._npk.append(arrays)
 
     def drop(self, array_name: Union[str, List[str]], indexes: Optional[Union[List[int], int, np.ndarray]] = None) -> None:
-        """Drop arrays from NumPack file
+        """Drop arrays or specific rows from NumPack file
         
         Parameters:
-            array_name (Union[str, List[str]]): The name or names of the arrays to drop
-            indexes (Optional[Union[List[int], int, np.ndarray]]): The indexes to drop, if None, drop all rows
+            array_name (Union[str, List[str]]): The name(s) of the array(s) to drop
+            indexes (Optional[Union[List[int], int, np.ndarray]]): Row indexes to drop. 
+                    If None, drops entire arrays
         """
         self._check_context_mode()
         
@@ -268,18 +263,19 @@ class NumPack:
             elif not isinstance(indexes, slice):
                 raise ValueError("The indexes must be int, list, tuple, numpy.ndarray or slice.")
         
-        # Rust 后端
+
         self._npk.drop(array_name, indexes)
 
     def getitem(self, array_name: str, indexes: Union[List[int], int, np.ndarray]) -> np.ndarray:
-        """Randomly access the data of specified rows from NumPack file
+        """Random access to specified rows from NumPack file
         
         Parameters:
             array_name (str): The name of the array to access
-            indexes (Union[List[int], int, np.ndarray]): The indexes to access, can be integers, lists, slices or numpy arrays
+            indexes (Union[List[int], int, np.ndarray]): Row indexes to access (integers, 
+                    lists, slices, or numpy arrays)
 
         Returns:
-            The specified row data
+            np.ndarray: The specified row data
         """
         self._check_context_mode()
         
@@ -288,44 +284,44 @@ class NumPack:
         elif isinstance(indexes, np.ndarray):
             indexes = indexes.tolist()
         
-        # Rust 后端
+        # Rust backend
         return self._npk.getitem(array_name, indexes)
     
     def get_shape(self, array_name: str) -> Tuple[int, int]:
-        """Get the shape of specified arrays in NumPack file
+        """Get the shape of specified array
         
         Parameters:
-            array_name (str): The name of the array to get the shape
+            array_name (str): The name of the array
         
         Returns:
-            tuple: the shape of the array
+            Tuple[int, int]: The shape of the array (rows, columns)
         """
         self._check_context_mode()
         return self._npk.get_shape(array_name)
     
     def get_member_list(self) -> List[str]:
-        """Get the list of array names in NumPack file
+        """Get the list of all array names
         
         Returns:
-            A list containing the names of the arrays
+            List[str]: List containing all array names
         """
         self._check_context_mode()
         return self._npk.get_member_list()
     
     def get_modify_time(self, array_name: str) -> Optional[int]:
-        """Get the modify time of specified array in NumPack file
+        """Get the last modification time of specified array
         
         Parameters:
-            array_name (str): The name of the array to get the modify time
+            array_name (str): The name of the array
         
         Returns:
-            The modify time of the array, if the array does not exist, return None
+            Optional[int]: Modification timestamp, or None if array doesn't exist
         """
         self._check_context_mode()
         return self._npk.get_modify_time(array_name)
     
     def reset(self) -> None:
-        """Clear all arrays in NumPack file"""
+        """Clear all arrays from NumPack file"""
         self._check_context_mode()
         self._npk.reset()
     
@@ -365,193 +361,229 @@ class NumPack:
         return self._npk.get_metadata()
     
     def __getitem__(self, key: str) -> np.ndarray:
-        """Get the array by key"""
+        """Get array by name using bracket notation (npk['array_name'])"""
         return self.load(key)
     
     def __iter__(self):
-        """Iterate over the arrays in NumPack file"""
+        """Iterate over array names in the file"""
         return iter(self.get_member_list())
     
     def stream_load(self, array_name: str, buffer_size: Union[int, None] = None) -> Iterator[np.ndarray]:
-        """Stream the array by name with buffering support
+        """Stream array data in batches
         
         Parameters:
             array_name (str): The name of the array to stream
-            buffer_size (Union[int, None]): Number of rows to load in each batch, if None, load all rows one by one
+            buffer_size (Union[int, None]): Number of rows per batch. If None, loads one row at a time
         
         Returns:
-            Iterator yielding numpy arrays of size up to buffer_size
+            Iterator[np.ndarray]: Iterator yielding batches of rows
         """
         self._check_context_mode()
         
         if buffer_size is not None and buffer_size <= 0:
             raise ValueError("buffer_size must be greater than 0")
         
-        # Rust 后端：使用stream_load方法
+        # Rust backend: Use stream_load method
         effective_buffer_size = buffer_size if buffer_size is not None else 1
         return self._npk.stream_load(array_name, effective_buffer_size)
 
     def has_array(self, array_name: str) -> bool:
-        """Check if array exists
+        """Check if array exists in the file
         
         Parameters:
-            array_name (str): Name of the array
+            array_name (str): Name of the array to check
             
         Returns:
-            bool: True if array exists
+            bool: True if array exists, False otherwise
         """
         self._check_context_mode()
         return array_name in self._npk.get_member_list()
 
     @property 
     def backend_type(self) -> str:
-        """获取当前使用的后端类型"""
+        """Get the current backend type (always 'rust')"""
         return self._backend_type
     
     @property
     def is_opened(self) -> bool:
-        """检查文件是否已打开"""
+        """Check if file is currently opened"""
         return self._opened and not self._closed
     
     @property
     def is_closed(self) -> bool:
-        """检查文件是否已关闭"""
+        """Check if file is currently closed"""
         return self._closed or not self._opened
         
     def get_io_stats(self) -> Dict[str, Any]:
-        """获取IO性能统计信息 - 内部监控功能
+        """Get I/O performance statistics (internal monitoring)
         
         Returns:
-            Dict[str, Any]: 性能统计数据
+            Dict[str, Any]: Performance statistics data
         """
-        # Rust后端性能统计
+        # Rust backend performance statistics
         return {
             "backend_type": self._backend_type,
             "stats_available": False
         }
 
     def batch_mode(self, memory_limit=None):
-        """🚀 批量处理模式 - 极致性能优化
+        """Batch Mode - In-memory caching for frequent operations
         
-        在此模式下：
-        - load操作直接从内存缓存读取（第一次从文件加载）
-        - save操作只更新内存缓存，不写文件
-        - 退出context时一次性将所有修改写入文件
+        **Strategy**: Cache modified arrays in memory, write to disk on exit
         
-        性能提升：约10-100倍（取决于操作次数）
+        How it works:
+        - load(): First time reads from file, then returns from memory cache
+        - save(): Updates memory cache only (no disk I/O)
+        - On exit: Flushes all cached changes to disk in one batch
         
-        参数:
-            memory_limit (int, optional): 内存限制（MB）。如果设置，超过限制时自动切换到流式模式
+        **Performance**: 25-37x speedup (depends on operation count)
         
-        示例:
+        **Comparison with writable_batch_mode**:
+        ┌──────────────────────┬─────────────────┬──────────────────────┐
+        │ Feature              │ batch_mode      │ writable_batch_mode  │
+        ├──────────────────────┼─────────────────┼──────────────────────┤
+        │ Storage              │ Memory cache    │ File mmap mapping    │
+        │ Memory usage         │ Array size      │ ~0 (virtual only)    │
+        │ Shape changes        │ Supported       │ Not supported        │
+        │ Best for             │ Small arrays    │ Large arrays         │
+        │ Array size           │ < 100MB         │ > 100MB              │
+        └──────────────────────┴─────────────────┴──────────────────────┘
+        
+        Parameters:
+            memory_limit (int, optional): Memory limit in MB. If set, switches to 
+                                        streaming mode when limit is exceeded.
+        
+        Example:
+            >>> # Good for: small arrays, frequent read/write, shape changes
             >>> with npk.batch_mode():
             ...     for i in range(100):
-            ...         a = npk.load('array', lazy=True)
-            ...         a *= 4.1
-            ...         npk.save({'array': a})
-            # 退出时自动保存所有修改
+            ...         a = npk.load('array')    # From cache after first load
+            ...         a *= 4.1                 # Modify in memory
+            ...         npk.save({'array': a})   # Update cache only
+            ...     # All changes written to disk here
         
         Returns:
-            BatchModeContext: 批量处理上下文
+            BatchModeContext: Batch processing context manager
         """
         return BatchModeContext(self, memory_limit=memory_limit)
     
     def writable_batch_mode(self):
-        """🚀 可写批处理模式 - 零内存开销
+        """Writable Batch Mode - Zero-copy direct file modification
         
-        在此模式下：
-        - load操作返回文件的mmap视图（可写）
-        - 修改直接在文件上进行（零拷贝）
-        - save操作变为无操作（修改已在文件上）
-        - 退出时自动flush确保持久化
+        **Strategy**: Memory-map files directly, modify in-place with zero copies
         
-        优势：
-        - ✅ 零内存开销（只占用虚拟内存）
-        - ✅ 支持任意大小的数组
-        - ✅ 性能与batch_mode相当
-        - ✅ 操作系统自动管理脏页
+        How it works:
+        - load(): Returns a numpy array VIEW of the mmap'd file (zero-copy)
+        - Modifications: Written directly to the file-mapped memory
+        - save(): No-op (changes already in file)
+        - On exit: Flushes mmap to ensure persistence
         
-        限制：
-        - ⚠️ 不支持数组形状改变
-        - ⚠️ 需要文件系统支持mmap
+        **Performance**: 67-174x speedup (better than batch_mode for large arrays)
         
-        示例:
+        **Comparison with batch_mode**:
+        ┌──────────────────────┬─────────────────┬──────────────────────┐
+        │ Feature              │ batch_mode      │ writable_batch_mode  │
+        ├──────────────────────┼─────────────────┼──────────────────────┤
+        │ Storage              │ Memory cache    │ File mmap mapping    │
+        │ Memory usage         │ Array size      │ ~0 (virtual only)    │
+        │ Shape changes        │ Supported       │ Not supported        │
+        │ Best for             │ Small arrays    │ Large arrays         │
+        │ Array size           │ < 100MB         │ > 100MB              │
+        └──────────────────────┴─────────────────┴──────────────────────┘
+        
+        Advantages:
+        - Zero memory overhead (virtual memory only)
+        - Supports arbitrarily large arrays (TB-scale)
+        - Better performance for large arrays
+        - OS automatically manages dirty pages
+        
+        Limitations:
+        - Cannot change array shape (no append/reshape)
+        - Requires filesystem mmap support
+        
+        Technical Detail:
+            The returned numpy.ndarray is a VIEW (arr.flags['OWNDATA'] == False)
+            that directly maps to the file. Modifications are written to the 
+            file-mapped memory, not to a separate copy.
+        
+        Example:
+            >>> # Good for: large arrays, memory-constrained, value-only changes
             >>> with npk.writable_batch_mode() as wb:
             ...     for i in range(100):
-            ...         a = wb.load('array')  # 返回mmap视图
-            ...         a *= 4.1              # 直接在文件上修改
-            ...         wb.save({'array': a}) # 无操作（可选）
-            # 退出时自动flush
+            ...         a = wb.load('array')  # mmap view (zero-copy)
+            ...         a *= 4.1              # Direct file modification
+            ...         wb.save({'array': a}) # Optional (no-op)
+            ...     # mmap flushed to disk here
         
         Returns:
-            WritableBatchMode: 可写批处理上下文
+            WritableBatchMode: Writable batch processing context manager
         """
         from .writable_array import WritableBatchMode
         return WritableBatchMode(self)
     
     def _flush_cache(self):
-        """🚀 刷新缓存到文件"""
+        """Flush memory cache to file"""
         if self._memory_cache:
             self._npk.save(self._memory_cache, None)
             self._memory_cache.clear()
     
     def close(self, force_gc: Optional[bool] = None) -> None:
-        """显式关闭NumPack实例并释放所有资源
+        """Explicitly close NumPack instance and release all resources
         
-        【性能优化】快速close - 确保元数据flush，无额外GC开销
+        【Performance Optimized】Fast close - ensures metadata flush with no extra GC overhead
         
-        调用close()后，可以通过调用open()重新打开文件。
-        多次调用close()是安全的（幂等）。
+        After calling close(), the file can be reopened by calling open().
+        Multiple calls to close() are safe (idempotent).
         
         Parameters:
-            force_gc (Optional[bool]): 是否强制执行垃圾回收。默认False以获得最佳性能。
+            force_gc (Optional[bool]): Force garbage collection. Default False for best performance.
         """
         if self._closed or not self._opened:
-            return  # 已关闭或未打开，无需操作
+            return  # Already closed or not opened, no operation needed
         
-        # 🚀 刷新缓存
+        # Flush cache
         if self._cache_enabled:
             self._flush_cache()
         
-        # 【性能优化】调用Rust端close以flush元数据，但不做额外清理
+        # Performance optimization: Call Rust close to flush metadata, but no extra cleanup
         if self._npk is not None and hasattr(self._npk, 'close'):
             try:
                 self._npk.close()
             except:
-                pass  # 忽略close错误
+                pass  # Ignore close error
         
-        # 更新状态
+        # Update state
         self._closed = True
         self._opened = False
-        self._npk = None  # 释放引用，Rust的Drop会自动清理
+        self._npk = None  # Release reference, Rust's Drop will automatically clean up
         
-        # 仅在用户显式请求时才执行GC（通常不需要）
+        # Only execute GC when user explicitly requests (usually not needed)
         if force_gc or (force_gc is None and self._force_gc_on_close):
             import gc
             gc.collect()
     
     def _windows_comprehensive_cleanup(self):
-        """Windows特定的全面资源清理
+        """Windows-specific comprehensive resource cleanup
         
-        注意：由于使用Rust后端，大部分清理工作由Rust的Drop trait自动处理。
-        只需要一次GC来清理Python侧的循环引用。
+        Note: With Rust backend, most cleanup is handled automatically by Rust's Drop trait.
+        Only one GC pass is needed to clean up Python-side circular references.
         """
         import gc
-        # 只执行一次GC，Rust后端会自动处理其余清理工作
+        # Only execute one GC pass, Rust backend will automatically handle the rest of the cleanup
         gc.collect()
     
     def __del__(self):
-        """析构函数"""
+        """Destructor - automatically closes the file"""
         self.close()
     
     def __enter__(self):
-        """Context manager入口
+        """Context manager entry point
         
-        示例:
+        Example:
             with NumPack('data.npk') as npk:
                 npk.save({'array': data})
         """
-        # 如果文件未打开或已关闭，自动打开
+        # If file is not opened or closed, automatically open
         if not self._opened or self._closed:
             self.open()
         
@@ -559,46 +591,53 @@ class NumPack:
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager出口
+        """Context manager exit point
         
-        即使发生异常也保证清理。
-        异常（如果有）会在清理后重新抛出。
+        Guarantees cleanup even if exceptions occur.
+        Exceptions (if any) are re-raised after cleanup.
         """
         try:
             self.close()
         finally:
             self._context_entered = False
         
-        # 不抑制异常
+        # Do not suppress exceptions
         return False
 
     def __repr__(self) -> str:
         backend_info = f"backend={self._backend_type}"
-        # 尝试获取文件名
-        filename = 'unknown'
-        if hasattr(self._npk, 'filename'):
-            filename = self._npk.filename
-        elif hasattr(self._npk, '_filename'):
-            filename = self._npk._filename
-        elif hasattr(self._npk, 'base_dir'):
-            filename = self._npk.base_dir
+        # Try to get filename
+        filename = str(self._filename) if hasattr(self, '_filename') else 'unknown'
         
-        arrays_count = len(self.get_member_list())
-        return f"NumPack({filename}, arrays={arrays_count}, {backend_info})"
+        # Only get array count if file is opened
+        if self.is_opened:
+            try:
+                arrays_count = len(self.get_member_list())
+                return f"NumPack({filename}, arrays={arrays_count}, {backend_info})"
+            except:
+                pass
+        
+        status = "opened" if self.is_opened else "closed"
+        return f"NumPack({filename}, status={status}, {backend_info})"
 
 
-# LazyArray类 - 导出到模块级别
-# （LazyArray的实际实现来自后端模块）
 
-# 提供向后兼容的空函数(Rust后端自动管理内存)
+# Backward compatible no-op function (Rust backend manages memory automatically)
 def force_cleanup_windows_handles():
-    """强制清理Windows句柄 - Rust后端自动管理,保留此函数以兼容旧代码"""
+    """Force cleanup of Windows handles - Rust backend manages automatically.
+    
+    This function is kept for backward compatibility with old code.
+    """
     import gc
     gc.collect()
     return True
 
 class BatchModeContext:
-    """🚀 批量处理模式上下文管理器"""
+    """Batch mode context manager
+    
+    Manages in-memory caching of arrays for batch operations.
+    All cached changes are written to disk on exit.
+    """
     
     def __init__(self, numpack_instance: NumPack, memory_limit=None):
         self.npk = numpack_instance
@@ -606,29 +645,28 @@ class BatchModeContext:
         self._memory_used = 0
     
     def __enter__(self):
-        """进入批量处理模式"""
+        """Enter batch mode - enable memory caching"""
         self.npk._cache_enabled = True
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """退出批量处理模式，刷新所有修改到文件"""
+        """Exit batch mode - flush all cached changes to file"""
         try:
-            # 刷新缓存到文件
+            # Flush cache to file
             self.npk._flush_cache()
         finally:
             self.npk._cache_enabled = False
-        return False  # 不抑制异常
+        return False  # Don't suppress exceptions
 
 
-# 导出的公共API
 __all__ = ['NumPack', 'LazyArray', 'force_cleanup_windows_handles', 'get_backend_info', 'BatchModeContext']
 
-# 提供后端信息查询
+# Backend information query
 def get_backend_info():
-    """获取当前后端信息
+    """Get information about the current backend
     
     Returns:
-        Dict: 包含后端类型、平台、版本等信息的字典
+        Dict: Dictionary containing backend type, platform, version, etc.
     """
     return {
         'backend_type': _BACKEND_TYPE,

@@ -1,29 +1,25 @@
-"""
-🚀 WritableArray - 可写数组包装器
-直接在文件上修改，零内存开销
-"""
 import numpy as np
 import mmap
 import os
 
 
 class WritableArray:
-    """可写数组包装器 - 基于mmap的零拷贝方案
+    """Writable array wrapper - zero copy solution based on mmap
     
-    核心优化：
-    1. 使用可写mmap直接映射文件
-    2. 返回NumPy数组视图，直接在文件上操作
-    3. 修改自动同步到文件（操作系统管理）
-    4. 零内存开销（只是虚拟内存映射）
+    Core optimization:
+    1. Use writable mmap to directly map file
+    2. Return NumPy array view, modify directly on the file
+    3. Modify automatically sync to file (operating system managed)
+    4. Zero memory overhead (just virtual memory mapping)
     """
     
     def __init__(self, file_path, shape, dtype, mode='r+'):
         """
         Args:
-            file_path: 数据文件路径
-            shape: 数组形状
-            dtype: 数据类型
-            mode: 'r+'可写，'r'只读
+            file_path: Data file path
+            shape: Array shape
+            dtype: Data type
+            mode: 'r+' writable, 'r' read only
         """
         self.file_path = file_path
         self.shape = tuple(shape)
@@ -34,20 +30,19 @@ class WritableArray:
         self._file = None
         
     def __enter__(self):
-        """打开文件并创建mmap"""
-        # 打开文件
+        """Open file and create mmap"""
         if self.mode == 'r+':
             self._file = open(self.file_path, 'r+b')
         else:
             self._file = open(self.file_path, 'rb')
         
-        # 创建mmap
+        # Create mmap
         if self.mode == 'r+':
             self._mmap = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_WRITE)
         else:
             self._mmap = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
         
-        # 创建NumPy数组视图（零拷贝）
+        # Create NumPy array view (zero copy)
         self._array = np.ndarray(
             shape=self.shape,
             dtype=self.dtype,
@@ -57,9 +52,9 @@ class WritableArray:
         return self._array
     
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """关闭mmap和文件"""
+        """Close mmap and file"""
         if self._mmap is not None:
-            # 🚀 关键：确保修改写入磁盘
+            # Critical: Ensure modifications are written to disk
             if self.mode == 'r+':
                 self._mmap.flush()
             self._mmap.close()
@@ -74,13 +69,20 @@ class WritableArray:
 
 
 class WritableBatchMode:
-    """可写批处理模式 - 零内存开销
+    """Writable batch mode - zero memory overhead
     
-    策略：
-    1. 使用可写mmap打开所有数组文件
-    2. 修改直接在文件上进行（零拷贝）
-    3. 操作系统自动管理脏页写回
-    4. 退出时统一flush确保持久化
+    Strategy:
+    1. Use writable mmap to open all array files
+    2. Modify directly on the file (zero copy)
+    3. The operating system automatically manages dirty page writeback
+    4. Exit time unified flush to ensure persistence
+    
+    Supported data types:
+    - Boolean: bool
+    - Unsigned integers: uint8, uint16, uint32, uint64
+    - Signed integers: int8, int16, int32, int64
+    - Floating point: float16, float32, float64
+    - Complex numbers: complex64, complex128
     """
     
     def __init__(self, numpack_instance):
@@ -92,68 +94,81 @@ class WritableBatchMode:
         return self
     
     def load(self, array_name):
-        """加载可写数组视图
+        """Load writable array view
         
         Returns:
-            numpy array: 直接映射到文件的数组视图（可写）
+            numpy array: Array view directly mapped to the file (writable)
         """
         if array_name in self.array_cache:
             return self.array_cache[array_name]
         
-        # 获取数组元数据（使用Python API）
+        # Get array metadata (using Python API)
         try:
-            shape_tuple = self.npk.get_shape(array_name)
-            shape = list(shape_tuple)
+            metadata = self.npk.get_metadata()
+            if array_name not in metadata['arrays']:
+                raise KeyError(f"Array '{array_name}' not found")
+            
+            array_meta = metadata['arrays'][array_name]
+            shape = array_meta['shape']
+            dtype_str = array_meta['dtype']  # Format like "Bool", "Uint8", "Float32", etc.
         except Exception as e:
             raise KeyError(f"Array '{array_name}' not found: {e}")
         
-        # 构建文件路径
+        # Build file path
         file_path = os.path.join(str(self.npk._filename), f"data_{array_name}.npkd")
         
-        # 推断dtype（从文件大小）
-        file_size = os.path.getsize(file_path)
-        total_elements = np.prod(shape)
-        itemsize = file_size // total_elements
-        
-        # 根据itemsize推断dtype
+        # Map Rust DataType format to NumPy dtype
+        # Supports all NumPack data types from specification
         dtype_map = {
-            1: np.uint8,
-            2: np.float16,
-            4: np.float32,
-            8: np.float64,
+            'Bool': np.bool_,
+            'Uint8': np.uint8,
+            'Uint16': np.uint16,
+            'Uint32': np.uint32,
+            'Uint64': np.uint64,
+            'Int8': np.int8,
+            'Int16': np.int16,
+            'Int32': np.int32,
+            'Int64': np.int64,
+            'Float16': np.float16,
+            'Float32': np.float32,
+            'Float64': np.float64,
+            'Complex64': np.complex64,
+            'Complex128': np.complex128,
         }
-        dtype = dtype_map.get(itemsize, np.float64)
         
-        # 打开文件并创建mmap
+        dtype = dtype_map.get(dtype_str)
+        if dtype is None:
+            raise ValueError(f"Unsupported dtype: {dtype_str}")
+        
+        # Open file and create mmap
         file = open(file_path, 'r+b')
         mm = mmap.mmap(file.fileno(), 0, access=mmap.ACCESS_WRITE)
         
-        # 创建NumPy数组视图
+        # Create NumPy array view
         arr = np.ndarray(
             shape=tuple(shape),
             dtype=dtype,
             buffer=mm
         )
         
-        # 保存引用
+        # Save reference
         self.writable_arrays[array_name] = (file, mm)
         self.array_cache[array_name] = arr
         
         return arr
     
     def save(self, arrays_dict):
-        """保存操作变为无操作
+        """Save operation becomes no operation
         
-        因为修改已经直接在文件上进行，无需额外保存
+        Because modifications are already directly on the file, no additional save is needed
         """
-        # 🚀 关键优化：修改已经在文件上，无需操作
         pass
     
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """关闭所有mmap并flush"""
+        """Close all mmap and flush"""
         for array_name, (file, mm) in self.writable_arrays.items():
             try:
-                mm.flush()  # 确保写入磁盘
+                mm.flush()  # Ensure write to disk
                 mm.close()
                 file.close()
             except Exception as e:
