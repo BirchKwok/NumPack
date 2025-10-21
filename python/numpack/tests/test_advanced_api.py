@@ -467,8 +467,7 @@ class TestLazyArrayAPI:
         # 加载LazyArray
         lazy_arr = numpack.load('bool_test', lazy=True)
         
-        # 添加调试信息
-        print(f"Backend type: {numpack.backend_type}")
+        # 调试信息
         print(f"Data shape: {data.shape}")
         print(f"Mask length: {len(mask)}")
         print(f"True count in mask: {np.sum(mask)}")

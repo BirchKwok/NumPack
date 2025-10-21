@@ -59,15 +59,8 @@ def create_test_array(dtype, shape):
         return np.random.rand(*shape).astype(dtype)
 
 def handle_complex_test(dtype, test_func):
-    """Helper function to handle complex type tests with proper error handling"""
-    if np.issubdtype(dtype, np.complexfloating):
-        try:
-            return test_func()
-        except NotImplementedError as e:
-            assert "Complex number support is currently under development" in str(e)
-            pytest.skip(f"Complex type {dtype} not yet fully implemented in current backend")
-    else:
-        return test_func()
+    """Helper function to run tests - simplified since all types are now supported"""
+    return test_func()
 
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
 @pytest.mark.parametrize("ndim,shape", ARRAY_DIMS)
@@ -77,31 +70,16 @@ def test_basic_save_load(numpack, dtype, test_values, ndim, shape):
     array2 = create_test_array(dtype, shape)
     arrays = {'array1': array1, 'array2': array2}
     
-    # Handle complex types that might not be fully supported in Rust backend
-    if np.issubdtype(dtype, np.complexfloating):
-        # For complex types, test might raise NotImplementedError in Rust backend
-        try:
-            numpack.save(arrays)
-            arr1 = numpack.load('array1')
-            arr2 = numpack.load('array2')
-            # If successful, verify the data
-            assert np.array_equal(array1, arr1)
-            assert np.array_equal(array2, arr2)
-            assert array1.dtype == arr1.dtype
-            assert array2.dtype == arr2.dtype
-        except NotImplementedError as e:
-            # Expected for Rust backend with complex types under development
-            assert "Complex number support is currently under development" in str(e)
-            pytest.skip(f"Complex type {dtype} not yet fully implemented in current backend")
-    else:
-        # Standard test for non-complex types
-        numpack.save(arrays)
-        arr1 = numpack.load('array1')
-        arr2 = numpack.load('array2')
-        assert np.array_equal(array1, arr1)
-        assert np.array_equal(array2, arr2)
-        assert array1.dtype == arr1.dtype
-        assert array2.dtype == arr2.dtype
+    # 保存和加载数据
+    numpack.save(arrays)
+    arr1 = numpack.load('array1')
+    arr2 = numpack.load('array2')
+    
+    # 验证数据
+    assert np.array_equal(array1, arr1)
+    assert np.array_equal(array2, arr2)
+    assert array1.dtype == arr1.dtype
+    assert array2.dtype == arr2.dtype
     assert array1.shape == arr1.shape
     assert array2.shape == arr2.shape
 
@@ -248,27 +226,16 @@ def test_append_operations(numpack, dtype, test_values, ndim, shape):
     array = create_test_array(dtype, shape)
     append_data = create_test_array(dtype, shape)
     
-    # Handle complex types that might not be fully supported in Rust backend
-    if np.issubdtype(dtype, np.complexfloating):
-        try:
-            numpack.save({'array': array})
-            numpack.append({'array': append_data})
-            loaded = numpack.load('array')
-            assert loaded.dtype == dtype
-            assert loaded.shape[0] == 2 * shape[0]  # The first dimension should double
-            assert np.array_equal(array, loaded[:shape[0]])
-            assert np.array_equal(append_data, loaded[shape[0]:])
-        except NotImplementedError as e:
-            assert "Complex number support is currently under development" in str(e)
-            pytest.skip(f"Complex type {dtype} not yet fully implemented in current backend")
-    else:
-        numpack.save({'array': array})
-        numpack.append({'array': append_data})
-        loaded = numpack.load('array')
-        assert loaded.dtype == dtype
-        assert loaded.shape[0] == 2 * shape[0]  # The first dimension should double
-        assert np.array_equal(array, loaded[:shape[0]])
-        assert np.array_equal(append_data, loaded[shape[0]:])
+    # 保存和追加数据
+    numpack.save({'array': array})
+    numpack.append({'array': append_data})
+    loaded = numpack.load('array')
+    
+    # 验证结果
+    assert loaded.dtype == dtype
+    assert loaded.shape[0] == 2 * shape[0]  # The first dimension should double
+    assert np.array_equal(array, loaded[:shape[0]])
+    assert np.array_equal(append_data, loaded[shape[0]:])
 
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
 @pytest.mark.parametrize("ndim,shape", ARRAY_DIMS)
@@ -328,45 +295,23 @@ def test_stream_load(numpack, dtype, test_values, ndim, shape):
     """Test stream_load functionality"""
     array = create_test_array(dtype, shape)
     
-    # Handle complex types that might not be fully supported in Rust backend
-    if np.issubdtype(dtype, np.complexfloating):
-        try:
-            numpack.save({'array': array})
-            
-            # Test with buffer_size=None
-            for i, chunk in enumerate(numpack.stream_load('array', buffer_size=None)):
-                assert np.array_equal(array[i:i+1], chunk)
-            
-            # Test with specific buffer_size
-            buffer_size = 10
-            for i, chunk in enumerate(numpack.stream_load('array', buffer_size=buffer_size)):
-                start_idx = i * buffer_size
-                end_idx = min(start_idx + buffer_size, shape[0])
-                assert np.array_equal(array[start_idx:end_idx], chunk)
-            
-            # Test invalid buffer_size
-            with pytest.raises(ValueError):
-                next(numpack.stream_load('array', buffer_size=0))
-        except NotImplementedError as e:
-            assert "Complex number support is currently under development" in str(e)
-            pytest.skip(f"Complex type {dtype} not yet fully implemented in current backend")
-    else:
-        numpack.save({'array': array})
-        
-        # Test with buffer_size=None
-        for i, chunk in enumerate(numpack.stream_load('array', buffer_size=None)):
-            assert np.array_equal(array[i:i+1], chunk)
-        
-        # Test with specific buffer_size
-        buffer_size = 10
-        for i, chunk in enumerate(numpack.stream_load('array', buffer_size=buffer_size)):
-            start_idx = i * buffer_size
-            end_idx = min(start_idx + buffer_size, shape[0])
-            assert np.array_equal(array[start_idx:end_idx], chunk)
-        
-        # Test invalid buffer_size
-        with pytest.raises(ValueError):
-            next(numpack.stream_load('array', buffer_size=0))
+    # 保存数据
+    numpack.save({'array': array})
+    
+    # Test with buffer_size=None
+    for i, chunk in enumerate(numpack.stream_load('array', buffer_size=None)):
+        assert np.array_equal(array[i:i+1], chunk)
+    
+    # Test with specific buffer_size
+    buffer_size = 10
+    for i, chunk in enumerate(numpack.stream_load('array', buffer_size=buffer_size)):
+        start_idx = i * buffer_size
+        end_idx = min(start_idx + buffer_size, shape[0])
+        assert np.array_equal(array[start_idx:end_idx], chunk)
+    
+    # Test invalid buffer_size
+    with pytest.raises(ValueError):
+        next(numpack.stream_load('array', buffer_size=0))
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

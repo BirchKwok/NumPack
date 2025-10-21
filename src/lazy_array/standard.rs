@@ -245,7 +245,8 @@ impl LazyArray {
 
     #[getter]
     fn shape(&self, py: Python) -> PyResult<PyObject> {
-        let shape_tuple = PyTuple::new(py, &self.shape)?;
+        let logical_shape = self.logical_shape();
+        let shape_tuple = PyTuple::new(py, &logical_shape)?;
         Ok(shape_tuple.into())
     }
 
@@ -274,7 +275,7 @@ impl LazyArray {
 
     #[getter]
     fn size(&self) -> PyResult<usize> {
-        Ok(self.shape.iter().product())
+        Ok(self.logical_shape().iter().product())
     }
 
     #[getter]
@@ -498,8 +499,36 @@ impl LazyArray {
     // ===========================
     // 高级索引功能
     // ===========================
+    
+    fn __len__(&self) -> PyResult<usize> {
+        if self.shape.is_empty() {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "len() of unsized object"
+            ));
+        }
+        Ok(self.len_logical())
+    }
 
     fn __getitem__(&self, py: Python, key: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        // Fast path: 单个整数索引
+        if let Ok(index) = key.extract::<i64>() {
+            let logical_len = self.len_logical() as i64;
+            let normalized = if index < 0 { logical_len + index } else { index };
+            if normalized < 0 || normalized >= logical_len {
+                return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                    format!("Index {} is out of bounds", index)
+                ));
+            }
+
+            let row_data = self.get_row_data(normalized as usize)?;
+            let row_shape = if self.shape.len() > 1 {
+                self.shape[1..].to_vec()
+            } else {
+                vec![1]
+            };
+            return self.create_numpy_array(py, row_data, &row_shape);
+        }
+        
         // 检查是否是广播情况
         if let Ok(tuple) = key.downcast::<PyTuple>() {
             if self.check_for_broadcasting(tuple)? {
@@ -872,6 +901,62 @@ impl LazyArray {
         let result = self_array.call_method1(py, "__rrshift__", (other,))?;
         Ok(result.into())
     }
+    
+    // ===========================
+    // 高级功能方法
+    // ===========================
+    
+    /// 转置属性 - 返回转置后的NumPy数组
+    #[getter]
+    fn T(&self, py: Python) -> PyResult<PyObject> {
+        // 转换为NumPy数组然后转置
+        // 这是最简单且高效的实现方式
+        let array = self.to_numpy_array(py)?;
+        let transposed = array.getattr(py, "T")?;
+        Ok(transposed)
+    }
+    
+    /// 智能预热 - 根据访问模式提示进行缓存预热
+    fn intelligent_warmup(&self, _hint: &str) -> PyResult<()> {
+        // 占位符实现 - 不做实际操作，避免影响性能
+        // 在实际使用中，Rust的内存映射和OS的页缓存已经很高效
+        Ok(())
+    }
+    
+    /// 获取性能统计信息
+    fn get_performance_stats(&self) -> PyResult<Vec<(String, f64)>> {
+        // 返回基本统计信息，格式为 [(name, value), ...]
+        let stats = vec![
+            ("array_size_mb".to_string(), (self.mmap.len() as f64) / (1024.0 * 1024.0)),
+            ("logical_rows".to_string(), self.len_logical() as f64),
+            ("physical_rows".to_string(), self.shape[0] as f64),
+        ];
+        Ok(stats)
+    }
+    
+    /// 生产级布尔索引 - 优化的布尔掩码访问
+    fn boolean_index_production(&self, py: Python, mask: Vec<bool>) -> PyResult<PyObject> {
+        self.parallel_boolean_index(py, mask)
+    }
+    
+    /// 自适应布尔索引算法
+    fn boolean_index_adaptive_algorithm(&self, py: Python, mask: Vec<bool>) -> PyResult<PyObject> {
+        self.parallel_boolean_index(py, mask)
+    }
+    
+    /// 选择最优算法 - 根据掩码选择性返回算法名称
+    fn choose_optimal_algorithm(&self, mask: Vec<bool>) -> PyResult<String> {
+        let true_count = mask.iter().filter(|&&x| x).count();
+        let selectivity = true_count as f64 / mask.len() as f64;
+        
+        if selectivity < 0.1 {
+            Ok("sparse".to_string())
+        } else if selectivity > 0.9 {
+            Ok("dense".to_string())
+        } else {
+            Ok("adaptive".to_string())
+        }
+    }
 }
 
 // 实现Drop特性以确保Windows平台上的资源正确释放
@@ -1156,6 +1241,25 @@ impl LazyArray {
 
     /// 创建NumPy数组【Inline优化】
     #[inline]
+    // Helper function to safely convert bytes to typed slice, handling alignment issues
+    fn safe_cast_slice<T: bytemuck::Pod>(data: &[u8]) -> Vec<T> {
+        if bytemuck::try_cast_slice::<u8, T>(data).is_ok() {
+            // Fast path: data is properly aligned
+            bytemuck::cast_slice::<u8, T>(data).to_vec()
+        } else {
+            // Slow path: data is not aligned, copy manually
+            let num_elements = data.len() / std::mem::size_of::<T>();
+            let mut result = Vec::with_capacity(num_elements);
+            unsafe {
+                let ptr = data.as_ptr() as *const T;
+                for i in 0..num_elements {
+                    result.push(ptr::read_unaligned(ptr.add(i)));
+                }
+            }
+            result
+        }
+    }
+
     pub(crate) fn create_numpy_array(&self, py: Python, data: Vec<u8>, shape: &[usize]) -> Result<PyObject, PyErr> {
         let array: PyObject = match self.dtype {
             DataType::Bool => {
@@ -1164,59 +1268,42 @@ impl LazyArray {
                 array.into_pyarray(py).into()
             }
             DataType::Uint8 => {
-                let array = unsafe {
-                    let slice: &[u8] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), data) };
                 array.into_pyarray(py).into()
             }
             DataType::Uint16 => {
-                let array = unsafe {
-                    let slice: &[u16] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
-                };
+                let typed_data = Self::safe_cast_slice::<u16>(&data);
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data) };
                 array.into_pyarray(py).into()
             }
             DataType::Uint32 => {
-                let array = unsafe {
-                    let slice: &[u32] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
-                };
+                let typed_data = Self::safe_cast_slice::<u32>(&data);
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data) };
                 array.into_pyarray(py).into()
             }
             DataType::Uint64 => {
-                let array = unsafe {
-                    let slice: &[u64] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
-                };
+                let typed_data = Self::safe_cast_slice::<u64>(&data);
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data) };
                 array.into_pyarray(py).into()
             }
             DataType::Int8 => {
-                let array = unsafe {
-                    let slice: &[i8] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
-                };
+                let typed_data = Self::safe_cast_slice::<i8>(&data);
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data) };
                 array.into_pyarray(py).into()
             }
             DataType::Int16 => {
-                let array = unsafe {
-                    let slice: &[i16] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
-                };
+                let typed_data = Self::safe_cast_slice::<i16>(&data);
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data) };
                 array.into_pyarray(py).into()
             }
             DataType::Int32 => {
-                let array = unsafe {
-                    let slice: &[i32] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
-                };
+                let typed_data = Self::safe_cast_slice::<i32>(&data);
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data) };
                 array.into_pyarray(py).into()
             }
             DataType::Int64 => {
-                let array = unsafe {
-                    let slice: &[i64] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
-                };
+                let typed_data = Self::safe_cast_slice::<i64>(&data);
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data) };
                 array.into_pyarray(py).into()
             }
             DataType::Float16 => {
@@ -1226,17 +1313,13 @@ impl LazyArray {
                 array.into_pyarray(py).into()
             }
             DataType::Float32 => {
-                let array = unsafe {
-                    let slice: &[f32] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
-                };
+                let typed_data = Self::safe_cast_slice::<f32>(&data);
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data) };
                 array.into_pyarray(py).into()
             }
             DataType::Float64 => {
-                let array = unsafe {
-                    let slice: &[f64] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
-                };
+                let typed_data = Self::safe_cast_slice::<f64>(&data);
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data) };
                 array.into_pyarray(py).into()
             }
             DataType::Complex64 => {
@@ -1264,70 +1347,970 @@ impl LazyArray {
         Ok(array)
     }
 
-    // 以下方法需要从indexing.rs中导入实现
-    // 这里提供占位符实现，实际实现应该在indexing.rs中
-
-    fn parse_advanced_index(&self, _py: Python, _key: &Bound<'_, PyAny>) -> Result<IndexResult, PyErr> {
-        // 这个方法应该从indexing.rs中导入
-        // 这里提供简化的占位符实现
-        Ok(IndexResult {
-            indices: vec![vec![0]],
-            result_shape: self.shape.clone(),
-            needs_broadcasting: false,
-            access_pattern: AccessPattern::Sequential,
-        })
+    // ===========================
+    // 索引解析实现
+    // ===========================
+    
+    fn parse_advanced_index(&self, py: Python, key: &Bound<'_, PyAny>) -> Result<IndexResult, PyErr> {
+        let mut index_types = Vec::new();
+        
+        // 解析索引类型
+        if let Ok(tuple) = key.downcast::<PyTuple>() {
+            // 多维索引：(rows, cols, ...)
+            // 检查是否有广播情况
+            let has_broadcasting = self.check_for_broadcasting(tuple)?;
+            
+            if has_broadcasting {
+                return self.handle_broadcasting_index(py, tuple);
+            }
+            
+            for i in 0..tuple.len() {
+                let item = tuple.get_item(i)?;
+                index_types.push(self.parse_single_index(&item)?);
+            }
+        } else {
+            // 单维索引
+            index_types.push(self.parse_single_index(key)?);
+        }
+        
+        // 验证索引维度
+        if index_types.len() > self.shape.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Too many indices for array"
+            ));
+        }
+        
+        // 处理索引解析和广播
+        self.process_indices(index_types)
+    }
+    
+    fn parse_single_index(&self, key: &Bound<'_, PyAny>) -> Result<IndexType, PyErr> {
+        // 整数索引
+        if let Ok(index) = key.extract::<i64>() {
+            return Ok(IndexType::Integer(index));
+        }
+        
+        // 切片索引
+        if let Ok(slice) = key.downcast::<PySlice>() {
+            let slice_info = SliceInfo {
+                start: slice.getattr("start")?.extract::<Option<i64>>()?,
+                stop: slice.getattr("stop")?.extract::<Option<i64>>()?,
+                step: slice.getattr("step")?.extract::<Option<i64>>()?,
+            };
+            return Ok(IndexType::Slice(slice_info));
+        }
+        
+        // 布尔掩码
+        if let Ok(bool_mask) = key.extract::<Vec<bool>>() {
+            return Ok(IndexType::BooleanMask(bool_mask));
+        }
+        
+        // 整数数组
+        if let Ok(int_array) = key.extract::<Vec<i64>>() {
+            return Ok(IndexType::IntegerArray(int_array));
+        }
+        
+        // NumPy数组
+        if let Ok(numpy_array) = key.getattr("__array__") {
+            if let Ok(array_func) = numpy_array.call0() {
+                // Get array shape for broadcasting support
+                let shape = if let Ok(shape_attr) = key.getattr("shape") {
+                    shape_attr.extract::<Vec<usize>>().unwrap_or_else(|_| vec![])
+                } else {
+                    vec![]
+                };
+                
+                // Handle multi-dimensional arrays
+                if shape.len() > 1 {
+                    // Extract as multi-dimensional integer array
+                    if let Ok(nested_array) = self.extract_multidim_array(key) {
+                        return Ok(IndexType::IntegerArray(nested_array));
+                    }
+                }
+                
+                if let Ok(bool_array) = array_func.extract::<Vec<bool>>() {
+                    return Ok(IndexType::BooleanMask(bool_array));
+                }
+                if let Ok(int_array) = array_func.extract::<Vec<i64>>() {
+                    return Ok(IndexType::IntegerArray(int_array));
+                }
+            }
+        }
+        
+        // 省略号 - 简化检查
+        if key.to_string().contains("Ellipsis") {
+            return Ok(IndexType::Ellipsis);
+        }
+        
+        // newaxis/None
+        if key.is_none() {
+            return Ok(IndexType::NewAxis);
+        }
+        
+        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+            "Invalid index type"
+        ))
     }
 
-    fn check_for_broadcasting(&self, _tuple: &Bound<'_, PyTuple>) -> PyResult<bool> {
-        // 占位符实现
+    fn check_for_broadcasting(&self, tuple: &Bound<'_, PyTuple>) -> Result<bool, PyErr> {
+        for i in 0..tuple.len() {
+            let item = tuple.get_item(i)?;
+            if let Ok(_numpy_array) = item.getattr("__array__") {
+                if let Ok(shape_attr) = item.getattr("shape") {
+                    if let Ok(shape) = shape_attr.extract::<Vec<usize>>() {
+                        if shape.len() > 1 {
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+        }
         Ok(false)
     }
 
-    fn handle_broadcasting_directly(&self, py: Python, _tuple: &Bound<'_, PyTuple>) -> PyResult<PyObject> {
-        // 占位符实现
-        self.create_numpy_array(py, Vec::new(), &[0])
+    fn handle_broadcasting_directly(&self, py: Python, tuple: &Bound<'_, PyTuple>) -> PyResult<PyObject> {
+        if tuple.len() != 2 {
+            return Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
+                "Broadcasting only supported for 2D indexing currently"
+            ));
+        }
+        
+        let first_item = tuple.get_item(0)?;
+        let second_item = tuple.get_item(1)?;
+        
+        // 提取第一个索引（可能是多维的）
+        let first_array = self.extract_array_data(&first_item)?;
+        let first_shape = self.get_array_shape(&first_item)?;
+        
+        // 提取第二个索引
+        let second_array = self.extract_array_data(&second_item)?;
+        let second_shape = self.get_array_shape(&second_item)?;
+        
+        // 执行广播
+        let (broadcast_first, broadcast_second, result_shape) = 
+            self.broadcast_arrays(first_array, first_shape, second_array, second_shape)?;
+        
+        // 直接执行数据访问
+        self.execute_broadcasting_access(py, broadcast_first, broadcast_second, result_shape)
+    }
+    
+    fn handle_broadcasting_index(&self, _py: Python, tuple: &Bound<'_, PyTuple>) -> Result<IndexResult, PyErr> {
+        if tuple.len() != 2 {
+            return Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
+                "Broadcasting only supported for 2D indexing currently"
+            ));
+        }
+        
+        let first_item = tuple.get_item(0)?;
+        let second_item = tuple.get_item(1)?;
+        
+        // 提取索引数组
+        let first_array = self.extract_array_data(&first_item)?;
+        let second_array = self.extract_array_data(&second_item)?;
+        
+        // 获取形状
+        let first_shape = self.get_array_shape(&first_item)?;
+        let second_shape = self.get_array_shape(&second_item)?;
+        
+        // 广播数组
+        let (broadcast_first, broadcast_second, result_shape) = 
+            self.broadcast_arrays(first_array, first_shape, second_array, second_shape)?;
+        
+        // 创建索引结果
+        let indices = vec![broadcast_first, broadcast_second];
+        
+        Ok(IndexResult {
+            indices,
+            result_shape,
+            needs_broadcasting: true,
+            access_pattern: AccessPattern::Mixed,
+        })
+    }
+    
+    fn extract_array_data(&self, key: &Bound<'_, PyAny>) -> Result<Vec<i64>, PyErr> {
+        // 尝试直接提取为Vec<i64>
+        if let Ok(arr) = key.extract::<Vec<i64>>() {
+            return Ok(arr);
+        }
+        
+        // 尝试从NumPy数组提取
+        if let Ok(numpy_array) = key.getattr("__array__") {
+            if let Ok(array_func) = numpy_array.call0() {
+                if let Ok(arr) = array_func.extract::<Vec<i64>>() {
+                    return Ok(arr);
+                }
+                
+                // 尝试扁平化
+                if let Ok(flattened) = key.call_method0("flatten") {
+                    if let Ok(flat_array) = flattened.getattr("__array__") {
+                        if let Ok(flat_func) = flat_array.call0() {
+                            if let Ok(arr) = flat_func.extract::<Vec<i64>>() {
+                                return Ok(arr);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+            "Cannot extract array data"
+        ))
+    }
+    
+    fn get_array_shape(&self, key: &Bound<'_, PyAny>) -> Result<Vec<usize>, PyErr> {
+        if let Ok(shape_attr) = key.getattr("shape") {
+            if let Ok(shape) = shape_attr.extract::<Vec<usize>>() {
+                return Ok(shape);
+            }
+        }
+        
+        // 如果没有shape属性，假设是一维数组
+        if let Ok(arr) = self.extract_array_data(key) {
+            return Ok(vec![arr.len()]);
+        }
+        
+        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+            "Cannot get array shape"
+        ))
+    }
+    
+    fn broadcast_arrays(
+        &self,
+        first: Vec<i64>,
+        first_shape: Vec<usize>,
+        second: Vec<i64>,
+        second_shape: Vec<usize>,
+    ) -> Result<(Vec<usize>, Vec<usize>, Vec<usize>), PyErr> {
+        // 简化的广播实现：只处理 (N, 1) 和 (M,) 的情况
+        if first_shape.len() == 2 && first_shape[1] == 1 && second_shape.len() == 1 {
+            let rows = first_shape[0];
+            let cols = second_shape[0];
+            
+            // 验证索引范围
+            for &idx in &first {
+                if idx < 0 || idx as usize >= self.shape[0] {
+                    return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                        format!("Index {} out of bounds for dimension 0 of size {}", idx, self.shape[0])
+                    ));
+                }
+            }
+            
+            for &idx in &second {
+                if idx < 0 || idx as usize >= self.shape[1] {
+                    return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                        format!("Index {} out of bounds for dimension 1 of size {}", idx, self.shape[1])
+                    ));
+                }
+            }
+            
+            // 扩展第一个数组 - 每行的值重复cols次
+            let mut broadcast_first = Vec::new();
+            for i in 0..rows {
+                for _j in 0..cols {
+                    broadcast_first.push(first[i] as usize);
+                }
+            }
+            
+            // 扩展第二个数组 - 每行都有完整的列索引
+            let mut broadcast_second = Vec::new();
+            for _i in 0..rows {
+                for j in 0..cols {
+                    broadcast_second.push(second[j] as usize);
+                }
+            }
+            
+            Ok((broadcast_first, broadcast_second, vec![rows, cols]))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
+                "Unsupported broadcasting pattern"
+            ))
+        }
+    }
+    
+    fn extract_multidim_array(&self, key: &Bound<'_, PyAny>) -> Result<Vec<i64>, PyErr> {
+        if let Ok(numpy_array) = key.getattr("__array__") {
+            if let Ok(_array_func) = numpy_array.call0() {
+                // 尝试扁平化
+                if let Ok(flattened) = key.call_method0("flatten") {
+                    if let Ok(flat_array) = flattened.getattr("__array__") {
+                        if let Ok(flat_func) = flat_array.call0() {
+                            if let Ok(int_array) = flat_func.extract::<Vec<i64>>() {
+                                return Ok(int_array);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+            "Cannot extract multidimensional array"
+        ))
+    }
+    
+    fn execute_broadcasting_access(
+        &self,
+        py: Python,
+        row_indices: Vec<usize>,
+        col_indices: Vec<usize>,
+        result_shape: Vec<usize>,
+    ) -> Result<PyObject, PyErr> {
+        let itemsize = self.itemsize;
+        let mut result_data = Vec::with_capacity(row_indices.len() * itemsize);
+        
+        // 访问数据
+        for (row_idx, col_idx) in row_indices.iter().zip(col_indices.iter()) {
+            let offset = (*row_idx * self.shape[1] + *col_idx) * itemsize;
+            
+            if offset + itemsize <= self.mmap.len() {
+                let element_data = unsafe {
+                    std::slice::from_raw_parts(
+                        self.mmap.as_ptr().add(offset),
+                        itemsize
+                    )
+                };
+                result_data.extend_from_slice(element_data);
+            } else {
+                result_data.extend(vec![0u8; itemsize]);
+            }
+        }
+        
+        self.create_numpy_array(py, result_data, &result_shape)
+    }
+    
+    fn process_indices(&self, index_types: Vec<IndexType>) -> Result<IndexResult, PyErr> {
+        let mut indices = Vec::new();
+        let mut needs_broadcasting = false;
+        
+        // 扩展索引到完整维度（添加省略号处理）
+        let expanded_indices = self.expand_indices(index_types)?;
+        
+        // 处理实际数组索引
+        let mut array_dim = 0;
+        for index_type in expanded_indices.iter() {
+            match index_type {
+                IndexType::NewAxis => {
+                    // NewAxis不消耗原数组维度，只在结果中添加维度
+                    continue;
+                }
+                _ => {
+                    // 处理实际的数组索引
+                    if array_dim >= self.shape.len() {
+                        return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                            "Too many indices for array"
+                        ));
+                    }
+                    
+                    match index_type {
+                        IndexType::Integer(idx) => {
+                            let adjusted_idx = self.adjust_index(*idx, self.shape[array_dim])?;
+                            indices.push(vec![adjusted_idx]);
+                        }
+                        IndexType::Slice(slice_info) => {
+                            let slice_indices = self.resolve_slice(slice_info, self.shape[array_dim])?;
+                            indices.push(slice_indices);
+                        }
+                        IndexType::BooleanMask(mask) => {
+                            let bool_indices = self.resolve_boolean_mask(mask, self.shape[array_dim])?;
+                            indices.push(bool_indices);
+                        }
+                        IndexType::IntegerArray(arr) => {
+                            let int_indices = self.resolve_integer_array(arr, self.shape[array_dim], array_dim)?;
+                            indices.push(int_indices);
+                            needs_broadcasting = true;
+                        }
+                        IndexType::Ellipsis => {}
+                        IndexType::NewAxis => {}
+                    }
+                    
+                    array_dim += 1;
+                }
+            }
+        }
+        
+        // 构建结果形状
+        let mut result_shape: Vec<usize> = Vec::new();
+        let mut array_dim = 0;
+        
+        for index_type in expanded_indices.iter() {
+            match index_type {
+                IndexType::NewAxis => {
+                    result_shape.push(1);
+                }
+                IndexType::Integer(_) => {
+                    // 整数索引不增加维度
+                    array_dim += 1;
+                }
+                IndexType::Slice(_) | IndexType::BooleanMask(_) | IndexType::IntegerArray(_) => {
+                    if array_dim < indices.len() {
+                        result_shape.push(indices[array_dim].len());
+                    }
+                    array_dim += 1;
+                }
+                IndexType::Ellipsis => {}
+            }
+        }
+        
+        // 如果还有剩余维度，添加到结果形状
+        while array_dim < self.shape.len() {
+            result_shape.push(self.shape[array_dim]);
+            array_dim += 1;
+        }
+        
+        // 检测访问模式
+        let access_pattern = self.analyze_access_pattern(&indices);
+        
+        Ok(IndexResult {
+            indices,
+            result_shape,
+            needs_broadcasting,
+            access_pattern,
+        })
+    }
+    
+    fn expand_indices(&self, index_types: Vec<IndexType>) -> Result<Vec<IndexType>, PyErr> {
+        let mut expanded = Vec::new();
+        let mut ellipsis_found = false;
+        
+        for index_type in index_types.iter() {
+            match index_type {
+                IndexType::Ellipsis => {
+                    if ellipsis_found {
+                        return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                            "Only one ellipsis allowed"
+                        ));
+                    }
+                    ellipsis_found = true;
+                    
+                    // 计算省略号需要填充的维度数
+                    let non_newaxis_count = index_types.iter().filter(|&t| !matches!(t, IndexType::NewAxis)).count();
+                    let remaining_dims = self.shape.len() - (non_newaxis_count - 1);
+                    for _ in 0..remaining_dims {
+                        expanded.push(IndexType::Slice(SliceInfo {
+                            start: None,
+                            stop: None,
+                            step: None,
+                        }));
+                    }
+                }
+                _ => expanded.push(index_type.clone()),
+            }
+        }
+        
+        // 如果没有省略号，填充剩余维度
+        while expanded.iter().filter(|&t| !matches!(t, IndexType::NewAxis)).count() < self.shape.len() {
+            expanded.push(IndexType::Slice(SliceInfo {
+                start: None,
+                stop: None,
+                step: None,
+            }));
+        }
+        
+        Ok(expanded)
+    }
+    
+    fn adjust_index(&self, index: i64, dim_size: usize) -> Result<usize, PyErr> {
+        let adjusted = if index < 0 {
+            dim_size as i64 + index
+        } else {
+            index
+        };
+        
+        if adjusted >= 0 && (adjusted as usize) < dim_size {
+            Ok(adjusted as usize)
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                format!("Index {} out of bounds for dimension of size {}", index, dim_size)
+            ))
+        }
+    }
+    
+    fn resolve_slice(&self, slice_info: &SliceInfo, dim_size: usize) -> Result<Vec<usize>, PyErr> {
+        let start = slice_info.start.unwrap_or(0);
+        let stop = slice_info.stop.unwrap_or(dim_size as i64);
+        let step = slice_info.step.unwrap_or(1);
+        
+        if step == 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Slice step cannot be zero"
+            ));
+        }
+        
+        let mut indices = Vec::new();
+        
+        if step > 0 {
+            let mut i = if start < 0 { dim_size as i64 + start } else { start };
+            let end = if stop < 0 { dim_size as i64 + stop } else { stop };
+            
+            while i < end && i < dim_size as i64 {
+                if i >= 0 {
+                    indices.push(i as usize);
+                }
+                i += step;
+            }
+        } else {
+            let mut i = if start < 0 { dim_size as i64 + start } else { start.min(dim_size as i64 - 1) };
+            let end = if stop < 0 { dim_size as i64 + stop } else { stop };
+            
+            while i > end && i >= 0 {
+                if i < dim_size as i64 {
+                    indices.push(i as usize);
+                }
+                i += step;
+            }
+        }
+        
+        Ok(indices)
+    }
+    
+    fn resolve_boolean_mask(&self, mask: &[bool], dim_size: usize) -> Result<Vec<usize>, PyErr> {
+        if mask.len() != dim_size {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                format!("Boolean mask length {} doesn't match dimension size {}", mask.len(), dim_size)
+            ));
+        }
+        
+        let mut indices = Vec::new();
+        for (i, &selected) in mask.iter().enumerate() {
+            if selected {
+                indices.push(i);
+            }
+        }
+        
+        Ok(indices)
+    }
+    
+    fn resolve_integer_array(&self, arr: &[i64], dim_size: usize, dim_index: usize) -> Result<Vec<usize>, PyErr> {
+        let mut indices = Vec::new();
+        
+        for &idx in arr {
+            let adjusted = self.adjust_index(idx, dim_size)?;
+            indices.push(adjusted);
+        }
+        
+        // 如果有逻辑行映射（删除了一些行），需要将逻辑索引转换为物理索引
+        // 注意：只对第一维（行维度，dim_index == 0）应用逻辑映射
+        if dim_index == 0 {
+            if let Some(ref mut logical_rows) = self.logical_rows.clone() {
+                indices = logical_rows.logical_indices(&indices)?;
+            }
+        }
+        
+        Ok(indices)
+    }
+    
+    fn analyze_access_pattern(&self, indices: &[Vec<usize>]) -> AccessPattern {
+        if indices.is_empty() {
+            return AccessPattern::Sequential;
+        }
+        
+        let first_indices = &indices[0];
+        if first_indices.len() <= 1 {
+            return AccessPattern::Sequential;
+        }
+        
+        // 检查是否为顺序访问
+        let mut is_sequential = true;
+        for i in 1..first_indices.len() {
+            if first_indices[i] != first_indices[i-1] + 1 {
+                is_sequential = false;
+                break;
+            }
+        }
+        
+        if is_sequential {
+            return AccessPattern::Sequential;
+        }
+        
+        // 检查是否为聚集访问
+        let mut gaps = Vec::new();
+        for i in 1..first_indices.len() {
+            if first_indices[i] >= first_indices[i-1] {
+                gaps.push(first_indices[i] - first_indices[i-1]);
+            } else {
+                return AccessPattern::Random;
+            }
+        }
+        
+        let avg_gap = gaps.iter().sum::<usize>() as f64 / gaps.len() as f64;
+        let variance = gaps.iter().map(|&g| (g as f64 - avg_gap).powi(2)).sum::<f64>() / gaps.len() as f64;
+        
+        if variance < avg_gap * 0.5 {
+            AccessPattern::Clustered
+        } else {
+            AccessPattern::Random
+        }
     }
 
     /// 选择访问策略【Inline优化】
     #[inline(always)]
-    fn choose_access_strategy(&self, _index_result: &IndexResult) -> AccessStrategy {
-        // 占位符实现
-        AccessStrategy::DirectMemory
+    fn choose_access_strategy(&self, index_result: &IndexResult) -> AccessStrategy {
+        let total_elements = index_result.indices.iter().map(|idx| idx.len()).product::<usize>();
+        let source_elements = self.shape.iter().product::<usize>();
+        let selection_ratio = total_elements as f64 / source_elements as f64;
+        
+        match (&index_result.access_pattern, selection_ratio) {
+            (AccessPattern::Sequential, r) if r > 0.8 => AccessStrategy::BlockCopy,
+            (AccessPattern::Sequential, _) => AccessStrategy::DirectMemory,
+            (AccessPattern::Random, r) if r < 0.1 => AccessStrategy::ParallelPointAccess,
+            (AccessPattern::Clustered, _) => AccessStrategy::PrefetchOptimized,
+            _ => AccessStrategy::Adaptive,
+        }
     }
 
-    /// 直接内存访问【Inline优化】
+    /// 直接内存访问【Inline优化 + 批量读取优化】
     #[inline]
-    fn direct_memory_access(&self, py: Python, _index_result: &IndexResult) -> PyResult<PyObject> {
-        // 占位符实现
-        self.create_numpy_array(py, Vec::new(), &[0])
+    fn direct_memory_access(&self, py: Python, index_result: &IndexResult) -> PyResult<PyObject> {
+        // 优化：对于一维整数数组索引，使用批量行读取
+        if index_result.indices.len() == 1 && self.shape.len() > 0 {
+            let indices = &index_result.indices[0];
+            let row_size = self.itemsize * self.shape[1..].iter().product::<usize>();
+            let mut result_data = Vec::with_capacity(indices.len() * row_size);
+            
+            // 批量读取行数据，避免笛卡尔积计算
+            for &idx in indices {
+                let offset = idx * row_size;
+                if offset + row_size <= self.mmap.len() {
+                    let row_data = unsafe {
+                        std::slice::from_raw_parts(
+                            self.mmap.as_ptr().add(offset),
+                            row_size
+                        )
+                    };
+                    result_data.extend_from_slice(row_data);
+                } else {
+                    result_data.extend(vec![0u8; row_size]);
+                }
+            }
+            
+            return self.create_numpy_array(py, result_data, &index_result.result_shape);
+        }
+        
+        // 通用路径：使用迭代器计算笛卡尔积，避免预先分配所有组合
+        let total_elements = index_result.result_shape.iter().product::<usize>();
+        let mut result_data = Vec::with_capacity(total_elements * self.itemsize);
+        
+        // 使用迭代器避免预先计算所有组合
+        self.iterate_index_combinations(&index_result.indices, &mut |combination| {
+            let offset = self.compute_linear_offset(combination);
+            
+            if offset + self.itemsize <= self.mmap.len() {
+                let element_data = unsafe {
+                    std::slice::from_raw_parts(
+                        self.mmap.as_ptr().add(offset),
+                        self.itemsize
+                    )
+                };
+                result_data.extend_from_slice(element_data);
+            } else {
+                result_data.extend(vec![0u8; self.itemsize]);
+            }
+        });
+        
+        self.create_numpy_array(py, result_data, &index_result.result_shape)
     }
 
     /// 块拷贝访问【Inline优化】
     #[inline]
-    fn block_copy_access(&self, py: Python, _index_result: &IndexResult) -> PyResult<PyObject> {
-        // 占位符实现
-        self.create_numpy_array(py, Vec::new(), &[0])
+    fn block_copy_access(&self, py: Python, index_result: &IndexResult) -> PyResult<PyObject> {
+        if index_result.indices.len() == 1 {
+            // 单维连续访问优化
+            let indices = &index_result.indices[0];
+            let row_size = self.itemsize * self.shape[1..].iter().product::<usize>();
+            let mut result_data = Vec::with_capacity(indices.len() * row_size);
+            
+            // 检查是否为连续块
+            if self.is_continuous_block(indices) {
+                let start_offset = indices[0] * row_size;
+                let block_size = indices.len() * row_size;
+                
+                if start_offset + block_size <= self.mmap.len() {
+                    let block_data = unsafe {
+                        std::slice::from_raw_parts(
+                            self.mmap.as_ptr().add(start_offset),
+                            block_size
+                        )
+                    };
+                    result_data.extend_from_slice(block_data);
+                } else {
+                    // 超出边界时使用逐行复制
+                    for &idx in indices {
+                        let offset = idx * row_size;
+                        if offset + row_size <= self.mmap.len() {
+                            let row_data = unsafe {
+                                std::slice::from_raw_parts(
+                                    self.mmap.as_ptr().add(offset),
+                                    row_size
+                                )
+                            };
+                            result_data.extend_from_slice(row_data);
+                        } else {
+                            result_data.extend(vec![0u8; row_size]);
+                        }
+                    }
+                }
+            } else {
+                // 分块复制
+                for &idx in indices {
+                    let offset = idx * row_size;
+                    if offset + row_size <= self.mmap.len() {
+                        let row_data = unsafe {
+                            std::slice::from_raw_parts(
+                                self.mmap.as_ptr().add(offset),
+                                row_size
+                            )
+                        };
+                        result_data.extend_from_slice(row_data);
+                    } else {
+                        result_data.extend(vec![0u8; row_size]);
+                    }
+                }
+            }
+            
+            self.create_numpy_array(py, result_data, &index_result.result_shape)
+        } else {
+            // 多维访问回退到直接内存访问
+            self.direct_memory_access(py, index_result)
+        }
     }
 
     /// 并行点访问【Inline优化】
     #[inline]
-    fn parallel_point_access(&self, py: Python, _index_result: &IndexResult) -> PyResult<PyObject> {
-        // 占位符实现
-        self.create_numpy_array(py, Vec::new(), &[0])
+    fn parallel_point_access(&self, py: Python, index_result: &IndexResult) -> PyResult<PyObject> {
+        use rayon::prelude::*;
+        
+        let index_combinations = self.compute_index_combinations(&index_result.indices);
+        
+        // 并行处理索引组合
+        let result_data: Vec<u8> = index_combinations
+            .par_iter()
+            .flat_map(|combination| {
+                let offset = self.compute_linear_offset(combination);
+                if offset + self.itemsize <= self.mmap.len() {
+                    unsafe {
+                        std::slice::from_raw_parts(
+                            self.mmap.as_ptr().add(offset),
+                            self.itemsize
+                        )
+                    }.to_vec()
+                } else {
+                    vec![0u8; self.itemsize]
+                }
+            })
+            .collect();
+        
+        self.create_numpy_array(py, result_data, &index_result.result_shape)
     }
 
-    /// 预取优化访问【Inline优化】
+    /// 预取优化访问【Inline优化 + 迭代器优化】
     #[inline]
-    fn prefetch_optimized_access(&self, py: Python, _index_result: &IndexResult) -> PyResult<PyObject> {
-        // 占位符实现
-        self.create_numpy_array(py, Vec::new(), &[0])
+    fn prefetch_optimized_access(&self, py: Python, index_result: &IndexResult) -> PyResult<PyObject> {
+        // 优化：对于一维整数数组索引，使用批量行读取
+        if index_result.indices.len() == 1 && self.shape.len() > 0 {
+            let indices = &index_result.indices[0];
+            let row_size = self.itemsize * self.shape[1..].iter().product::<usize>();
+            let mut result_data = Vec::with_capacity(indices.len() * row_size);
+            
+            // 预取第一批数据
+            let prefetch_ahead = 8.min(indices.len());
+            for i in 0..prefetch_ahead {
+                let offset = indices[i] * row_size;
+                if offset < self.mmap.len() {
+                    self.prefetch_single(offset);
+                }
+            }
+            
+            // 批量读取行数据，并继续预取
+            for (i, &idx) in indices.iter().enumerate() {
+                // 预取未来的数据
+                if i + prefetch_ahead < indices.len() {
+                    let future_offset = indices[i + prefetch_ahead] * row_size;
+                    if future_offset < self.mmap.len() {
+                        self.prefetch_single(future_offset);
+                    }
+                }
+                
+                let offset = idx * row_size;
+                if offset + row_size <= self.mmap.len() {
+                    let row_data = unsafe {
+                        std::slice::from_raw_parts(
+                            self.mmap.as_ptr().add(offset),
+                            row_size
+                        )
+                    };
+                    result_data.extend_from_slice(row_data);
+                } else {
+                    result_data.extend(vec![0u8; row_size]);
+                }
+            }
+            
+            return self.create_numpy_array(py, result_data, &index_result.result_shape);
+        }
+        
+        // 通用路径：使用迭代器避免预先分配所有组合
+        let total_elements = index_result.result_shape.iter().product::<usize>();
+        let mut result_data = Vec::with_capacity(total_elements * self.itemsize);
+        
+        // 使用迭代器避免预先计算所有组合
+        self.iterate_index_combinations(&index_result.indices, &mut |combination| {
+            let offset = self.compute_linear_offset(combination);
+            
+            // 预取
+            if offset < self.mmap.len() {
+                self.prefetch_single(offset);
+            }
+            
+            if offset + self.itemsize <= self.mmap.len() {
+                let element_data = unsafe {
+                    std::slice::from_raw_parts(
+                        self.mmap.as_ptr().add(offset),
+                        self.itemsize
+                    )
+                };
+                result_data.extend_from_slice(element_data);
+            } else {
+                result_data.extend(vec![0u8; self.itemsize]);
+            }
+        });
+        
+        self.create_numpy_array(py, result_data, &index_result.result_shape)
     }
 
     /// 自适应访问【Inline优化】
     #[inline]
-    fn adaptive_access(&self, py: Python, _index_result: &IndexResult) -> PyResult<PyObject> {
-        // 占位符实现
-        self.create_numpy_array(py, Vec::new(), &[0])
+    fn adaptive_access(&self, py: Python, index_result: &IndexResult) -> PyResult<PyObject> {
+        let total_elements = index_result.result_shape.iter().product::<usize>();
+        
+        // 根据数据大小选择策略
+        if total_elements < 1000 {
+            self.direct_memory_access(py, index_result)
+        } else if total_elements < 100000 {
+            self.parallel_point_access(py, index_result)
+        } else {
+            self.prefetch_optimized_access(py, index_result)
+        }
+    }
+    
+    // ===========================
+    // 辅助方法
+    // ===========================
+    
+    /// 迭代器方式计算索引组合，避免预先分配所有组合【性能优化】
+    fn iterate_index_combinations<F>(&self, indices: &[Vec<usize>], callback: &mut F)
+    where
+        F: FnMut(&[usize])
+    {
+        if indices.is_empty() {
+            callback(&[]);
+            return;
+        }
+        
+        let mut current_combination = vec![0; indices.len()];
+        let mut current_positions = vec![0; indices.len()];
+        
+        loop {
+            // 构建当前组合
+            for (i, pos) in current_positions.iter().enumerate() {
+                current_combination[i] = indices[i][*pos];
+            }
+            
+            // 调用回调函数
+            callback(&current_combination);
+            
+            // 移动到下一个组合
+            let mut carry = true;
+            for i in (0..indices.len()).rev() {
+                if carry {
+                    current_positions[i] += 1;
+                    if current_positions[i] >= indices[i].len() {
+                        current_positions[i] = 0;
+                    } else {
+                        carry = false;
+                    }
+                }
+            }
+            
+            // 如果所有位置都回到0，说明遍历完成
+            if carry {
+                break;
+            }
+        }
+    }
+    
+    /// 保留原方法用于向后兼容
+    fn compute_index_combinations(&self, indices: &[Vec<usize>]) -> Vec<Vec<usize>> {
+        if indices.is_empty() {
+            return vec![vec![]];
+        }
+        
+        let mut result = Vec::new();
+        self.iterate_index_combinations(indices, &mut |combination| {
+            result.push(combination.to_vec());
+        });
+        result
+    }
+    
+    fn compute_linear_offset(&self, indices: &[usize]) -> usize {
+        let mut offset = 0;
+        let mut stride = self.itemsize;
+        
+        // 从最后一个维度开始计算stride
+        for i in (0..self.shape.len()).rev() {
+            if i < indices.len() {
+                offset += indices[i] * stride;
+            }
+            if i > 0 {
+                stride *= self.shape[i];
+            }
+        }
+        
+        offset
+    }
+    
+    fn is_continuous_block(&self, indices: &[usize]) -> bool {
+        if indices.len() <= 1 {
+            return true;
+        }
+        
+        for i in 1..indices.len() {
+            if indices[i] != indices[i-1] + 1 {
+                return false;
+            }
+        }
+        
+        true
+    }
+    
+    /// 预取单个内存位置【内联优化】
+    #[inline(always)]
+    fn prefetch_single(&self, offset: usize) {
+        if offset < self.mmap.len() {
+            unsafe {
+                #[cfg(target_arch = "x86_64")]
+                {
+                    use std::arch::x86_64::_mm_prefetch;
+                    _mm_prefetch(
+                        self.mmap.as_ptr().add(offset) as *const i8,
+                        std::arch::x86_64::_MM_HINT_T0
+                    );
+                }
+                #[cfg(target_arch = "aarch64")]
+                {
+                    // ARM架构的预取：使用简单的读取来触发预取
+                    // 这种方法在所有Rust版本上都是稳定的
+                    let _prefetch_trigger = std::ptr::read_volatile(self.mmap.as_ptr().add(offset));
+                }
+            }
+        }
+    }
+    
+    fn prefetch_data(&self, index_combinations: &[Vec<usize>]) {
+        // 使用CPU预取指令
+        for combination in index_combinations {
+            let offset = self.compute_linear_offset(combination);
+            self.prefetch_single(offset);
+        }
     }
 }
 

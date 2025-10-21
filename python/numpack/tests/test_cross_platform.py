@@ -26,8 +26,8 @@ class TestCrossPlatformConsistency:
     def test_same_backend_all_platforms(self):
         """所有平台应该使用相同的backend（Rust）"""
         info = get_backend_info()
-        assert info['backend_type'] == 'rust', \
-            f"预期Rust backend在{info['platform']}上，但得到: {info['backend_type']}"
+        # 验证后端类型
+        assert info['backend_type'] == 'rust'
     
     def test_file_format_compatibility(self, temp_dir):
         """文件格式应该跨平台兼容"""

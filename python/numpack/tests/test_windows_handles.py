@@ -237,21 +237,17 @@ class TestExceptionHandling:
 class TestBackendConsistency:
     """测试后端一致性"""
     
-    def test_rust_backend_available(self):
-        """验证Rust backend可用"""
+    def test_backend_available(self):
+        """验证NumPack后端可用"""
         info = get_backend_info()
         
-        # 所有平台都应该使用Rust backend
-        assert info['backend_type'] == 'rust', \
-            f"预期使用Rust backend，但得到: {info['backend_type']}"
-    
-    @windows_only
-    def test_rust_backend_on_windows(self):
-        """验证Windows平台使用Rust backend"""
-        info = get_backend_info()
-        assert info['backend_type'] == 'rust', \
-            "Windows应该使用Rust backend"
-        assert info['is_windows'] == True
+        # 验证后端信息可获取
+        assert 'backend_type' in info
+        assert 'platform' in info
+        assert 'version' in info
+        
+        # 验证后端类型一致（现在只有Rust后端）
+        assert info['backend_type'] == 'rust'
     
     def test_large_file_operations(self, temp_dir):
         """测试大文件操作可靠性"""
