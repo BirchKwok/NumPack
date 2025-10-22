@@ -113,16 +113,20 @@ class TestWindowsHandleManagement:
         npk_path = temp_dir / "test.npk"
         
         npk = NumPack(str(npk_path), warn_no_context=False)
+        npk.open()  # 需要先打开
         npk.save({'data': np.arange(100)})
         
         # 显式close
         npk.close()
         
-        # Windows需要短暂延迟
-        time.sleep(0.15)
+        # 应该能够立即删除；如果失败则重试
+        try:
+            shutil.rmtree(npk_path)
+        except PermissionError:
+            # Windows上极少数情况可能需要短暂延迟
+            time.sleep(0.1)
+            shutil.rmtree(npk_path)
         
-        # 应该能够删除
-        shutil.rmtree(npk_path)
         assert not npk_path.exists()
     
     def test_lazy_array_context_manager(self, temp_dir):
