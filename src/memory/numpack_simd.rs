@@ -394,11 +394,11 @@ pub enum SIMDError {
 impl std::fmt::Display for SIMDError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            SIMDError::UnsupportedOperation => write!(f, "不支持的SIMD操作"),
-            SIMDError::SizeMismatch => write!(f, "数据大小不匹配"),
-            SIMDError::AlignmentError => write!(f, "内存对齐错误"),
-            SIMDError::IndexOutOfBounds => write!(f, "索引越界"),
-            SIMDError::ConversionError => write!(f, "数据类型转换错误"),
+            SIMDError::UnsupportedOperation => write!(f, "Unsupported SIMD operation"),
+            SIMDError::SizeMismatch => write!(f, "Data size mismatch"),
+            SIMDError::AlignmentError => write!(f, "Memory alignment error"),
+            SIMDError::IndexOutOfBounds => write!(f, "Index out of bounds"),
+            SIMDError::ConversionError => write!(f, "Data type conversion error"),
         }
     }
 }

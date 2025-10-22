@@ -37,19 +37,19 @@ def main():
         with npk.NumPack(test_dir) as pack:
             # 示例 1: 乘法
             lazy_array = pack.load('array', lazy=True)
-            print(f"原始数据:\n{np.array(lazy_array)}\n")
+            print(f"Original data:\n{np.array(lazy_array)}\n")
             
             # 使用原地乘法操作符
             result = lazy_array
             result *= 2.5
-            print(f"result *= 2.5 后:\n{result}")
-            print(f"结果类型: {type(result)}\n")
+            print(f"After result *= 2.5:\n{result}")
+            print(f"Result type: {type(result)}\n")
             
             # 示例 2: 加法
             lazy_array = pack.load('array', lazy=True)
             result = lazy_array
             result += 100
-            print(f"result += 100 后:\n{result}\n")
+            print(f"After result += 100:\n{result}\n")
             
             # 示例 3: 连续操作
             lazy_array = pack.load('array', lazy=True)
@@ -57,7 +57,7 @@ def main():
             result *= 2
             result += 10
             result /= 3
-            print(f"连续操作 (×2, +10, ÷3) 后:\n{result}\n")
+            print(f"After chain operations (×2, +10, ÷3):\n{result}\n")
             
     finally:
         # 清理

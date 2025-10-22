@@ -192,7 +192,7 @@ impl SIMDProcessor {
             if src_offset + item_size > src.len() || dst_offset + item_size > dst.len() {
                 match self.error_handler {
                     ErrorHandlingStrategy::Fallback => continue,
-                    ErrorHandlingStrategy::Panic => panic!("Windows安全SIMD: 索引越界"),
+                    ErrorHandlingStrategy::Panic => panic!("Windows safe SIMD: Index out of bounds"),
                     ErrorHandlingStrategy::Ignore => { dst_offset += item_size; continue; }
                 }
             }
@@ -221,7 +221,7 @@ impl SIMDProcessor {
                 if self.error_handler == ErrorHandlingStrategy::Fallback {
                     continue;
                 } else if self.error_handler == ErrorHandlingStrategy::Panic {
-                    panic!("SIMD处理器: 索引越界");
+                    panic!("SIMD processor: Index out of bounds");
                 }
                 dst_offset += item_size;
                 continue;

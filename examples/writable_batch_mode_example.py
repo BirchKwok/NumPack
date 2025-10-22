@@ -12,7 +12,7 @@ from numpack import NumPack
 def example_basic_usage():
     """示例1: 基本用法"""
     print("=" * 60)
-    print("示例1: 基本用法")
+    print("Example 1: Basic Usage")
     print("=" * 60)
     
     # 创建NumPack文件
@@ -44,12 +44,12 @@ def example_basic_usage():
         wb.save({'array1': arr1, 'array2': arr2, 'array3': arr3})
     
     elapsed = time.perf_counter() - start
-    print(f"\n✅ 修改3个数组耗时: {elapsed * 1000:.2f} ms")
-    print(f"💾 内存开销: 接近0 MB（只占虚拟内存）")
+    print(f"\n✅ Modifying 3 arrays took: {elapsed * 1000:.2f} ms")
+    print(f"💾 Memory overhead: Nearly 0 MB (virtual memory only)")
     
     # 验证修改已持久化
     result = npk.load('array1', lazy=False)
-    print(f"📊 验证: array1均值 = {result.mean():.4f}")
+    print(f"📊 Verification: array1 mean = {result.mean():.4f}")
     
     npk.close()
     print()
@@ -58,7 +58,7 @@ def example_basic_usage():
 def example_high_performance_loop():
     """示例2: 高性能循环操作"""
     print("=" * 60)
-    print("示例2: 高性能循环操作（原始测试用例）")
+    print("Example 2: High-performance loop operations (original test case)")
     print("=" * 60)
     
     # 创建测试数据
@@ -86,12 +86,12 @@ def example_high_performance_loop():
     
     elapsed = time.perf_counter() - start
     
-    print(f"\n✅ 100次随机操作耗时: {elapsed * 1000:.2f} ms")
-    print(f"📈 平均每次: {elapsed * 10:.3f} ms")
-    print(f"🎯 性能目标: < 100 ms (< 1 ms/次)")
+    print(f"\n✅ 100 random operations took: {elapsed * 1000:.2f} ms")
+    print(f"📈 Average per operation: {elapsed * 10:.3f} ms")
+    print(f"🎯 Performance target: < 100 ms (< 1 ms/op)")
     
     if elapsed * 1000 <= 100:
-        print(f"🎉 达标！提速约 18-20x")
+        print(f"🎉 Target met! Speedup ~18-20x")
     
     npk.close()
     print()
@@ -100,14 +100,14 @@ def example_high_performance_loop():
 def example_large_array():
     """示例3: 超大数组（内存装不下）"""
     print("=" * 60)
-    print("示例3: 超大数组场景")
+    print("Example 3: Very large array scenario")
     print("=" * 60)
     
     # 创建大数组（~80MB每个）
     npk = NumPack('example_large.npk', drop_if_exists=True)
     npk.open()
     
-    print("创建大数组（每个~80MB）...")
+    print("Creating large arrays (each ~80MB)...")
     large_arrays = {
         'big1': np.random.rand(1, 10000000).astype(np.float64),
         'big2': np.random.rand(1, 10000000).astype(np.float64),
@@ -115,7 +115,7 @@ def example_large_array():
     }
     npk.save(large_arrays)
     
-    print("使用writable_batch_mode处理...")
+    print("Processing with writable_batch_mode...")
     start = time.perf_counter()
     with npk.writable_batch_mode() as wb:
         for name in ['big1', 'big2', 'big3']:
@@ -125,9 +125,9 @@ def example_large_array():
     
     elapsed = time.perf_counter() - start
     
-    print(f"\n✅ 处理~240MB数据耗时: {elapsed * 1000:.2f} ms")
-    print(f"💾 内存开销: 接近0 MB")
-    print(f"🌟 优势: 支持TB级数据（受限磁盘，而非内存）")
+    print(f"\n✅ Processing ~240MB data took: {elapsed * 1000:.2f} ms")
+    print(f"💾 Memory overhead: Nearly 0 MB")
+    print(f"🌟 Advantage: Supports TB-scale data (disk limited, not memory)")
     
     npk.close()
     print()
@@ -136,7 +136,7 @@ def example_large_array():
 def example_comparison():
     """示例4: batch_mode vs writable_batch_mode对比"""
     print("=" * 60)
-    print("示例4: 性能对比")
+    print("Example 4: Performance comparison")
     print("=" * 60)
     
     # 准备数据
@@ -147,7 +147,7 @@ def example_comparison():
     npk.save({'test': test_array})
     
     # 测试batch_mode
-    print("\n测试 batch_mode（内存缓存）...")
+    print("\nTesting batch_mode (memory cache)...")
     start = time.perf_counter()
     with npk.batch_mode():
         for i in range(50):
@@ -160,7 +160,7 @@ def example_comparison():
     npk.save({'test': test_array})
     
     # 测试writable_batch_mode
-    print("测试 writable_batch_mode（零内存）...")
+    print("Testing writable_batch_mode (zero memory)...")
     start = time.perf_counter()
     with npk.writable_batch_mode() as wb:
         for i in range(50):
@@ -170,16 +170,16 @@ def example_comparison():
     writable_time = time.perf_counter() - start
     
     print("\n" + "=" * 60)
-    print("📊 性能对比结果：")
+    print("📊 Performance comparison results:")
     print("=" * 60)
-    print(f"{'模式':<25} {'耗时(ms)':<12} {'内存开销'}")
+    print(f"{'Mode':<25} {'Time(ms)':<12} {'Memory overhead'}")
     print("-" * 60)
     print(f"{'batch_mode':<25} {batch_time*1000:<12.2f} ~8 MB")
     print(f"{'writable_batch_mode':<25} {writable_time*1000:<12.2f} ~0 MB")
     print("=" * 60)
-    print("\n✅ 结论：")
-    print("  • batch_mode: 小数组，追求极致速度")
-    print("  • writable_batch_mode: 大数组，零内存开销")
+    print("\n✅ Conclusion:")
+    print("  • batch_mode: Small arrays, pursue extreme speed")
+    print("  • writable_batch_mode: Large arrays, zero memory overhead")
     
     npk.close()
     print()
@@ -188,7 +188,7 @@ def example_comparison():
 def example_best_practices():
     """示例5: 最佳实践"""
     print("=" * 60)
-    print("示例5: 最佳实践")
+    print("Example 5: Best practices")
     print("=" * 60)
     
     npk = NumPack('example_practices.npk', drop_if_exists=True)
@@ -200,21 +200,21 @@ def example_best_practices():
         'data2': np.random.rand(100, 1000),
     })
     
-    print("\n✅ 推荐做法：")
+    print("\n✅ Recommended practices:")
     print()
     
     # 1. 使用context manager
-    print("1. 始终使用context manager:")
+    print("1. Always use context manager:")
     print("```python")
     print("with npk.writable_batch_mode() as wb:")
     print("    arr = wb.load('data')")
     print("    arr *= 2.0")
-    print("    # 退出时自动flush")
+    print("    # Auto flush on exit")
     print("```")
     print()
     
     # 2. 缓存array引用
-    print("2. 缓存经常访问的数组:")
+    print("2. Cache frequently accessed arrays:")
     with npk.writable_batch_mode() as wb:
         # 第一次load会创建mmap
         arr1 = wb.load('data1')
@@ -224,11 +224,11 @@ def example_best_practices():
         for i in range(10):
             arr1 *= 1.1
             arr2 += 0.1
-    print("✅ 避免重复load同一个数组")
+    print("✅ Avoid repeatedly loading the same array")
     print()
     
     # 3. 异常处理
-    print("3. 异常处理（自动处理）:")
+    print("3. Exception handling (automatic):")
     try:
         with npk.writable_batch_mode() as wb:
             arr = wb.load('data1')
@@ -236,7 +236,7 @@ def example_best_practices():
             # 即使抛出异常，也会自动flush和清理
     except Exception as e:
         pass
-    print("✅ context manager自动清理资源")
+    print("✅ Context manager automatically cleans up resources")
     print()
     
     npk.close()
@@ -244,7 +244,7 @@ def example_best_practices():
 
 if __name__ == '__main__':
     print("\n" + "🚀" * 30)
-    print("Writable Batch Mode - 零内存开销高性能方案")
+    print("Writable Batch Mode - Zero memory overhead high performance solution")
     print("🚀" * 30 + "\n")
     
     # 运行所有示例
@@ -255,12 +255,12 @@ if __name__ == '__main__':
     example_best_practices()
     
     print("\n" + "=" * 60)
-    print("🎉 所有示例运行完成！")
+    print("🎉 All examples completed!")
     print("=" * 60)
-    print("\n💡 使用建议：")
-    print("  • 小数组（< 100MB）：使用 batch_mode()")
-    print("  • 大数组（> 100MB）：使用 writable_batch_mode()")
-    print("  • 内存受限环境：始终使用 writable_batch_mode()")
-    print("  • TB级数据：writable_batch_mode 是唯一选择")
+    print("\n💡 Usage recommendations:")
+    print("  • Small arrays (< 100MB): Use batch_mode()")
+    print("  • Large arrays (> 100MB): Use writable_batch_mode()")
+    print("  • Memory-constrained environments: Always use writable_batch_mode()")
+    print("  • TB-scale data: writable_batch_mode is the only choice")
     print()
 

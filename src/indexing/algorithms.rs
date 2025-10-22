@@ -553,11 +553,11 @@ pub enum IndexError {
 impl std::fmt::Display for IndexError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            IndexError::DimensionMismatch => write!(f, "索引维度不匹配"),
-            IndexError::IndexOutOfBounds => write!(f, "索引超出边界"),
-            IndexError::InvalidSlice => write!(f, "无效的切片"),
-            IndexError::MemoryError => write!(f, "内存错误"),
-            IndexError::SIMDNotSupported => write!(f, "不支持SIMD指令"),
+            IndexError::DimensionMismatch => write!(f, "Index dimension mismatch"),
+            IndexError::IndexOutOfBounds => write!(f, "Index out of bounds"),
+            IndexError::InvalidSlice => write!(f, "Invalid slice"),
+            IndexError::MemoryError => write!(f, "Memory error"),
+            IndexError::SIMDNotSupported => write!(f, "SIMD not supported"),
         }
     }
 }

@@ -81,7 +81,7 @@ impl BatchDataCollector {
         let shape_ixdyn = IxDyn(&self.shape);
         let array = ArrayD::from_shape_vec(shape_ixdyn, self.data)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                format!("创建数组失败: {}", e)
+                format!("Failed to create array: {}", e)
             ))?;
         
         // 单次FFI调用转换为PyArray
@@ -133,7 +133,7 @@ impl ZeroCopyArrayBuilder {
         // 安全检查
         if offset + total_size > self.mmap.len() {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
-                format!("偏移量超出mmap范围: offset={}, size={}, mmap_len={}", 
+                format!("Offset exceeds mmap range: offset={}, size={}, mmap_len={}", 
                     offset, total_size, self.mmap.len())
             ));
         }
@@ -148,7 +148,7 @@ impl ZeroCopyArrayBuilder {
         let shape_ixdyn = IxDyn(shape);
         let array_view = ArrayViewD::from_shape(shape_ixdyn, data_slice)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                format!("创建零拷贝视图失败: {}", e)
+                format!("Failed to create zero-copy view: {}", e)
             ))?;
         
         // 转换为PyArray
@@ -209,7 +209,7 @@ impl BatchIndexOptimizer {
             // 边界检查
             if offset + row_size > mmap.len() {
                 return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
-                    format!("索引超出范围: idx={}, offset={}, row_size={}, mmap_len={}", 
+                    format!("Index out of range: idx={}, offset={}, row_size={}, mmap_len={}", 
                         idx, offset, row_size, mmap.len())
                 ));
             }
@@ -253,7 +253,7 @@ impl BatchIndexOptimizer {
             
             if offset + itemsize > mmap.len() {
                 return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
-                    format!("索引超出范围: idx={}", idx)
+                    format!("Index out of range: idx={}", idx)
                 ));
             }
             

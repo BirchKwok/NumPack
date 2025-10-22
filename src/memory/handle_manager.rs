@@ -116,14 +116,14 @@ impl HandleManager {
         // 在handles映射中注册
         {
             let mut handles = self.handles.write()
-                .map_err(|e| format!("获取写锁失败: {}", e))?;
+                .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
             handles.insert(handle_id.clone(), info);
         }
         
         // 如果提供了路径，在path-to-handles映射中注册
         if let Some(ref path) = path {
             let mut path_map = self.path_to_handles.write()
-                .map_err(|e| format!("获取写锁失败: {}", e))?;
+                .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
             path_map.entry(path.clone())
                 .or_insert_with(Vec::new)
                 .push(handle_id);
@@ -135,13 +135,13 @@ impl HandleManager {
     /// 通过ID清理特定句柄
     pub fn cleanup_handle(&self, handle_id: &str) -> Result<bool, String> {
         let config = self.config.read()
-            .map_err(|e| format!("读取配置失败: {}", e))?
+            .map_err(|e| format!("Failed to read config: {}", e))?
             .clone();
         
         // 从handles映射中移除
         let handle_info = {
             let mut handles = self.handles.write()
-                .map_err(|e| format!("获取写锁失败: {}", e))?;
+                .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
             handles.remove(handle_id)
         };
         
@@ -149,7 +149,7 @@ impl HandleManager {
             // 从path-to-handles映射中移除
             if let Some(ref path) = info.path {
                 let mut path_map = self.path_to_handles.write()
-                    .map_err(|e| format!("获取写锁失败: {}", e))?;
+                    .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
                 if let Some(handles) = path_map.get_mut(path) {
                     handles.retain(|id| id != handle_id);
                     if handles.is_empty() {
@@ -198,7 +198,7 @@ impl HandleManager {
                     std::thread::sleep(Duration::from_millis(config.cleanup_delay_ms));
                     Ok(())
                 } else {
-                    Err(format!("无法清理: mmap仍有 {} 个引用", 
+                    Err(format!("Cannot cleanup: mmap still has {} references", 
                         Arc::strong_count(&mmap)))
                 }
             }
@@ -209,7 +209,7 @@ impl HandleManager {
     pub fn cleanup_by_path(&self, path: &Path) -> Result<usize, String> {
         let handle_ids: Vec<String> = {
             let path_map = self.path_to_handles.read()
-                .map_err(|e| format!("读取路径映射失败: {}", e))?;
+                .map_err(|e| format!("Failed to read path mapping: {}", e))?;
             path_map.get(path)
                 .map(|handles| handles.clone())
                 .unwrap_or_default()
@@ -229,7 +229,7 @@ impl HandleManager {
     pub fn cleanup_all(&self) -> Result<usize, String> {
         let handle_ids: Vec<String> = {
             let handles = self.handles.read()
-                .map_err(|e| format!("读取句柄失败: {}", e))?;
+                .map_err(|e| format!("Failed to read handles: {}", e))?;
             handles.keys().cloned().collect()
         };
         
@@ -248,7 +248,7 @@ impl HandleManager {
         let cleaned = self.cleanup_all()?;
         
         let config = self.config.read()
-            .map_err(|e| format!("读取配置失败: {}", e))?;
+            .map_err(|e| format!("Failed to read config: {}", e))?;
         
         #[cfg(target_family = "windows")]
         {
@@ -275,11 +275,11 @@ impl HandleManager {
     /// 获取当前管理句柄的统计信息
     pub fn get_stats(&self) -> Result<HandleStats, String> {
         let handles = self.handles.read()
-            .map_err(|e| format!("读取句柄失败: {}", e))?;
+            .map_err(|e| format!("Failed to read handles: {}", e))?;
         let path_map = self.path_to_handles.read()
-            .map_err(|e| format!("读取路径映射失败: {}", e))?;
+            .map_err(|e| format!("Failed to read path mapping: {}", e))?;
         let cleanup_queue = self.cleanup_queue.lock()
-            .map_err(|e| format!("锁定清理队列失败: {}", e))?;
+            .map_err(|e| format!("Failed to lock cleanup queue: {}", e))?;
         
         Ok(HandleStats {
             total_handles: handles.len(),
@@ -297,7 +297,7 @@ impl HandleManager {
     /// 更新清理配置
     pub fn update_config(&self, config: CleanupConfig) -> Result<(), String> {
         let mut current_config = self.config.write()
-            .map_err(|e| format!("获取写锁失败: {}", e))?;
+            .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
         *current_config = config;
         Ok(())
     }

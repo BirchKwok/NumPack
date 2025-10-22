@@ -102,9 +102,9 @@ class TestCrossPlatformConsistency:
             for name, expected in test_data.items():
                 loaded = npk.load(name)
                 if np.issubdtype(expected.dtype, np.floating):
-                    assert np.allclose(loaded, expected), f"{name}类型数据不匹配"
+                    assert np.allclose(loaded, expected), f"{name} data type mismatch"
                 else:
-                    assert np.array_equal(loaded, expected), f"{name}类型数据不匹配"
+                    assert np.array_equal(loaded, expected), f"{name} data type mismatch"
     
     def test_lazy_loading_consistency(self, temp_dir):
         """LazyArray在所有平台上行为一致"""

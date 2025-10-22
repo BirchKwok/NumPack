@@ -566,7 +566,7 @@ impl LazyArray {
         // 清理此数组的句柄
         py.allow_threads(|| {
             if let Err(e) = handle_manager.cleanup_by_path(path) {
-                eprintln!("警告：清理LazyArray句柄失败: {}", e);
+                eprintln!("Warning: Failed to cleanup LazyArray handle: {}", e);
             }
         });
         
@@ -970,12 +970,12 @@ impl Drop for LazyArray {
         
         // 清理与此数组路径关联的所有句柄
         if let Err(e) = handle_manager.cleanup_by_path(path) {
-            eprintln!("警告：清理句柄失败 {}: {}", self.array_path, e);
+            eprintln!("Warning: Failed to cleanup handle {}: {}", self.array_path, e);
         }
         
         // 对于Windows，强制清理并等待
         if let Err(e) = handle_manager.force_cleanup_and_wait(None) {
-            eprintln!("警告：强制清理失败: {}", e);
+            eprintln!("Warning: Forced cleanup failed: {}", e);
         }
     }
 }
@@ -1062,7 +1062,7 @@ impl LazyArray {
             Some(path),
             owner_name,
         ).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("注册句柄失败: {}", e)
+            format!("Failed to register handle: {}", e)
         ))?;
         
         Ok(Self {
@@ -1195,7 +1195,7 @@ impl LazyArray {
         
         if start >= end || end > self.shape[0] {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
-                format!("索引范围无效: start={}, end={}, len={}", start, end, self.shape[0])
+                format!("Invalid index range: start={}, end={}, len={}", start, end, self.shape[0])
             ));
         }
         

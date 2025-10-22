@@ -577,7 +577,7 @@ impl SIMDBenchmark {
         }
 
         for (op_type, op_results) in operations {
-            report.push_str(&format!("## {} 操作性能\n\n", op_type));
+            report.push_str(&format!("## {} Operation Performance\n\n", op_type));
             report.push_str("| 策略 | 数据类型 | 大小 | 吞吐量(MB/s) | 加速比 | 延迟(μs) |\n");
             report.push_str("|------|----------|------|-------------|--------|----------|\n");
             

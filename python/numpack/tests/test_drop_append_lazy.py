@@ -218,7 +218,7 @@ class TestDropAppendLazyConsistency:
                 lazy_time = time.time() - start
                 
                 assert arr_lazy.shape == (10000, 10)
-                assert lazy_time < 0.1, f"Lazy load too slow: {lazy_time}s"  # 应该<100ms
+                assert lazy_time < 0.1, f"Lazy load too slow: {lazy_time}s"  # Should be <100ms
         finally:
             if os.path.exists(numpack_dir):
                 shutil.rmtree(numpack_dir)

@@ -504,7 +504,7 @@ class TestLazyArrayAPI:
         
         # 验证转置后的形状
         assert transposed.shape == (50, 100)
-        assert lazy_arr.shape == (100, 50)  # 原数组形状不变
+        assert lazy_arr.shape == (100, 50)  # Original array shape unchanged
         
         # 验证数据类型保持一致
         assert transposed.dtype == lazy_arr.dtype

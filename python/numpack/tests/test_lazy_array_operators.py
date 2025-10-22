@@ -11,7 +11,7 @@ import numpack as npk
 
 def test_lazy_array_arithmetic_operators():
     """测试基本算术操作符"""
-    print("测试基本算术操作符...")
+    print("Testing basic arithmetic operators...")
 
     # 创建测试数据
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -30,55 +30,55 @@ def test_lazy_array_arithmetic_operators():
             result = lazy_array + 2.5
             expected = original_data + 2.5
             np.testing.assert_array_equal(result, expected)
-            print("✓ 加法操作符测试通过")
+            print("✓ Addition operator test passed")
 
             # 测试减法: lazy_array - scalar
             result = lazy_array - 1.5
             expected = original_data - 1.5
             np.testing.assert_array_equal(result, expected)
-            print("✓ 减法操作符测试通过")
+            print("✓ Subtraction operator test passed")
 
             # 测试乘法: lazy_array * scalar
             result = lazy_array * 3.0
             expected = original_data * 3.0
             np.testing.assert_array_equal(result, expected)
-            print("✓ 乘法操作符测试通过")
+            print("✓ Multiplication operator test passed")
 
             # 测试除法: lazy_array / scalar
             result = lazy_array / 2.0
             expected = original_data / 2.0
             np.testing.assert_array_equal(result, expected)
-            print("✓ 除法操作符测试通过")
+            print("✓ Division operator test passed")
 
             # 测试地板除法: lazy_array // scalar
             result = lazy_array // 2
             expected = original_data // 2
             np.testing.assert_array_equal(result, expected)
-            print("✓ 地板除法操作符测试通过")
+            print("✓ Floor division operator test passed")
 
             # 测试取模: lazy_array % scalar
             result = lazy_array % 2
             expected = original_data % 2
             np.testing.assert_array_equal(result, expected)
-            print("✓ 取模操作符测试通过")
+            print("✓ Modulo operator test passed")
 
             # 测试幂运算: lazy_array ** scalar
             result = lazy_array ** 2
             expected = original_data ** 2
             np.testing.assert_array_equal(result, expected)
-            print("✓ 幂运算操作符测试通过")
+            print("✓ Power operator test passed")
 
             # 测试与 NumPy 数组的运算
             other_array = np.array([10, 20, 30, 40, 50], dtype=np.float32)
             result = lazy_array + other_array
             expected = original_data + other_array
             np.testing.assert_array_equal(result, expected)
-            print("✓ 与 NumPy 数组运算测试通过")
+            print("✓ NumPy array operation test passed")
 
 
 def test_lazy_array_comparison_operators():
     """测试比较操作符"""
-    print("测试比较操作符...")
+    print("Testing comparison operators...")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # 创建测试数组
@@ -96,42 +96,42 @@ def test_lazy_array_comparison_operators():
             result = lazy_array == 3
             expected = original_data == 3
             np.testing.assert_array_equal(result, expected)
-            print("✓ 等于操作符测试通过")
+            print("✓ Equal operator test passed")
 
             # 测试不等于
             result = lazy_array != 3
             expected = original_data != 3
             np.testing.assert_array_equal(result, expected)
-            print("✓ 不等于操作符测试通过")
+            print("✓ Not equal operator test passed")
 
             # 测试小于
             result = lazy_array < 3
             expected = original_data < 3
             np.testing.assert_array_equal(result, expected)
-            print("✓ 小于操作符测试通过")
+            print("✓ Less than operator test passed")
 
             # 测试小于等于
             result = lazy_array <= 3
             expected = original_data <= 3
             np.testing.assert_array_equal(result, expected)
-            print("✓ 小于等于操作符测试通过")
+            print("✓ Less than or equal operator test passed")
 
             # 测试大于
             result = lazy_array > 3
             expected = original_data > 3
             np.testing.assert_array_equal(result, expected)
-            print("✓ 大于操作符测试通过")
+            print("✓ Greater than operator test passed")
 
             # 测试大于等于
             result = lazy_array >= 3
             expected = original_data >= 3
             np.testing.assert_array_equal(result, expected)
-            print("✓ 大于等于操作符测试通过")
+            print("✓ Greater than or equal operator test passed")
 
 
 def test_lazy_array_unary_operators():
     """测试一元操作符"""
-    print("测试一元操作符...")
+    print("Testing unary operators...")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # 创建测试数组
@@ -149,18 +149,18 @@ def test_lazy_array_unary_operators():
             result = +lazy_array
             expected = +original_data
             np.testing.assert_array_equal(result, expected)
-            print("✓ 一元正号操作符测试通过")
+            print("✓ Unary positive operator test passed")
 
             # 测试一元负号
             result = -lazy_array
             expected = -original_data
             np.testing.assert_array_equal(result, expected)
-            print("✓ 一元负号操作符测试通过")
+            print("✓ Unary negative operator test passed")
 
 
 def test_lazy_array_bitwise_operators():
     """测试位操作符（仅适用于整数类型）"""
-    print("测试位操作符...")
+    print("Testing bitwise operators...")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # 创建整数测试数组
@@ -178,42 +178,42 @@ def test_lazy_array_bitwise_operators():
             result = lazy_array & 3
             expected = original_data & 3
             np.testing.assert_array_equal(result, expected)
-            print("✓ 位与操作符测试通过")
+            print("✓ Bitwise AND operator test passed")
 
             # 测试位或
             result = lazy_array | 2
             expected = original_data | 2
             np.testing.assert_array_equal(result, expected)
-            print("✓ 位或操作符测试通过")
+            print("✓ Bitwise OR operator test passed")
 
             # 测试位异或
             result = lazy_array ^ 1
             expected = original_data ^ 1
             np.testing.assert_array_equal(result, expected)
-            print("✓ 位异或操作符测试通过")
+            print("✓ Bitwise XOR operator test passed")
 
             # 测试左移
             result = lazy_array << 1
             expected = original_data << 1
             np.testing.assert_array_equal(result, expected)
-            print("✓ 左移操作符测试通过")
+            print("✓ Left shift operator test passed")
 
             # 测试右移
             result = lazy_array >> 1
             expected = original_data >> 1
             np.testing.assert_array_equal(result, expected)
-            print("✓ 右移操作符测试通过")
+            print("✓ Right shift operator test passed")
 
             # 测试一元取反
             result = ~lazy_array
             expected = ~original_data
             np.testing.assert_array_equal(result, expected)
-            print("✓ 一元取反操作符测试通过")
+            print("✓ Bitwise NOT operator test passed")
 
 
 def test_lazy_array_inplace_operators():
     """测试原地操作符（会将LazyArray转换为NumPy数组）"""
-    print("测试原地操作符...")
+    print("Testing in-place operators...")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # 创建测试数组
@@ -229,23 +229,23 @@ def test_lazy_array_inplace_operators():
 
             # 测试原地加法（应该转换为NumPy数组）
             lazy_array += 2.5
-            assert isinstance(lazy_array, np.ndarray), "原地操作应该返回NumPy数组"
+            assert isinstance(lazy_array, np.ndarray), "In-place operation should return NumPy array"
             expected = original_data + 2.5
             np.testing.assert_array_equal(lazy_array, expected)
-            print("✓ 原地加法操作符测试通过")
+            print("✓ In-place addition operator test passed")
             
             # 重新加载测试原地乘法
             lazy_array2 = pack.load("test_array", lazy=True)
             lazy_array2 *= 2.5
-            assert isinstance(lazy_array2, np.ndarray), "原地操作应该返回NumPy数组"
+            assert isinstance(lazy_array2, np.ndarray), "In-place operation should return NumPy array"
             expected = original_data * 2.5
             np.testing.assert_array_equal(lazy_array2, expected)
-            print("✓ 原地乘法操作符测试通过")
+            print("✓ In-place multiplication operator test passed")
 
 
 def test_lazy_array_bitwise_type_checking():
     """测试位操作符的类型检查"""
-    print("测试位操作符类型检查...")
+    print("Testing bitwise operator type checking...")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # 创建浮点测试数组
@@ -262,15 +262,15 @@ def test_lazy_array_bitwise_type_checking():
             # 测试位操作符对浮点数应该抛出错误
             try:
                 result = lazy_array & 1
-                assert False, "浮点数位操作应该抛出 TypeError"
+                assert False, "Float bitwise operation should raise TypeError"
             except TypeError as e:
                 assert "Bitwise operations are only supported for integer arrays" in str(e)
-                print("✓ 浮点数位操作正确抛出 TypeError")
+                print("✓ Float bitwise operation correctly raises TypeError")
 
 
 def test_lazy_array_complex_operations():
     """测试复杂运算"""
-    print("测试复杂运算...")
+    print("Testing complex operations...")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # 创建测试数组
@@ -288,23 +288,23 @@ def test_lazy_array_complex_operations():
             result = (lazy_array + 2) * 3 - 1
             expected = (original_data + 2) * 3 - 1
             np.testing.assert_array_equal(result, expected)
-            print("✓ 链式运算测试通过")
+            print("✓ Chain operation test passed")
 
             # 测试与比较操作结合
             mask = (lazy_array > 2) & (lazy_array < 5)
             expected_mask = (original_data > 2) & (original_data < 5)
             np.testing.assert_array_equal(mask, expected_mask)
-            print("✓ 运算与比较结合测试通过")
+            print("✓ Operation with comparison test passed")
 
             # 测试数学函数组合
             result = np.sqrt(lazy_array ** 2 + 1)
             expected = np.sqrt(original_data ** 2 + 1)
             np.testing.assert_array_almost_equal(result, expected)
-            print("✓ 数学函数组合测试通过")
+            print("✓ Math function composition test passed")
 
 
 if __name__ == "__main__":
-    print("开始测试 LazyArray 算术操作符支持...")
+    print("Starting LazyArray arithmetic operator support tests...")
     print("=" * 60)
 
     try:
@@ -317,24 +317,24 @@ if __name__ == "__main__":
         test_lazy_array_complex_operations()
 
         print("=" * 60)
-        print("✅ 所有测试通过！LazyArray 现在支持像 NumPy memmap 一样的算术操作符。")
+        print("✅ All tests passed! LazyArray now supports arithmetic operators like NumPy memmap.")
         print()
-        print("使用示例：")
+        print("Usage example:")
         print("```python")
         print("import numpack as npk")
         print("import numpy as np")
         print()
-        print("# 加载 LazyArray")
+        print("# Load LazyArray")
         print("lazy_array = npk.load('data', lazy=True)")
         print()
-        print("# 现在可以使用各种算术操作符")
-        print("result = lazy_array * 4.1  # 这现在可以工作了！")
+        print("# Now you can use various arithmetic operators")
+        print("result = lazy_array * 4.1  # This works now!")
         print("result = lazy_array + np.array([1, 2, 3])")
         print("mask = lazy_array > 5")
         print("result = lazy_array ** 2 + lazy_array * 2 + 1")
         print("```")
 
     except Exception as e:
-        print(f"❌ 测试失败: {e}")
+        print(f"❌ Test failed: {e}")
         import traceback
         traceback.print_exc()

@@ -208,7 +208,7 @@ class TestExceptionHandling:
         try:
             with NumPack(str(npk_path), warn_no_context=False) as npk:
                 npk.save({'data': np.arange(100)})
-                raise ValueError("测试异常")
+                raise ValueError("Test exception")
         except ValueError:
             pass  # 预期的异常
         

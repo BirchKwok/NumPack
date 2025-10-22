@@ -50,12 +50,12 @@ class TestUserIntentRecognition:
         single_index = 42
         result = lazy_array[single_index]
         
-        assert result.shape == (self.cols,), f"单次访问结果形状错误: {result.shape}"
+        assert result.shape == (self.cols,), f"Single access result shape error: {result.shape}"
         
         # 验证数据正确性
         expected = self.test_data['test_array'][single_index]
         np.testing.assert_array_almost_equal(result, expected, decimal=5)
-        print("✅ 单次访问意图识别正确")
+        print("✅ Single access intent recognized correctly")
 
     def test_batch_access_intent(self):
         """测试批量访问意图识别"""
@@ -65,12 +65,12 @@ class TestUserIntentRecognition:
         batch_indices = [10, 25, 50, 100, 200]
         result = lazy_array[batch_indices]
         
-        assert result.shape == (len(batch_indices), self.cols), f"批量访问结果形状错误: {result.shape}"
+        assert result.shape == (len(batch_indices), self.cols), f"Batch access result shape error: {result.shape}"
         
         # 验证数据正确性
         expected = self.test_data['test_array'][batch_indices]
         np.testing.assert_array_almost_equal(result, expected, decimal=5)
-        print("✅ 批量访问意图识别正确")
+        print("✅ Batch access intent recognized correctly")
 
     def test_numpy_array_batch_access(self):
         """测试NumPy数组索引的批量访问"""
@@ -80,12 +80,12 @@ class TestUserIntentRecognition:
         indices = np.array([5, 15, 35, 75, 150])
         result = lazy_array[indices]
         
-        assert result.shape == (len(indices), self.cols), f"NumPy数组索引结果形状错误: {result.shape}"
+        assert result.shape == (len(indices), self.cols), f"NumPy array index result shape error: {result.shape}"
         
         # 验证数据正确性
         expected = self.test_data['test_array'][indices]
         np.testing.assert_array_almost_equal(result, expected, decimal=5)
-        print("✅ NumPy数组索引批量访问正确")
+        print("✅ NumPy array index batch access correct")
 
     def test_slice_access(self):
         """测试切片访问 - 应该被识别为ComplexIndex"""
@@ -94,12 +94,12 @@ class TestUserIntentRecognition:
         # 切片访问
         result = lazy_array[10:20]
         
-        assert result.shape == (10, self.cols), f"切片访问结果形状错误: {result.shape}"
+        assert result.shape == (10, self.cols), f"Slice access result shape error: {result.shape}"
         
         # 验证数据正确性
         expected = self.test_data['test_array'][10:20]
         np.testing.assert_array_almost_equal(result, expected, decimal=5)
-        print("✅ 切片访问正确")
+        print("✅ Slice access correct")
 
     @pytest.mark.skip(reason="性能测试可能受环境影响，功能正确性已在其他测试中验证")
     def test_performance_comparison(self):
@@ -109,7 +109,7 @@ class TestUserIntentRecognition:
         # 增加测试规模以获得更稳定的性能差异
         indices = np.random.randint(0, self.rows, 2000).tolist()
         
-        print("\n性能对比测试：")
+        print("\nPerformance comparison test:")
         
         # 多次运行以获得稳定的测量结果
         wrong_times = []
@@ -135,15 +135,15 @@ class TestUserIntentRecognition:
         avg_wrong_time = sum(wrong_times) / len(wrong_times)
         avg_correct_time = sum(correct_times) / len(correct_times)
         
-        print(f"❌ 错误用法（300次循环单次访问）平均时间: {avg_wrong_time:.4f}秒")
-        print(f"✅ 正确用法（批量访问2000个索引）平均时间: {avg_correct_time:.4f}秒")
+        print(f"❌ Wrong usage (300 loop single accesses) average time: {avg_wrong_time:.4f}s")
+        print(f"✅ Correct usage (batch access 2000 indices) average time: {avg_correct_time:.4f}s")
         
         # 性能提升比例
         if avg_correct_time > 0 and avg_wrong_time > 0:
             # 标准化到相同数量的访问
             normalized_wrong_time = avg_wrong_time * (2000 / 300)
             speedup = normalized_wrong_time / avg_correct_time
-            print(f"🚀 批量访问性能提升: {speedup:.1f}x")
+            print(f"🚀 Batch access performance improvement: {speedup:.1f}x")
             
             # 适当降低阈值以适应不同环境的差异和系统负载
             # 在高负载环境下，批量访问仍应该比循环访问快
@@ -151,7 +151,7 @@ class TestUserIntentRecognition:
             
             if speedup <= min_speedup:
                 # 如果首次测试未通过，重试一次（可能是系统负载导致）
-                print(f"⚠️  首次测试speedup={speedup:.2f}x，重试...")
+                print(f"⚠️  First test speedup={speedup:.2f}x, retrying...")
                 import gc
                 gc.collect()
                 time.sleep(0.1)
@@ -167,14 +167,14 @@ class TestUserIntentRecognition:
                 
                 normalized_wrong2 = wrong_time2 * (2000 / 300)
                 speedup2 = normalized_wrong2 / correct_time2
-                print(f"  重试后speedup={speedup2:.2f}x")
+                print(f"  After retry speedup={speedup2:.2f}x")
                 
                 speedup = max(speedup, speedup2)  # 使用较好的结果
             
-            assert speedup > min_speedup, f"批量访问性能提升不足: {speedup:.1f}x (要求 > {min_speedup}x)"
+            assert speedup > min_speedup, f"Batch access performance improvement insufficient: {speedup:.1f}x (required > {min_speedup}x)"
         else:
             # 如果时间测量不准确，尝试验证功能正确性
-            print("⚠️ 时间测量精度不足，验证功能正确性...")
+            print("⚠️ Time measurement precision insufficient, verifying functionality...")
             # 确保批量访问和循环访问结果一致
             test_indices = indices[:100]
             batch_result = lazy_array[test_indices]
@@ -182,41 +182,41 @@ class TestUserIntentRecognition:
             
             # 验证结果一致性
             for i, (batch_row, individual_row) in enumerate(zip(batch_result, individual_results)):
-                assert np.allclose(batch_row, individual_row), f"结果不一致 at index {i}"
-            print("✅ 功能验证通过 - 批量访问结果正确")
+                assert np.allclose(batch_row, individual_row), f"Results inconsistent at index {i}"
+            print("✅ Functionality verification passed - batch access results correct")
 
     def test_user_intent_examples(self):
         """展示正确的用户意图用法示例"""
         lazy_array = self.npk.load('test_array', lazy=True)
         
-        print("\n🎯 用户意图示例：")
+        print("\n🎯 User Intent Examples:")
         
-        # 场景1：明确的单次访问
-        print("场景1 - 明确的单次访问：")
-        print("  用法: row = lazy_array[42]")
+        # Scenario 1: Clear single access
+        print("Scenario 1 - Clear single access:")
+        print("  Usage: row = lazy_array[42]")
         row = lazy_array[42]
-        print(f"  结果: {row.shape}")
+        print(f"  Result: {row.shape}")
         
-        # 场景2：明确的批量访问
-        print("场景2 - 明确的批量访问：")
-        print("  用法: rows = lazy_array[[10, 20, 30]]")
+        # Scenario 2: Clear batch access
+        print("Scenario 2 - Clear batch access:")
+        print("  Usage: rows = lazy_array[[10, 20, 30]]")
         rows = lazy_array[[10, 20, 30]]
-        print(f"  结果: {rows.shape}")
+        print(f"  Result: {rows.shape}")
         
-        # 场景3：NumPy数组索引
-        print("场景3 - NumPy数组索引：")
+        # Scenario 3: NumPy array indexing
+        print("Scenario 3 - NumPy array indexing:")
         indices = np.array([5, 15, 25])
-        print(f"  用法: rows = lazy_array[np.array({indices.tolist()})]")
+        print(f"  Usage: rows = lazy_array[np.array({indices.tolist()})]")
         rows = lazy_array[indices]
-        print(f"  结果: {rows.shape}")
+        print(f"  Result: {rows.shape}")
         
-        # 场景4：切片访问
-        print("场景4 - 切片访问：")
-        print("  用法: rows = lazy_array[10:15]")
+        # Scenario 4: Slice access
+        print("Scenario 4 - Slice access:")
+        print("  Usage: rows = lazy_array[10:15]")
         rows = lazy_array[10:15]
-        print(f"  结果: {rows.shape}")
+        print(f"  Result: {rows.shape}")
         
-        print("\n✅ 所有用户意图示例测试通过")
+        print("\n✅ All user intent example tests passed")
 
 if __name__ == "__main__":
     # 运行测试
@@ -231,7 +231,7 @@ if __name__ == "__main__":
         test.test_performance_comparison()
         test.test_user_intent_examples()
         
-        print("\n🎉 所有用户意图识别测试通过！")
+        print("\n🎉 All user intent recognition tests passed!")
         
     finally:
         test.teardown_method() 
