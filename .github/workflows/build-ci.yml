@@ -18,16 +18,18 @@ jobs:
         with:
           python-version: '3.11'
           
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+          
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install build setuptools wheel
+          python -m pip install "maturin>=1.0,<2.0"
           
       - name: Build sdist
         run: |
-          # 使用纯Python构建生成sdist
-          export NUMPACK_PYTHON_ONLY=1
-          python build.py build --out dist
+          # 使用 maturin 构建 sdist
+          maturin build --sdist --out dist
           
       - name: Upload sdist
         uses: actions/upload-artifact@v4
@@ -135,12 +137,16 @@ jobs:
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
           
-      # Install Rust toolchain (skip for Windows)
-      - name: Install Rust
-        if: runner.os != 'Windows'
+      # Install Rust toolchain (all platforms including Windows)
+      - name: Install Rust (with target)
+        if: matrix.target != ''
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+          
+      - name: Install Rust (default)
+        if: matrix.target == '' || matrix.target == null
+        uses: dtolnay/rust-toolchain@stable
           
       # Cache Cargo dependencies
       - name: Cache Cargo dependencies
@@ -160,15 +166,11 @@ jobs:
         run: |
           if [ "$RUNNER_OS" == "Windows" ]; then
             . venv/Scripts/activate
-            # Windows 使用纯 Python 构建
-            export NUMPACK_PYTHON_ONLY=1
-            python -m pip install build
-            python build.py develop
           else
             . venv/bin/activate
-            # Unix/Linux 使用 Rust + Python 构建
-            maturin develop
           fi
+          # 所有平台都使用 Rust + Python 构建
+          maturin develop --release
         
       # Run tests
       - name: Run tests
@@ -192,16 +194,11 @@ jobs:
           mkdir -p dist
           if [ "$RUNNER_OS" == "Windows" ]; then
             . venv/Scripts/activate
-            # Windows 使用纯 Python 构建
-            export NUMPACK_PYTHON_ONLY=1
-            python -m pip install build
-            # 只构建wheel，不构建sdist
-            python -m build --wheel --outdir dist
           else
             . venv/bin/activate
-            # Unix/Linux 使用 maturin 构建wheel
-            maturin build --release --out dist --find-interpreter
           fi
+          # 所有平台都使用 maturin 构建wheel
+          maturin build --release --out dist --find-interpreter
           
       - name: Upload wheels
         uses: actions/upload-artifact@v4

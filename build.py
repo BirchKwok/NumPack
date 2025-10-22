@@ -2,10 +2,17 @@
 """
 NumPack conditional build script
 
-Choose appropriate build method based on platform and environment variables:
-- Windows platform: Use pure Python build (setuptools)
-- Unix/Linux platform: Use Rust + Python build (maturin)
-- Environment variable NUMPACK_PYTHON_ONLY=1: Force pure Python build
+NumPack now only supports Rust backend builds (all platforms).
+
+Backward compatibility notes:
+- Early versions supported pure Python backend, now removed
+- All platforms (including Windows) require Rust toolchain
+- Environment variable NUMPACK_PYTHON_ONLY=1 is deprecated, kept for backward compatibility only
+
+Recommended usage:
+- Development mode: maturin develop --release
+- Build wheel: maturin build --release
+- Build sdist: maturin build --sdist
 """
 
 import os
@@ -65,14 +72,23 @@ def is_windows():
 
 
 def should_use_python_only():
-    """Decide whether to use pure Python build"""
+    """Decide whether to use pure Python build
+    
+    Note: NumPack no longer supports pure Python builds. This function is kept for backward compatibility only.
+    All platforms (including Windows) must now use the Rust backend.
+    """
     # Check environment variable
     if os.environ.get('NUMPACK_PYTHON_ONLY', '').lower() in ['1', 'true', 'yes']:
-        return True
+        print("=" * 60)
+        print("WARNING: NUMPACK_PYTHON_ONLY is deprecated")
+        print("NumPack no longer supports pure Python backend, all platforms require Rust toolchain")
+        print("This environment variable will be ignored and Rust build will be used")
+        print("=" * 60)
+        return False
     
-    # Windows platform defaults to pure Python
+    # Windows now also uses Rust backend
     if is_windows():
-        return True
+        print("Note: Windows platform now also uses Rust backend build")
     
     return False
 
@@ -93,21 +109,21 @@ def restore_original_config():
 
 
 def setup_python_only_build():
-    """Setup pure Python build"""
-    print("Setting up pure Python build mode...")
+    """Setup pure Python build
     
-    # Backup original configuration
-    backup_original_config()
-    
-    # Use Windows-specific configuration
-    if Path('pyproject.toml.windows').exists():
-        shutil.copy('pyproject.toml.windows', 'pyproject.toml')
-        print("Switched to pure Python build configuration")
-    else:
-        print("Error: pyproject.toml.windows file not found")
-        return False
-    
-    return True
+    Note: This function is deprecated, NumPack no longer supports pure Python builds.
+    """
+    print("=" * 60)
+    print("ERROR: Attempting to use pure Python build mode")
+    print("")
+    print("NumPack has fully migrated to Rust backend and no longer supports pure Python builds.")
+    print("")
+    print("Please ensure Rust toolchain is installed:")
+    print("  - Visit https://rustup.rs/ to install Rust")
+    print("  - Install maturin: pip install maturin")
+    print("  - Build with maturin: maturin develop --release")
+    print("=" * 60)
+    return False
 
 
 def setup_rust_build():
@@ -122,7 +138,7 @@ def setup_rust_build():
 
 
 def run_build(build_args=None):
-    """执行构建"""
+    """Execute build"""
     build_args = build_args or []
     
     if should_use_python_only():

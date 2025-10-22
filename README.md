@@ -41,12 +41,15 @@ pip install numpack
 
 ### From Source
 
-#### Prerequisites
+#### Prerequisites (All Platforms including Windows)
 
 - Python >= 3.9
-- Rust >= 1.70.0
+- **Rust >= 1.70.0** (Required on all platforms, install from [rustup.rs](https://rustup.rs/))
 - NumPy >= 1.26.0
 - Appropriate C/C++ compiler
+  - Windows: [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+  - macOS: Xcode Command Line Tools (`xcode-select --install`)
+  - Linux: GCC/Clang (`build-essential` on Ubuntu/Debian)
 
 #### Build Steps
 
