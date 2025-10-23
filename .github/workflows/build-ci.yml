@@ -227,16 +227,23 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: wheels-*
-          path: dist
-          merge-multiple: true
+          path: wheels-temp
           
-      - name: Check and clean distribution files
+      - name: Organize distribution files
         run: |
-          echo "=== Distribution files before cleanup ==="
+          echo "=== Moving wheel files to dist ==="
+          # 将所有下载的wheel文件移动到dist目录
+          find wheels-temp -name "*.whl" -type f -exec mv {} dist/ \;
+          
+          # 清理临时目录
+          rm -rf wheels-temp
+          
+          echo "=== Distribution files after organization ==="
           ls -la dist/
           
-          # 检查tar文件完整性
-          echo "=== Checking tar file integrity ==="
+      - name: Verify distribution files integrity
+        run: |
+          echo "=== Verifying tar.gz files ==="
           for file in dist/*.tar.gz; do
             if [ -f "$file" ]; then
               echo "Checking $file..."
@@ -249,19 +256,32 @@ jobs:
             fi
           done
           
-          # 移除重复的文件和潜在问题文件
-          echo "=== Removing duplicate and problematic files ==="
+          echo "=== Verifying wheel files ==="
+          for file in dist/*.whl; do
+            if [ -f "$file" ]; then
+              echo "Checking $file..."
+              # wheel文件是ZIP格式，使用unzip测试
+              if unzip -t "$file" > /dev/null 2>&1; then
+                echo "✓ $file is valid"
+              else
+                echo "✗ $file is corrupted, removing..."
+                rm -f "$file"
+              fi
+            fi
+          done
+          
           # 移除任何非wheel和非tar.gz文件
+          echo "=== Removing non-distribution files ==="
           find dist/ -type f ! -name "*.whl" ! -name "*.tar.gz" -delete || true
           
           echo "=== Final distribution files ==="
           ls -la dist/
           
-          # 确保至少有一个sdist文件
+          # 统计文件数量
           sdist_count=$(ls dist/*.tar.gz 2>/dev/null | wc -l)
           wheel_count=$(ls dist/*.whl 2>/dev/null | wc -l)
           
-          echo "Found $sdist_count sdist files and $wheel_count wheel files"
+          echo "Found $sdist_count sdist file(s) and $wheel_count wheel file(s)"
           
           if [ $sdist_count -eq 0 ]; then
             echo "Error: No valid sdist files found"
@@ -286,13 +306,50 @@ jobs:
         with:
           python-version: '3.13'
           
-      - name: Install twine
-        run: python -m pip install --upgrade twine
-        
-      - name: Verify files before upload
+      - name: Install twine and wheel
         run: |
-          echo "=== Verifying files before PyPI upload ==="
-          python -m twine check dist/*
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade twine wheel setuptools
+        
+      - name: Deep verify wheel files with Python
+        run: |
+          echo "=== Deep verification of wheel files ==="
+          python3 << 'EOF'
+          import sys
+          import zipfile
+          from pathlib import Path
+          
+          dist_path = Path("dist")
+          failed = False
+          
+          for wheel_file in dist_path.glob("*.whl"):
+              print(f"Checking {wheel_file.name}...")
+              try:
+                  with zipfile.ZipFile(wheel_file, 'r') as zf:
+                      # 测试所有文件
+                      bad_file = zf.testzip()
+                      if bad_file:
+                          print(f"  ✗ Corrupted file in archive: {bad_file}")
+                          failed = True
+                      else:
+                          print(f"  ✓ Valid")
+              except zipfile.BadZipFile as e:
+                  print(f"  ✗ Bad ZIP file: {e}")
+                  failed = True
+              except Exception as e:
+                  print(f"  ✗ Error: {e}")
+                  failed = True
+          
+          if failed:
+              print("\nError: Some wheel files are corrupted")
+              sys.exit(1)
+          print("\nAll wheel files are valid")
+          EOF
+        
+      - name: Verify files with twine
+        run: |
+          echo "=== Verifying files with twine ==="
+          python -m twine check dist/* --strict
         
       - name: Upload to PyPI
         env:
