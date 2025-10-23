@@ -308,7 +308,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 This project is licensed under the Apache License, Version 2.0.
 
-Copyright 2024 NumPack Contributors
+Copyright 2025 NumPack Contributors
 
 ---
 
@@ -322,7 +322,6 @@ Copyright 2024 NumPack Contributors
 
 ## 📚 Documentation Version
 
-- **Version**: 0.4.0
-- **Last Updated**: 2024
+- **Version**: 0.4.1
 - **Backend**: Rust (high-performance)
 

@@ -660,7 +660,7 @@ print(info)
 #     'backend_type': 'rust',
 #     'platform': 'Darwin',
 #     'is_windows': False,
-#     'version': '0.4.0'
+#     'version': '0.4.1'
 # }
 ```
 
@@ -732,7 +732,7 @@ print(f"float64: {estimate_memory(rows, cols, np.float64):.1f} MB")  # 762 MB
 
 ## Version Information
 
-- **NumPack Version**: 0.4.0
+- **NumPack Version**: 0.4.1
 - **Backend**: Rust (high-performance)
 - **Minimum Python**: 3.9
 - **Minimum NumPy**: 1.26.0

@@ -244,5 +244,4 @@ NumPack guarantees:
 ---
 
 **Document Version**: 3.0  
-**Last Updated**: January 2025  
 **Specification Authors**: NumPack Development Team 

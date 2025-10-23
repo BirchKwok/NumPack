@@ -248,7 +248,7 @@ from numpack import get_backend_info
 info = get_backend_info()
 print(f"Backend: {info['backend_type']}")  # 'rust'
 print(f"Platform: {info['platform']}")     # 'Darwin', 'Linux', or 'Windows'
-print(f"Version: {info['version']}")       # '0.4.0'
+print(f"Version: {info['version']}")       # '0.4.1'
 ```
 
 ## Performance Tips for Beginners
