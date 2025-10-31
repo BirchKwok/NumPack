@@ -6,7 +6,7 @@ use crate::{
     indexing::fancy_index::FancyIndexEngine, 
     lazy_array::core::OptimizedLazyArray
 };
-use crate::metadata::DataType;
+use crate::core::metadata::DataType;
 use std::path::PathBuf;
 use std::fs::File;
 use std::io::Write;

@@ -3,7 +3,7 @@
 //! 根据数据特征自动选择最优压缩算法，实现2-5x压缩速度提升
 
 use std::io::{self, Write, Read};
-use crate::metadata::DataType;
+use crate::core::metadata::DataType;
 
 /// 压缩算法类型
 #[derive(Debug, Clone, Copy, PartialEq)]

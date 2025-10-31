@@ -2,19 +2,11 @@
 extern crate lazy_static;
 
 // 核心模块
-mod error;
-mod metadata;               // 核心数据类型定义（DataType, ArrayMetadata）
-pub mod binary_metadata;    // 当前使用的元数据格式（BinaryMetadataStore + BinaryCachedStore）
-mod parallel_io;
-mod batch_access_engine;
-mod deletion_bitmap;
+mod core;                   // 错误处理和核心类型定义
+mod storage;                // 存储和元数据管理
+mod io;                     // IO操作（并行IO、批量访问）
 
-// 性能优化模块
-mod adaptive_compression;    // 自适应压缩
-mod simd_optimized;          // SIMD向量化
-mod multilevel_cache;        // 多级缓存
-
-// 新的模块化结构
+// 功能模块
 mod access_pattern;
 mod performance;
 mod memory;
@@ -46,12 +38,12 @@ use std::sync::Arc;
 use std::sync::MutexGuard;
 use half::f16;
 
-use crate::parallel_io::ParallelIO;
-use crate::metadata::DataType;
-use crate::binary_metadata::{BinaryMetadataStore, BinaryArrayMetadata, BinaryDataType, BinaryCachedStore};
+use crate::io::ParallelIO;
+use crate::core::DataType;
+use crate::storage::{BinaryMetadataStore, BinaryArrayMetadata, BinaryDataType, BinaryCachedStore};
 use crate::lazy_array::{OptimizedLazyArray, FastTypeConversion};
 use rayon::prelude::*;
-use crate::deletion_bitmap::DeletionBitmap;
+use crate::storage::DeletionBitmap;
 use crate::lazy_array::LogicalRowMap;
 
 #[cfg(target_family = "unix")]
@@ -3251,7 +3243,7 @@ impl NumPack {
         }
 
         // 检查是否存在deletion bitmap
-        use crate::deletion_bitmap::DeletionBitmap;
+        use crate::storage::deletion_bitmap::DeletionBitmap;
         let base_dir = self.io.get_base_dir();
         let (bitmap_opt, actual_physical_rows) = if DeletionBitmap::exists(base_dir, array_name) {
             let bitmap = DeletionBitmap::new(base_dir, array_name, shape[0])
@@ -3439,7 +3431,7 @@ impl NumPack {
             // 检查是否存在deletion bitmap
             // 如果存在，shape[0]应该返回逻辑行数（active_count）而不是物理行数
             if !shape.is_empty() {
-                use crate::deletion_bitmap::DeletionBitmap;
+                use crate::storage::deletion_bitmap::DeletionBitmap;
                 let base_dir = self.io.get_base_dir();
                 if DeletionBitmap::exists(base_dir, array_name) {
                     if let Ok(bitmap) = DeletionBitmap::new(base_dir, array_name, shape[0] as usize) {
@@ -3674,7 +3666,7 @@ impl NumPack {
                 .as_micros() as u64;
             
             // 如果存在deletion bitmap，需要扩展它以包含新增的行
-            use crate::deletion_bitmap::DeletionBitmap;
+            use crate::storage::deletion_bitmap::DeletionBitmap;
             if DeletionBitmap::exists(&self.base_dir, &name) {
                 let old_total_rows = meta.shape[0] as usize;
                 

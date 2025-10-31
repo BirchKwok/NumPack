@@ -11,6 +11,7 @@ pub mod compression_cache;
 pub mod lru_cache;
 pub mod compressed_cache;
 pub mod performance_monitor;
+pub mod adaptive_compression;
 
 // 暂时注释掉未使用的导入，避免警告
 // pub use smart_cache::*;

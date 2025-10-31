@@ -16,8 +16,8 @@ use memmap2::Mmap;
 use half::f16;
 use num_complex::{Complex32, Complex64};
 
-use crate::parallel_io::ParallelIO;
-use crate::metadata::DataType;
+use crate::io::parallel_io::ParallelIO;
+use crate::core::metadata::DataType;
 use crate::lazy_array::standard::LazyArray;
 
 lazy_static::lazy_static! {

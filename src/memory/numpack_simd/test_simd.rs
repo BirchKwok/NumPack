@@ -5,7 +5,7 @@
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::DataType;
+    use crate::core::metadata::DataType;
 
     #[test]
     fn test_cpu_capabilities_detection() {

@@ -1,7 +1,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use crate::error::{NpkError, NpkResult};
+use crate::core::error::{NpkError, NpkResult};
 
 /// DeletionBitmap 管理数组的逻辑删除标记
 /// 使用位图（bitmap）来标记哪些行已被删除

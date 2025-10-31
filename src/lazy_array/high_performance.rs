@@ -8,7 +8,7 @@ use ndarray::ArrayD;
 use numpy::IntoPyArray;
 use num_complex::{Complex32, Complex64};
 
-use crate::metadata::DataType;
+use crate::core::metadata::DataType;
 use crate::lazy_array::{OptimizedLazyArray, FastTypeConversion};
 
 /// 高性能LazyArray实现

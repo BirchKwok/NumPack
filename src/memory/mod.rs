@@ -7,6 +7,7 @@ pub mod simd_processor;
 pub mod zero_copy;
 pub mod numpack_simd;
 pub mod handle_manager;
+pub mod simd_optimized;
 
 // 重新导出主要组件
 pub use pool::*;

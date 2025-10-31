@@ -7,7 +7,7 @@ use crate::{
     lazy_array::core::OptimizedLazyArray, 
     access_pattern::{AccessPatternAnalysis, AccessPatternType, SizeCategory, AccessFrequency}
 };
-use crate::metadata::DataType;
+use crate::core::metadata::DataType;
 use std::path::PathBuf;
 use std::fs::File;
 use std::io::Write;

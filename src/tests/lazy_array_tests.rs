@@ -4,7 +4,7 @@
 #[cfg(test)]
 mod tests {
     use crate::lazy_array::core::OptimizedLazyArray;
-    use crate::metadata::DataType;
+    use crate::core::metadata::DataType;
     use tempfile::NamedTempFile;
     use std::io::Write;
 

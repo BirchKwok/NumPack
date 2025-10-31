@@ -6,7 +6,7 @@
 //! 3. 访问模式感知：针对NPK文件格式的行主序布局优化
 //! 4. FFI友好：批量处理减少Python-Rust边界开销
 
-use crate::metadata::DataType;
+use crate::core::metadata::DataType;
 use std::arch;
 
 /// CPU特性支持信息

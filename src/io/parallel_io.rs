@@ -9,11 +9,11 @@ use rayon::prelude::*;
 use ndarray::{ArrayD, ArrayViewD, IxDyn};
 use numpy::Element;
 
-use crate::error::{NpkError, NpkResult};
-use crate::metadata::{ArrayMetadata, DataType};
-use crate::binary_metadata::{BinaryMetadataStore, BinaryCachedStore, BinaryArrayMetadata, BinaryDataType};
-use crate::simd_optimized;
-use crate::deletion_bitmap::DeletionBitmap;
+use crate::core::error::{NpkError, NpkResult};
+use crate::core::metadata::{ArrayMetadata, DataType};
+use crate::storage::binary_metadata::{BinaryMetadataStore, BinaryCachedStore, BinaryArrayMetadata, BinaryDataType};
+use crate::memory::simd_optimized;
+use crate::storage::deletion_bitmap::DeletionBitmap;
 
 // 平台特定导入
 
@@ -586,7 +586,7 @@ impl ParallelIO {
             last_modified: meta.last_modified,
             size_bytes: meta.size_bytes,
             dtype: binary_dtype,
-            compression: crate::binary_metadata::BinaryCompressionInfo::default(),
+            compression: crate::storage::binary_metadata::BinaryCompressionInfo::default(),
         }
     }
     

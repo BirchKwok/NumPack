@@ -13,7 +13,7 @@ mod zero_copy_tests {
         indexing::fancy_index::FancyIndexEngine, 
         lazy_array::core::OptimizedLazyArray
     };
-    use crate::metadata::DataType;
+    use crate::core::metadata::DataType;
 
     // 测试辅助函数
     fn create_test_data_file(temp_dir: &TempDir, size: usize) -> std::path::PathBuf {

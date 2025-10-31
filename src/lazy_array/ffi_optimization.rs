@@ -15,7 +15,7 @@ use ndarray::{ArrayD, ArrayViewD, IxDyn};
 use memmap2::Mmap;
 use std::sync::Arc;
 
-use crate::metadata::DataType;
+use crate::core::metadata::DataType;
 
 /// FFI优化配置
 #[derive(Clone, Debug)]

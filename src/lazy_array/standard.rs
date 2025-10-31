@@ -14,7 +14,7 @@ use std::ptr;
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::metadata::DataType;
+use crate::core::metadata::DataType;
 use crate::lazy_array::traits::FastTypeConversion;
 use crate::lazy_array::indexing::{IndexType, SliceInfo, IndexResult, AccessPattern, AccessStrategy};
 
@@ -23,12 +23,12 @@ pub struct LogicalRowMap {
     pub active_count: usize,
     pub physical_rows: usize,
     pub active_indices: Option<Vec<usize>>,
-    pub bitmap: Option<Arc<crate::deletion_bitmap::DeletionBitmap>>,
+    pub bitmap: Option<Arc<crate::storage::deletion_bitmap::DeletionBitmap>>,
 }
 
 impl LogicalRowMap {
     pub fn new(base_dir: &Path, array_name: &str, total_rows: usize) -> PyResult<Option<Self>> {
-        use crate::deletion_bitmap::DeletionBitmap;
+        use crate::storage::deletion_bitmap::DeletionBitmap;
         if !DeletionBitmap::exists(base_dir, array_name) {
             return Ok(None);
         }

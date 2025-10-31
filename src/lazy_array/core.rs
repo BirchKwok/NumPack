@@ -6,10 +6,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::fs::File;
 use memmap2::Mmap;
-use crate::metadata::DataType;
+use crate::core::metadata::DataType;
 use crate::access_pattern::AccessHint;
 use crate::cache::smart_cache::SmartCache;
-use crate::batch_access_engine::BatchAccessEngine;
+use crate::io::batch_access_engine::BatchAccessEngine;
 use crate::memory::simd_processor::SIMDProcessor;
 
 #[derive(Debug, Default)]

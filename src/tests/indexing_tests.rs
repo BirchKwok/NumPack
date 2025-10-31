@@ -9,7 +9,7 @@ mod tests {
         smart_router::SmartIndexRouter,
     };
     use crate::lazy_array::core::OptimizedLazyArray;
-    use crate::metadata::DataType;
+    use crate::core::metadata::DataType;
     use std::path::PathBuf;
     use tempfile::NamedTempFile;
     use std::io::Write;

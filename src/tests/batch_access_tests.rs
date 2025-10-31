@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::batch_access_engine::*;
+    use crate::io::batch_access_engine::*;
     use std::time::{Duration, Instant};
 
     // 创建测试用的简单BatchDataContext实现
