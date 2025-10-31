@@ -730,14 +730,6 @@ print(f"float64: {estimate_memory(rows, cols, np.float64):.1f} MB")  # 762 MB
 
 ---
 
-## Version Information
-
-- **NumPack Version**: 0.4.1
-- **Backend**: Rust (high-performance)
-- **Minimum Python**: 3.9
-- **Minimum NumPy**: 1.26.0
-
----
 
 **For complete documentation, see [Documentation Index](./README.md)**
 

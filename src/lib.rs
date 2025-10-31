@@ -3,16 +3,13 @@ extern crate lazy_static;
 
 // 核心模块
 mod error;
-mod metadata;
-mod binary_metadata;
-mod hybrid_metadata;
+mod metadata;               // 核心数据类型定义（DataType, ArrayMetadata）
+pub mod binary_metadata;    // 当前使用的元数据格式（BinaryMetadataStore + BinaryCachedStore）
 mod parallel_io;
 mod batch_access_engine;
 mod deletion_bitmap;
 
 // 性能优化模块
-mod optimized_metadata;      // 优化的元数据格式
-mod fast_metadata;           // 快速元数据存储（兼容层）
 mod adaptive_compression;    // 自适应压缩
 mod simd_optimized;          // SIMD向量化
 mod multilevel_cache;        // 多级缓存
@@ -3493,6 +3490,14 @@ impl NumPack {
 
     fn reset(&self) -> PyResult<()> {
         self.io.reset()?;
+        Ok(())
+    }
+    
+    /// 🚀 强制同步元数据到磁盘
+    /// 
+    /// 用于Batch Mode等批量操作结束时，确保元数据持久化
+    fn sync_metadata(&self) -> PyResult<()> {
+        self.io.sync_metadata()?;
         Ok(())
     }
     

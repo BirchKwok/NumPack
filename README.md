@@ -4,13 +4,54 @@ NumPack is a high-performance array storage library that combines Rust's perform
 
 ## Key Features
 
-- 🚀 **397x faster** row replacement than NPY
-- ⚡ **405x faster** data append than NPY  
-- 💨 **54x faster** lazy loading than NPY mmap
-- 📖 **1.3x faster** full data loading than NPY
-- 🔄 **174x speedup** with Writable Batch Mode for frequent modifications
+- 🚀 **458x faster** row replacement than NPY (improved from 397x)
+- ⚡ **343x faster** data append than NPY  
+- 💨 **46x faster** lazy loading than NPY mmap
+- 📖 **1.50x faster** full data loading than NPY (improved from 1.3x)
+- 🔄 **21x speedup** with Batch Mode for frequent modifications
+- ⚡ **89x speedup** with Writable Batch Mode
 - 💾 Zero-copy operations with minimal memory footprint
 - 🛠 Seamless integration with existing NumPy workflows
+
+## What's New in v0.4.2 ✨
+
+### Major Performance Enhancements 🚀
+
+- **50% faster Full Load** (8.27ms → 4.11ms for 38MB data)
+- **27% faster Save** (16.15ms → 11.76ms)
+- **43% faster Batch Mode** (34ms → 19.5ms)
+- **38% faster Replace** operations (0.047ms → 0.029ms)
+- **15% improvement** in competitive advantage (1.3x → 1.50x faster than NPY)
+
+### New I/O Optimizations 🔧
+
+1. **Adaptive Buffer Sizing**
+   - Small arrays (<1MB): 256KB buffer → 96% memory saving
+   - Medium arrays (1-10MB): 4MB buffer → balanced performance
+   - Large arrays (>10MB): 16MB buffer → maximum throughput
+
+2. **Smart Parallelization**
+   - Automatically parallelizes only when beneficial (>10MB total data)
+   - Avoids thread overhead for small datasets
+
+3. **Fast Overwrite Path**
+   - Same-shape array overwrite: 1.5-2.5x faster
+   - Uses in-place update instead of file recreation
+
+4. **SIMD Acceleration**
+   - Large files (>10MB) use SIMD-optimized operations
+   - Theoretical 2-4x speedup for memory-intensive operations
+
+5. **Batch Mode Intelligence**
+   - Smart dirty tracking: only flushes modified arrays
+   - Zero-copy cache detection
+   - Reduced metadata synchronization
+
+### Core Advantages Enhanced
+
+- Replace operations now **458x faster** than NPY (up from 397x) 🔥
+- Full Load now **1.50x faster** than NPY (up from 1.3x) 📈
+- System-wide optimizations benefit all operation modes
 
 ## Features
 
@@ -18,8 +59,8 @@ NumPack is a high-performance array storage library that combines Rust's perform
 - **Lazy Loading Support**: Efficient memory usage through on-demand data loading
 - **In-place Operations**: Support for in-place array modifications without full file rewrite
 - **Batch Processing Modes**: 
-  - Batch Mode: 25-37x speedup for batch operations
-  - Writable Batch Mode: 174x speedup for frequent modifications
+  - Batch Mode: 21x speedup for batch operations
+  - Writable Batch Mode: 89x speedup for frequent modifications
 - **Multiple Data Types**: Supports various numerical data types including:
   - Boolean
   - Unsigned integers (8-bit to 64-bit)
@@ -127,7 +168,7 @@ with NumPack("data_directory") as npk:
 
 NumPack provides two high-performance batch modes for scenarios with frequent modifications:
 
-#### Batch Mode (25-37x speedup)
+#### Batch Mode (21x speedup, 43% faster than before)
 
 ```python
 with NumPack("data.npk") as npk:
@@ -137,9 +178,10 @@ with NumPack("data.npk") as npk:
             arr[:10] *= 2.0
             npk.save({'data': arr})     # Save to cache
 # All changes written to disk on exit
+# ✨ Now with smart dirty tracking and zero-copy detection
 ```
 
-#### Writable Batch Mode (174x speedup)
+#### Writable Batch Mode (89x speedup)
 
 ```python
 with NumPack("data.npk") as npk:
@@ -156,56 +198,67 @@ All benchmarks were conducted on macOS (Apple Silicon) using the Rust backend wi
 
 ### Performance Comparison (1M rows × 10 columns, Float32, 38.1MB)
 
-| Operation | NumPack | NPY | NPZ | Zarr | HDF5 | Parquet | NumPack Advantage |
-|-----------|---------|-----|-----|------|------|---------|-------------------|
-| **Full Load** | **8.27ms** 🥇 | 10.51ms | 181.62ms | 41.40ms | 58.39ms | 23.74ms | 1.3x vs NPY |
-| **Lazy Load** | **0.002ms** 🥇 | 0.107ms | N/A | 0.397ms | 0.080ms | N/A | 54x vs NPY |
-| **Replace 100 rows** | **0.047ms** 🥇 | 18.51ms | 1574ms | 9.08ms | 0.299ms | 187.65ms | 397x vs NPY |
-| **Append 100 rows** | **0.067ms** 🥇 | 27.09ms | 1582ms | 9.98ms | 0.212ms | 204.74ms | 405x vs NPY |
-| **Random Access (1K)** | 0.051ms | **0.010ms** 🥇 | 183.16ms | 3.46ms | 4.91ms | 22.80ms | 26x vs NPZ |
-| **Save** | 16.15ms | **7.19ms** 🥇 | 1378ms | 80.91ms | 55.66ms | 159.14ms | 2.2x slower |
+| Operation | NumPack | NPY | NPZ | Zarr | HDF5 | NumPack Advantage |
+|-----------|---------|-----|-----|------|------|-------------------|
+| **Full Load** | **4.11ms** 🥇 | 6.17ms | 165.03ms | 34.37ms | 54.02ms | **1.50x vs NPY** ⬆️ |
+| **Lazy Load** | **0.002ms** 🥇 | 0.091ms | N/A | 0.357ms | 0.102ms | **46x vs NPY** |
+| **Replace 100 rows** | **0.029ms** 🥇 | 13.29ms | 1493ms | 7.82ms | 0.50ms | **458x vs NPY** 🔥 |
+| **Append 100 rows** | **0.060ms** 🥇 | 20.58ms | 1499ms | 8.88ms | 0.21ms | **343x vs NPY** |
+| **Random Access (1K)** | 0.047ms | **0.010ms** 🥇 | 165.83ms | 2.93ms | 5.05ms | - |
+| **Save** | 11.76ms | **6.20ms** 🥇 | 1332ms | 69.11ms | 57.59ms | 1.9x slower |
 
 ### Performance Comparison (100K rows × 10 columns, Float32, 3.8MB)
 
 | Operation | NumPack | NPY | NPZ | Zarr | HDF5 | NumPack Advantage |
 |-----------|---------|-----|-----|------|------|-------------------|
-| **Full Load** | 0.98ms | **0.66ms** 🥇 | 18.65ms | 6.24ms | 6.35ms | 1.5x slower |
-| **Lazy Load** | **0.002ms** 🥇 | 0.103ms | N/A | 0.444ms | 0.085ms | 51x vs NPY |
-| **Replace 100 rows** | **0.039ms** 🥇 | 2.13ms | 159.19ms | 4.39ms | 0.208ms | 55x vs NPY |
-| **Append 100 rows** | **0.059ms** 🥇 | 3.29ms | 159.19ms | 4.59ms | 0.206ms | 56x vs NPY |
-| **Random Access (1K)** | 0.116ms | **0.010ms** 🥇 | 18.73ms | 1.89ms | 4.82ms | 12x vs NPZ |
+| **Full Load** | **0.34ms** 🥇 | 0.41ms | 16.79ms | 5.03ms | 5.68ms | **1.2x vs NPY** |
+| **Lazy Load** | **0.003ms** 🥇 | 0.088ms | N/A | 0.414ms | 0.079ms | **29x vs NPY** |
+| **Replace 100 rows** | **0.035ms** 🥇 | 1.36ms | 150.41ms | 3.55ms | 0.19ms | **39x vs NPY** |
+| **Append 100 rows** | **0.056ms** 🥇 | 1.66ms | 150.73ms | 3.53ms | 0.20ms | **30x vs NPY** |
+| **Random Access (1K)** | 0.055ms | **0.010ms** 🥇 | 16.32ms | 1.58ms | 4.66ms | - |
 
 ### Batch Mode Performance (1M rows × 10 columns)
 
 100 consecutive modify operations:
 
-| Mode | Time | Speedup |
-|------|------|---------|
-| Normal Mode | 856ms | 1.0x |
-| **Batch Mode** | 34ms | **25x faster** 🔥 |
-| **Writable Batch Mode** | 4.9ms | **174x faster** 🔥🔥 |
+| Mode | Time | Improvement from v0.4.0 | Speedup |
+|------|------|----------------------|---------|
+| Normal Mode | **409ms** | 52% faster ✨ | - |
+| **Batch Mode** | **19.5ms** | 43% faster ✨ | **21x faster** 🔥 |
+| **Writable Batch Mode** | **4.6ms** | 6% faster | **89x faster** 🔥 |
+
+💡 **Note:** All modes benefit from v0.4.2 I/O optimizations. Speedup ratios are calculated against the optimized Normal Mode baseline.
 
 ### Key Performance Highlights
 
 1. **Data Modification - Exceptional Performance** 🏆
-   - Replace operations: **397x faster** than NPY (large dataset)
-   - Append operations: **405x faster** than NPY (large dataset)
+   - Replace operations: **458x faster** than NPY (improved from 397x) 🔥
+   - Append operations: **343x faster** than NPY (large dataset)
    - Supports efficient in-place modification without full file rewrite
-   - NumPack's core advantage
+   - NumPack's core advantage - now even stronger
 
-2. **Data Loading - Industry Leading**
-   - Full load: **Fastest** for large datasets (8.27ms)
-   - Lazy load: **54x faster** than NPY mmap (0.002ms)
-   - Optimized batch data transfer with SIMD acceleration
+2. **Data Loading - Outstanding Improvements** ⭐ **Significantly Enhanced**
+   - Full load: **1.50x faster** than NPY (improved from 1.3x)
+   - Lazy load: **46x faster** than NPY mmap (0.002ms)
+   - **50% faster** than previous version (8.27ms → 4.11ms)
+   - Optimized with adaptive buffering and SIMD acceleration
 
-3. **Batch Processing - Revolutionary Performance**
-   - Batch Mode: **25-37x speedup** for batch operations
-   - Writable Batch Mode: **174x speedup** for frequent modifications
-   - Ideal for machine learning pipelines and data processing workflows
+3. **Batch Processing - Enhanced Performance** ⭐ **Improved**
+   - Batch Mode: **21x speedup**, 43% faster than before
+   - Writable Batch Mode: **89x speedup**, maintained excellence
+   - System-wide I/O optimizations benefit all modes
+   - Normal Mode also 52% faster from optimizations
 
 4. **Storage Efficiency**
    - File size identical to NPY
    - ~10% smaller than Zarr/NPZ (compressed formats)
+
+5. **New in v0.4.2** ✨
+   - Adaptive buffer sizing (256KB/4MB/16MB based on data size)
+   - Smart parallelization strategy
+   - Fast overwrite path for same-shape arrays
+   - SIMD-accelerated large file operations
+   - Intelligent dirty tracking for Batch Mode
 
 ### When to Use NumPack
 
@@ -227,7 +280,7 @@ All benchmarks were conducted on macOS (Apple Silicon) using the Rust backend wi
 ### 1. Use Writable Batch Mode for Frequent Modifications
 
 ```python
-# 174x speedup for frequent modifications
+# 89x speedup for frequent modifications
 with NumPack("data.npk") as npk:
     with npk.writable_batch_mode() as wb:
         for i in range(1000):
@@ -239,14 +292,14 @@ with NumPack("data.npk") as npk:
 ### 2. Use Batch Mode for Batch Operations
 
 ```python
-# 25-37x speedup for batch processing
+# 21x speedup for batch processing (43% faster than before!)
 with NumPack("data.npk") as npk:
     with npk.batch_mode():
         for i in range(1000):
             arr = npk.load('data')
             arr[:10] *= 2.0
             npk.save({'data': arr})
-# Single write on exit
+# Single write on exit with smart dirty tracking
 ```
 
 ### 3. Use Lazy Loading for Large Datasets

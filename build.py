@@ -2,12 +2,11 @@
 """
 NumPack conditional build script
 
-NumPack now only supports Rust backend builds (all platforms).
+NumPack only supports Rust backend builds on all platforms.
 
-Backward compatibility notes:
-- Early versions supported pure Python backend, now removed
+Build requirements:
 - All platforms (including Windows) require Rust toolchain
-- Environment variable NUMPACK_PYTHON_ONLY=1 is deprecated, kept for backward compatibility only
+- Environment variable NUMPACK_PYTHON_ONLY=1 is deprecated and will be ignored
 
 Recommended usage:
 - Development mode: maturin develop --release
@@ -74,21 +73,21 @@ def is_windows():
 def should_use_python_only():
     """Decide whether to use pure Python build
     
-    Note: NumPack no longer supports pure Python builds. This function is kept for backward compatibility only.
-    All platforms (including Windows) must now use the Rust backend.
+    Note: NumPack only supports Rust builds. This function is kept for backward compatibility only.
+    All platforms (including Windows) require Rust backend.
     """
     # Check environment variable
     if os.environ.get('NUMPACK_PYTHON_ONLY', '').lower() in ['1', 'true', 'yes']:
         print("=" * 60)
         print("WARNING: NUMPACK_PYTHON_ONLY is deprecated")
-        print("NumPack no longer supports pure Python backend, all platforms require Rust toolchain")
+        print("NumPack only supports Rust backend, all platforms require Rust toolchain")
         print("This environment variable will be ignored and Rust build will be used")
         print("=" * 60)
         return False
     
-    # Windows now also uses Rust backend
+    # Windows also uses Rust backend
     if is_windows():
-        print("Note: Windows platform now also uses Rust backend build")
+        print("Note: Windows platform uses Rust backend build")
     
     return False
 
@@ -111,12 +110,12 @@ def restore_original_config():
 def setup_python_only_build():
     """Setup pure Python build
     
-    Note: This function is deprecated, NumPack no longer supports pure Python builds.
+    Note: This function is deprecated, NumPack only supports Rust builds.
     """
     print("=" * 60)
     print("ERROR: Attempting to use pure Python build mode")
     print("")
-    print("NumPack has fully migrated to Rust backend and no longer supports pure Python builds.")
+    print("NumPack only supports Rust backend builds.")
     print("")
     print("Please ensure Rust toolchain is installed:")
     print("  - Visit https://rustup.rs/ to install Rust")

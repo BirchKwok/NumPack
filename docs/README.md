@@ -320,8 +320,4 @@ Copyright 2025 NumPack Contributors
 
 ---
 
-## 📚 Documentation Version
-
-- **Version**: 0.4.1
-- **Backend**: Rust (high-performance)
 

@@ -2,11 +2,11 @@
 
 ## Overview
 
-NumPack is a high-performance array storage library that provides cross-platform compatibility between Python and Rust implementations. This specification defines the unified high-performance binary file format protocol used by NumPack for persistent storage of multidimensional arrays.
+NumPack is a high-performance array storage library with Rust backend that provides cross-platform compatibility. This specification defines the unified high-performance binary file format protocol used by NumPack for persistent storage of multidimensional arrays.
 
 ## Key Features
 
-- **Cross-Platform Compatibility**: Files created by Python backend can be read by Rust backend and vice versa
+- **Cross-Platform Compatibility**: Files are compatible across all platforms using Rust backend
 - **High-Performance Binary Format**: Custom binary format optimized for speed and efficiency
 - **Zero-Copy Operations**: Memory-mapped file access for optimal performance
 - **Data Type Safety**: Strict type mapping between Python NumPy and Rust data types
@@ -27,7 +27,7 @@ NumPack stores data as a directory containing multiple files:
 
 ## Binary Format (High-Performance Standard)
 
-NumPack uses a custom high-performance binary format for all metadata storage. This ensures maximum speed and perfect compatibility between Python and Rust implementations.
+NumPack uses a custom high-performance binary format for all metadata storage. This ensures maximum speed and cross-platform compatibility with Rust backend.
 
 ### Metadata File Structure (`metadata.npkm`)
 
@@ -163,7 +163,7 @@ The version field in metadata indicates format compatibility:
 NumPack uses a custom binary format as the single, unified format across all platforms:
 
 1. **Maximum Performance**: Optimized for speed and minimal overhead
-2. **Perfect Compatibility**: 100% interoperability between Python and Rust
+2. **Perfect Compatibility**: 100% cross-platform compatibility with Rust backend
 3. **Efficient Storage**: Compact binary representation
 4. **Zero Dependencies**: No external serialization libraries required
 
@@ -203,12 +203,6 @@ NumPack uses a custom binary format as the single, unified format across all pla
 
 ## Implementation Notes
 
-### Python Backend
-
-- **Format**: Custom binary format with `struct` module
-- **Libraries**: Standard library only, no external dependencies
-- **Memory Management**: Automatic garbage collection with memory mapping
-
 ### Rust Backend
 
 - **Serialization**: Custom binary serialization for maximum performance
@@ -238,7 +232,7 @@ Previous versions of NumPack may have used MessagePack format. The current imple
 
 NumPack guarantees:
 - **Forward Compatibility**: Newer versions can read older binary formats
-- **Cross-Language**: Files remain compatible between Python and Rust implementations
+- **Cross-Platform**: Files remain compatible across all platforms with Rust backend
 - **Migration Path**: Clear upgrade paths for format changes
 
 ---
