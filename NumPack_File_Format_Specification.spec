@@ -10,7 +10,6 @@ NumPack is a high-performance array storage library with Rust backend that provi
 - **High-Performance Binary Format**: Custom binary format optimized for speed and efficiency
 - **Zero-Copy Operations**: Memory-mapped file access for optimal performance
 - **Data Type Safety**: Strict type mapping between Python NumPy and Rust data types
-- **Concurrent Access**: File locking mechanisms for safe multi-process access
 - **Compression Support**: Built-in support for zstd compression
 
 ## Directory Structure
@@ -21,8 +20,7 @@ NumPack stores data as a directory containing multiple files:
 <numpack_directory>/
 ├── metadata.npkm               # Metadata file (Binary format)
 ├── data_<array_name>.npkd      # Raw binary data files (one per array)
-├── deleted_<array_name>.npkb   # Deletion bitmap files (one per array, optional)
-└── metadata.npkm.lock          # File lock (temporary, for concurrent access)
+└── deleted_<array_name>.npkb   # Deletion bitmap files (one per array, optional)
 ```
 
 ## Binary Format (High-Performance Standard)
@@ -137,15 +135,6 @@ For large arrays, NumPack supports block-level compression:
 ## Byte Order
 
 All multi-byte integers and floating-point numbers are stored in **little-endian** format for cross-platform compatibility.
-
-## File Locking
-
-NumPack implements file locking to ensure safe concurrent access:
-
-- **Lock File**: `<directory>/metadata.npkm.lock`
-- **Scope**: Protects metadata read/write operations
-- **Type**: Advisory file lock using platform-specific mechanisms
-- **Timeout**: Operations may timeout if lock cannot be acquired
 
 ## Version Control
 
