@@ -206,17 +206,17 @@ All benchmarks were conducted on macOS (Apple Silicon) using the Rust backend wi
 | **Append 100 rows** | **0.111ms** 🥇 | 18.81ms | 1521ms | 8.86ms | 0.23ms | **169x vs NPY** |
 | **Save** | 12.45ms | **6.11ms** 🥇 | 1342ms | 69.80ms | 55.73ms | 2.0x slower |
 
-#### 随机访问性能 (Random Access)
+#### Random Access Performance
 
-| Batch Size | NumPack | NPY (真实读取) | NPZ | Zarr | HDF5 | NumPack Advantage |
+| Batch Size | NumPack | NPY (actual read) | NPZ | Zarr | HDF5 | NumPack Advantage |
 |------------|---------|---------------|-----|------|------|-------------------|
 | **100 indices** | 0.004ms | **0.002ms** 🥇 | 168.66ms | 2.97ms | 0.59ms | 2.0x slower |
 | **1K indices** | 0.025ms | **0.021ms** 🥇 | 168.97ms | 3.36ms | 4.72ms | 1.2x slower |
 | **10K indices** | 5.13ms | **0.104ms** 🥇 | 168.16ms | 17.01ms | 506.86ms | 49x slower |
 
-#### 顺序访问性能 (Sequential Access)
+#### Sequential Access Performance
 
-| Batch Size | NumPack | NPY (真实读取) | NPZ | Zarr | HDF5 | NumPack Advantage |
+| Batch Size | NumPack | NPY (actual read) | NPZ | Zarr | HDF5 | NumPack Advantage |
 |------------|---------|---------------|-----|------|------|-------------------|
 | **100 rows** | 0.003ms | **0.001ms** 🥇 | 168.57ms | 2.72ms | 0.14ms | 3x slower |
 | **1K rows** | 0.015ms | **0.002ms** 🥇 | 169.39ms | 2.81ms | 0.17ms | 8x slower |
@@ -231,17 +231,17 @@ All benchmarks were conducted on macOS (Apple Silicon) using the Rust backend wi
 | **Replace 100 rows** | **0.034ms** 🥇 | 1.66ms | 152.45ms | 3.96ms | 0.21ms | **49x vs NPY** |
 | **Append 100 rows** | **0.061ms** 🥇 | 1.73ms | 153.94ms | 4.85ms | 0.22ms | **28x vs NPY** |
 
-#### 随机访问性能 (Random Access)
+#### Random Access Performance
 
-| Batch Size | NumPack | NPY (真实读取) | NPZ | Zarr | HDF5 | NumPack Advantage |
+| Batch Size | NumPack | NPY (actual read) | NPZ | Zarr | HDF5 | NumPack Advantage |
 |------------|---------|---------------|-----|------|------|-------------------|
 | **100 indices** | 0.004ms | **0.003ms** 🥇 | 17.06ms | 1.31ms | 0.58ms | 1.3x slower |
 | **1K indices** | 0.404ms | **0.011ms** 🥇 | 17.43ms | 1.56ms | 4.52ms | 37x slower |
 | **10K indices** | 0.457ms | **0.118ms** 🥇 | 17.31ms | 4.94ms | 161.61ms | 3.9x slower |
 
-#### 顺序访问性能 (Sequential Access)
+#### Sequential Access Performance
 
-| Batch Size | NumPack | NPY (真实读取) | NPZ | Zarr | HDF5 | NumPack Advantage |
+| Batch Size | NumPack | NPY (actual read) | NPZ | Zarr | HDF5 | NumPack Advantage |
 |------------|---------|---------------|-----|------|------|-------------------|
 | **100 rows** | 0.003ms | **0.001ms** 🥇 | 17.21ms | 1.20ms | 0.12ms | 3x slower |
 | **1K rows** | 0.015ms | **0.002ms** 🥇 | 17.05ms | 1.52ms | 0.24ms | 9x slower |
