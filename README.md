@@ -4,12 +4,12 @@ NumPack is a high-performance array storage library that combines Rust's perform
 
 ## Key Features
 
-- 🚀 **458x faster** row replacement than NPY (improved from 397x)
-- ⚡ **343x faster** data append than NPY  
-- 💨 **46x faster** lazy loading than NPY mmap
-- 📖 **1.50x faster** full data loading than NPY (improved from 1.3x)
+- 🚀 **457x faster** row replacement than NPY
+- ⚡ **169x faster** data append than NPY  
+- 💨 **41x faster** lazy loading than NPY mmap
+- 📖 **1.80x faster** full data loading than NPY (improved from 1.50x) ⬆️
 - 🔄 **21x speedup** with Batch Mode for frequent modifications
-- ⚡ **89x speedup** with Writable Batch Mode
+- ⚡ **92x speedup** with Writable Batch Mode (improved from 89x) ⬆️
 - 💾 Zero-copy operations with minimal memory footprint
 - 🛠 Seamless integration with existing NumPy workflows
 
@@ -200,60 +200,103 @@ All benchmarks were conducted on macOS (Apple Silicon) using the Rust backend wi
 
 | Operation | NumPack | NPY | NPZ | Zarr | HDF5 | NumPack Advantage |
 |-----------|---------|-----|-----|------|------|-------------------|
-| **Full Load** | **4.11ms** 🥇 | 6.17ms | 165.03ms | 34.37ms | 54.02ms | **1.50x vs NPY** ⬆️ |
-| **Lazy Load** | **0.002ms** 🥇 | 0.091ms | N/A | 0.357ms | 0.102ms | **46x vs NPY** |
-| **Replace 100 rows** | **0.029ms** 🥇 | 13.29ms | 1493ms | 7.82ms | 0.50ms | **458x vs NPY** 🔥 |
-| **Append 100 rows** | **0.060ms** 🥇 | 20.58ms | 1499ms | 8.88ms | 0.21ms | **343x vs NPY** |
-| **Random Access (1K)** | 0.047ms | **0.010ms** 🥇 | 165.83ms | 2.93ms | 5.05ms | - |
-| **Save** | 11.76ms | **6.20ms** 🥇 | 1332ms | 69.11ms | 57.59ms | 1.9x slower |
+| **Full Load** | **3.67ms** 🥇 | 6.62ms | 168.74ms | 34.42ms | 50.05ms | **1.80x vs NPY** ⬆️ |
+| **Lazy Load** | **0.002ms** 🥇 | 0.099ms | N/A | 0.377ms | 0.087ms | **41x vs NPY** |
+| **Replace 100 rows** | **0.032ms** 🥇 | 14.61ms | 1515ms | 7.79ms | 0.31ms | **457x vs NPY** 🔥 |
+| **Append 100 rows** | **0.111ms** 🥇 | 18.81ms | 1521ms | 8.86ms | 0.23ms | **169x vs NPY** |
+| **Save** | 12.45ms | **6.11ms** 🥇 | 1342ms | 69.80ms | 55.73ms | 2.0x slower |
+
+#### 随机访问性能 (Random Access)
+
+| Batch Size | NumPack | NPY (真实读取) | NPZ | Zarr | HDF5 | NumPack Advantage |
+|------------|---------|---------------|-----|------|------|-------------------|
+| **100 indices** | 0.004ms | **0.002ms** 🥇 | 168.66ms | 2.97ms | 0.59ms | 2.0x slower |
+| **1K indices** | 0.025ms | **0.021ms** 🥇 | 168.97ms | 3.36ms | 4.72ms | 1.2x slower |
+| **10K indices** | 5.13ms | **0.104ms** 🥇 | 168.16ms | 17.01ms | 506.86ms | 49x slower |
+
+#### 顺序访问性能 (Sequential Access)
+
+| Batch Size | NumPack | NPY (真实读取) | NPZ | Zarr | HDF5 | NumPack Advantage |
+|------------|---------|---------------|-----|------|------|-------------------|
+| **100 rows** | 0.003ms | **0.001ms** 🥇 | 168.57ms | 2.72ms | 0.14ms | 3x slower |
+| **1K rows** | 0.015ms | **0.002ms** 🥇 | 169.39ms | 2.81ms | 0.17ms | 8x slower |
+| **10K rows** | 0.169ms | **0.008ms** 🥇 | 168.47ms | 2.95ms | 0.63ms | 21x slower |
 
 ### Performance Comparison (100K rows × 10 columns, Float32, 3.8MB)
 
 | Operation | NumPack | NPY | NPZ | Zarr | HDF5 | NumPack Advantage |
 |-----------|---------|-----|-----|------|------|-------------------|
-| **Full Load** | **0.34ms** 🥇 | 0.41ms | 16.79ms | 5.03ms | 5.68ms | **1.2x vs NPY** |
-| **Lazy Load** | **0.003ms** 🥇 | 0.088ms | N/A | 0.414ms | 0.079ms | **29x vs NPY** |
-| **Replace 100 rows** | **0.035ms** 🥇 | 1.36ms | 150.41ms | 3.55ms | 0.19ms | **39x vs NPY** |
-| **Append 100 rows** | **0.056ms** 🥇 | 1.66ms | 150.73ms | 3.53ms | 0.20ms | **30x vs NPY** |
-| **Random Access (1K)** | 0.055ms | **0.010ms** 🥇 | 16.32ms | 1.58ms | 4.66ms | - |
+| **Full Load** | **0.345ms** 🥇 | 0.438ms | 17.33ms | 5.08ms | 5.79ms | **1.27x vs NPY** |
+| **Lazy Load** | **0.002ms** 🥇 | 0.093ms | N/A | 0.369ms | 0.092ms | **39x vs NPY** |
+| **Replace 100 rows** | **0.034ms** 🥇 | 1.66ms | 152.45ms | 3.96ms | 0.21ms | **49x vs NPY** |
+| **Append 100 rows** | **0.061ms** 🥇 | 1.73ms | 153.94ms | 4.85ms | 0.22ms | **28x vs NPY** |
+
+#### 随机访问性能 (Random Access)
+
+| Batch Size | NumPack | NPY (真实读取) | NPZ | Zarr | HDF5 | NumPack Advantage |
+|------------|---------|---------------|-----|------|------|-------------------|
+| **100 indices** | 0.004ms | **0.003ms** 🥇 | 17.06ms | 1.31ms | 0.58ms | 1.3x slower |
+| **1K indices** | 0.404ms | **0.011ms** 🥇 | 17.43ms | 1.56ms | 4.52ms | 37x slower |
+| **10K indices** | 0.457ms | **0.118ms** 🥇 | 17.31ms | 4.94ms | 161.61ms | 3.9x slower |
+
+#### 顺序访问性能 (Sequential Access)
+
+| Batch Size | NumPack | NPY (真实读取) | NPZ | Zarr | HDF5 | NumPack Advantage |
+|------------|---------|---------------|-----|------|------|-------------------|
+| **100 rows** | 0.003ms | **0.001ms** 🥇 | 17.21ms | 1.20ms | 0.12ms | 3x slower |
+| **1K rows** | 0.015ms | **0.002ms** 🥇 | 17.05ms | 1.52ms | 0.24ms | 9x slower |
+| **10K rows** | 0.152ms | **0.008ms** 🥇 | 17.27ms | 1.60ms | 0.61ms | 19x slower |
 
 ### Batch Mode Performance (1M rows × 10 columns)
 
 100 consecutive modify operations:
 
-| Mode | Time | Improvement from v0.4.0 | Speedup |
-|------|------|----------------------|---------|
-| Normal Mode | **409ms** | 52% faster ✨ | - |
-| **Batch Mode** | **19.5ms** | 43% faster ✨ | **21x faster** 🔥 |
-| **Writable Batch Mode** | **4.6ms** | 6% faster | **89x faster** 🔥 |
+| Mode | Time | Speedup vs Normal |
+|------|------|-------------------|
+| Normal Mode | **417ms** | - |
+| **Batch Mode** | **19.9ms** | **21x faster** 🔥 |
+| **Writable Batch Mode** | **4.5ms** | **92x faster** 🔥 |
 
-💡 **Note:** All modes benefit from v0.4.2 I/O optimizations. Speedup ratios are calculated against the optimized Normal Mode baseline.
+💡 **Note:** All modes benefit from I/O optimizations. Speedup ratios are calculated against Normal Mode baseline.
 
 ### Key Performance Highlights
 
 1. **Data Modification - Exceptional Performance** 🏆
-   - Replace operations: **458x faster** than NPY (improved from 397x) 🔥
-   - Append operations: **343x faster** than NPY (large dataset)
+   - Replace operations: **457x faster** than NPY 🔥
+   - Append operations: **169x faster** than NPY (large dataset)
    - Supports efficient in-place modification without full file rewrite
-   - NumPack's core advantage - now even stronger
+   - NumPack's core advantage for write-heavy workloads
 
-2. **Data Loading - Outstanding Improvements** ⭐ **Significantly Enhanced**
-   - Full load: **1.50x faster** than NPY (improved from 1.3x)
-   - Lazy load: **46x faster** than NPY mmap (0.002ms)
-   - **50% faster** than previous version (8.27ms → 4.11ms)
+2. **Data Loading - Outstanding Performance** ⭐ **Enhanced**
+   - Full load: **1.80x faster** than NPY (3.67ms vs 6.62ms) ⬆️
+   - Lazy load: **41x faster** than NPY mmap (0.002ms vs 0.099ms)
    - Optimized with adaptive buffering and SIMD acceleration
 
-3. **Batch Processing - Enhanced Performance** ⭐ **Improved**
-   - Batch Mode: **21x speedup**, 43% faster than before
-   - Writable Batch Mode: **89x speedup**, maintained excellence
+3. **Batch Processing - Excellent Performance** ⭐ **Strong**
+   - Batch Mode: **21x speedup** (19.9ms vs 417ms normal mode)
+   - Writable Batch Mode: **92x speedup** (4.5ms) ⬆️
    - System-wide I/O optimizations benefit all modes
-   - Normal Mode also 52% faster from optimizations
 
-4. **Storage Efficiency**
-   - File size identical to NPY
+4. **Sequential Access - Competitive Performance** 🚀 **NEW**
+   - Small batch (100 rows): 3x slower than NPY (negligible 0.002ms difference)
+   - Medium batch (1K rows): 8x slower (0.015ms vs 0.002ms, 0.013ms difference)
+   - Large batch (10K rows): 21x slower (0.169ms vs 0.008ms, 0.161ms difference)
+   - Still significantly faster than all other formats (Zarr: 2.95ms, HDF5: 0.63ms, NPZ: 168ms)
+   - **Note:** Tests use real data reads; NPY mmap view-only is faster but not practical
+
+5. **Random Access - NPY Leads, But Context Matters** ⚠️ **NEW**
+   - Small batch (100 indices): NPY faster (0.002ms vs 0.004ms, 2x)
+   - Medium batch (1K indices): NPY faster (0.021ms vs 0.025ms, 1.2x)
+   - Large batch (10K indices): NPY much faster (0.104ms vs 5.13ms, 49x)
+   - **However**: NumPack still **99x faster** than HDF5 for 10K random access
+   - **Key trade-off**: NPY excels at random read BUT 457x slower on writes
+   - For mixed read-write workloads, NumPack offers better overall balance
+
+6. **Storage Efficiency**
+   - File size identical to NPY (38.15MB)
    - ~10% smaller than Zarr/NPZ (compressed formats)
 
-5. **New in v0.4.2** ✨
+7. **New in v0.4.2** ✨
    - Adaptive buffer sizing (256KB/4MB/16MB based on data size)
    - Smart parallelization strategy
    - Fast overwrite path for same-shape arrays
@@ -262,18 +305,29 @@ All benchmarks were conducted on macOS (Apple Silicon) using the Rust backend wi
 
 ### When to Use NumPack
 
-✅ **Strongly Recommended** (90% of use cases):
+✅ **Strongly Recommended** (85% of use cases):
 - Machine learning and deep learning pipelines
 - Real-time data stream processing
 - Data annotation and correction workflows
 - Feature stores with dynamic updates
-- Any scenario requiring frequent data modifications
-- Fast data loading requirements
+- **Any scenario requiring frequent data modifications** (457x faster writes!)
+- Fast data loading requirements (1.8x faster than NPY)
+- Balanced read-write workloads
+- Sequential data processing workflows
 
-⚠️ **Consider Alternatives** (10% of use cases):
-- Write-once, never modify → Use NPY (faster initial write)
-- Frequent single-row access → Use NPY mmap
+⚠️ **Consider Alternatives** (15% of use cases):
+- Write-once, never modify → Use NPY (2x faster write, but 457x slower for updates)
+- **Frequent random access** → Use NPY (2-49x faster depending on batch size)
+- Pure read-only with heavy random/sequential access → Use NPY mmap
 - Extreme compression requirements → Use NPZ (10% smaller, but 1000x slower)
+
+💡 **Performance Trade-offs & Insights**:
+- **Write operations**: NumPack dominant (457x faster replacements, 169x faster appends)
+- **Read operations**: NPY faster for random/sequential access (1.2-49x depending on pattern)
+- **Overall balance**: NumPack excels in mixed read-write workloads
+- For pure read-heavy (>90% reads), NPY may be better
+- For write-intensive or balanced workloads (>10% writes), NumPack is superior
+- **Key insight**: Tests use real data reads; NPY mmap view-only is faster but not practical
 
 ## Best Practices
 
@@ -334,8 +388,16 @@ All benchmarks use:
 - Pure operation time (excluding file open/close overhead)
 - Float32 arrays
 - macOS Apple Silicon (results may vary by platform)
+- Comprehensive testing across multiple formats (NPY, NPZ, Zarr, HDF5, Parquet, Arrow/Feather)
 
-For complete benchmark code, see `comprehensive_format_benchmark.py`.
+**New in this version**: 
+- Added random access and sequential access benchmarks across different batch sizes (100, 1K, 10K)
+- **Important**: NPY mmap tests force actual data reads using `np.array()` conversion, not just view creation
+  - This provides fair comparison as NumPack returns actual data
+  - Mmap view-only access is faster but not practical for real workloads
+  - Results reflect real-world performance when data is actually used
+
+For complete benchmark code, see `unified_benchmark.py`.
 
 ## Contributing
 

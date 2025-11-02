@@ -311,21 +311,98 @@ class FormatBenchmark:
             self.results.add(format_name, "Append 100", time_ms)
             print(f"  ✓ Append 100: {time_ms:.3f}ms")
         
-        # Random Access (1000 indices)
-        random_indices = np.random.randint(0, min(len(data), 10000), 1000).tolist()
+        # ==================== Random Access Tests ====================
+        print(f"\n  🎲 Testing Random Access Performance...")
         
-        npk_random = NumPack(path)
-        npk_random.open()
+        # Random Access - Small Batch (100 indices)
+        random_indices_small = np.random.randint(0, min(len(data), 10000), 100).tolist()
+        npk_random_small = NumPack(path)
+        npk_random_small.open()
         
-        def random_access_op():
-            _ = npk_random.getitem(array_name, random_indices)
+        def random_access_small_op():
+            _ = npk_random_small.getitem(array_name, random_indices_small)
         
-        time_ms = self.benchmark_operation(format_name, "Random Access (1K)", random_access_op, number=5, repeat=3)
-        npk_random.close()
+        time_ms = self.benchmark_operation(format_name, "Random Access (100)", random_access_small_op, number=10, repeat=3)
+        npk_random_small.close()
+        
+        if time_ms:
+            self.results.add(format_name, "Random Access (100)", time_ms)
+            print(f"  ✓ Random Access (100): {time_ms:.3f}ms")
+        
+        # Random Access - Medium Batch (1000 indices)
+        random_indices_medium = np.random.randint(0, min(len(data), 10000), 1000).tolist()
+        npk_random_medium = NumPack(path)
+        npk_random_medium.open()
+        
+        def random_access_medium_op():
+            _ = npk_random_medium.getitem(array_name, random_indices_medium)
+        
+        time_ms = self.benchmark_operation(format_name, "Random Access (1K)", random_access_medium_op, number=5, repeat=3)
+        npk_random_medium.close()
         
         if time_ms:
             self.results.add(format_name, "Random Access (1K)", time_ms)
             print(f"  ✓ Random Access (1K): {time_ms:.3f}ms")
+        
+        # Random Access - Large Batch (10000 indices)
+        random_indices_large = np.random.randint(0, len(data), 10000).tolist()
+        npk_random_large = NumPack(path)
+        npk_random_large.open()
+        
+        def random_access_large_op():
+            _ = npk_random_large.getitem(array_name, random_indices_large)
+        
+        time_ms = self.benchmark_operation(format_name, "Random Access (10K)", random_access_large_op, number=3, repeat=3)
+        npk_random_large.close()
+        
+        if time_ms:
+            self.results.add(format_name, "Random Access (10K)", time_ms)
+            print(f"  ✓ Random Access (10K): {time_ms:.3f}ms")
+        
+        # ==================== Sequential Access Tests ====================
+        print(f"\n  📊 Testing Sequential Access Performance...")
+        
+        # Sequential Access - Small Batch (100 consecutive rows)
+        npk_seq_small = NumPack(path)
+        npk_seq_small.open()
+        
+        def seq_access_small_op():
+            _ = npk_seq_small.getitem(array_name, list(range(100)))
+        
+        time_ms = self.benchmark_operation(format_name, "Sequential Access (100)", seq_access_small_op, number=10, repeat=3)
+        npk_seq_small.close()
+        
+        if time_ms:
+            self.results.add(format_name, "Sequential Access (100)", time_ms)
+            print(f"  ✓ Sequential Access (100): {time_ms:.3f}ms")
+        
+        # Sequential Access - Medium Batch (1000 consecutive rows)
+        npk_seq_medium = NumPack(path)
+        npk_seq_medium.open()
+        
+        def seq_access_medium_op():
+            _ = npk_seq_medium.getitem(array_name, list(range(1000)))
+        
+        time_ms = self.benchmark_operation(format_name, "Sequential Access (1K)", seq_access_medium_op, number=5, repeat=3)
+        npk_seq_medium.close()
+        
+        if time_ms:
+            self.results.add(format_name, "Sequential Access (1K)", time_ms)
+            print(f"  ✓ Sequential Access (1K): {time_ms:.3f}ms")
+        
+        # Sequential Access - Large Batch (10000 consecutive rows)
+        npk_seq_large = NumPack(path)
+        npk_seq_large.open()
+        
+        def seq_access_large_op():
+            _ = npk_seq_large.getitem(array_name, list(range(10000)))
+        
+        time_ms = self.benchmark_operation(format_name, "Sequential Access (10K)", seq_access_large_op, number=3, repeat=3)
+        npk_seq_large.close()
+        
+        if time_ms:
+            self.results.add(format_name, "Sequential Access (10K)", time_ms)
+            print(f"  ✓ Sequential Access (10K): {time_ms:.3f}ms")
         
         # ==================== Batch Mode 测试 ====================
         print(f"\n  🚀 Testing Batch Mode Performance...")
@@ -487,16 +564,75 @@ class FormatBenchmark:
             self.results.add(format_name, "Append 100", time_ms, note="full rewrite")
             print(f"  ✓ Append 100: {time_ms:.3f}ms (full rewrite)")
         
-        # Random Access
-        random_indices = np.random.randint(0, min(len(data), 10000), 1000)
+        # Random Access Tests
+        # Note: Force actual data access by converting to array (not just creating view)
+        # Small Batch (100)
+        random_indices_small = np.random.randint(0, min(len(data), 10000), 100)
         
-        def random_access_op():
-            _ = arr_mmap[random_indices]
+        def random_access_small_op():
+            result = arr_mmap[random_indices_small]
+            _ = np.array(result)  # Force actual data read from mmap
         
-        time_ms = self.benchmark_operation(format_name, "Random Access (1K)", random_access_op, number=5, repeat=3)
+        time_ms = self.benchmark_operation(format_name, "Random Access (100)", random_access_small_op, number=10, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Random Access (100)", time_ms)
+            print(f"  ✓ Random Access (100): {time_ms:.3f}ms")
+        
+        # Medium Batch (1K)
+        random_indices_medium = np.random.randint(0, min(len(data), 10000), 1000)
+        
+        def random_access_medium_op():
+            result = arr_mmap[random_indices_medium]
+            _ = np.array(result)  # Force actual data read from mmap
+        
+        time_ms = self.benchmark_operation(format_name, "Random Access (1K)", random_access_medium_op, number=5, repeat=3)
         if time_ms:
             self.results.add(format_name, "Random Access (1K)", time_ms)
             print(f"  ✓ Random Access (1K): {time_ms:.3f}ms")
+        
+        # Large Batch (10K)
+        random_indices_large = np.random.randint(0, len(data), 10000)
+        
+        def random_access_large_op():
+            result = arr_mmap[random_indices_large]
+            _ = np.array(result)  # Force actual data read from mmap
+        
+        time_ms = self.benchmark_operation(format_name, "Random Access (10K)", random_access_large_op, number=3, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Random Access (10K)", time_ms)
+            print(f"  ✓ Random Access (10K): {time_ms:.3f}ms")
+        
+        # Sequential Access Tests
+        # Note: Force actual data access by converting to array (not just creating view)
+        # Small Batch (100)
+        def seq_access_small_op():
+            result = arr_mmap[:100]
+            _ = np.array(result)  # Force actual data read from mmap
+        
+        time_ms = self.benchmark_operation(format_name, "Sequential Access (100)", seq_access_small_op, number=10, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Sequential Access (100)", time_ms)
+            print(f"  ✓ Sequential Access (100): {time_ms:.3f}ms")
+        
+        # Medium Batch (1K)
+        def seq_access_medium_op():
+            result = arr_mmap[:1000]
+            _ = np.array(result)  # Force actual data read from mmap
+        
+        time_ms = self.benchmark_operation(format_name, "Sequential Access (1K)", seq_access_medium_op, number=5, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Sequential Access (1K)", time_ms)
+            print(f"  ✓ Sequential Access (1K): {time_ms:.3f}ms")
+        
+        # Large Batch (10K)
+        def seq_access_large_op():
+            result = arr_mmap[:10000]
+            _ = np.array(result)  # Force actual data read from mmap
+        
+        time_ms = self.benchmark_operation(format_name, "Sequential Access (10K)", seq_access_large_op, number=3, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Sequential Access (10K)", time_ms)
+            print(f"  ✓ Sequential Access (10K): {time_ms:.3f}ms")
     
     # ==================== NPZ 测试 ====================
     
@@ -559,18 +695,79 @@ class FormatBenchmark:
             self.results.add(format_name, "Append 100", time_ms, note="full rewrite")
             print(f"  ✓ Append 100: {time_ms:.3f}ms (full rewrite)")
         
-        # Random Access
-        random_indices = np.random.randint(0, min(len(data), 10000), 1000)
+        # Random Access Tests
+        # Small Batch (100)
+        random_indices_small = np.random.randint(0, min(len(data), 10000), 100)
         
-        def random_access_op():
+        def random_access_small_op():
             with np.load(path) as npz:
                 arr = npz[array_name]
-                _ = arr[random_indices]
+                _ = arr[random_indices_small]
         
-        time_ms = self.benchmark_operation(format_name, "Random Access (1K)", random_access_op, number=5, repeat=3)
+        time_ms = self.benchmark_operation(format_name, "Random Access (100)", random_access_small_op, number=10, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Random Access (100)", time_ms)
+            print(f"  ✓ Random Access (100): {time_ms:.3f}ms")
+        
+        # Medium Batch (1K)
+        random_indices_medium = np.random.randint(0, min(len(data), 10000), 1000)
+        
+        def random_access_medium_op():
+            with np.load(path) as npz:
+                arr = npz[array_name]
+                _ = arr[random_indices_medium]
+        
+        time_ms = self.benchmark_operation(format_name, "Random Access (1K)", random_access_medium_op, number=5, repeat=3)
         if time_ms:
             self.results.add(format_name, "Random Access (1K)", time_ms)
             print(f"  ✓ Random Access (1K): {time_ms:.3f}ms")
+        
+        # Large Batch (10K)
+        random_indices_large = np.random.randint(0, len(data), 10000)
+        
+        def random_access_large_op():
+            with np.load(path) as npz:
+                arr = npz[array_name]
+                _ = arr[random_indices_large]
+        
+        time_ms = self.benchmark_operation(format_name, "Random Access (10K)", random_access_large_op, number=3, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Random Access (10K)", time_ms)
+            print(f"  ✓ Random Access (10K): {time_ms:.3f}ms")
+        
+        # Sequential Access Tests
+        # Small Batch (100)
+        def seq_access_small_op():
+            with np.load(path) as npz:
+                arr = npz[array_name]
+                _ = arr[:100]
+        
+        time_ms = self.benchmark_operation(format_name, "Sequential Access (100)", seq_access_small_op, number=10, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Sequential Access (100)", time_ms)
+            print(f"  ✓ Sequential Access (100): {time_ms:.3f}ms")
+        
+        # Medium Batch (1K)
+        def seq_access_medium_op():
+            with np.load(path) as npz:
+                arr = npz[array_name]
+                _ = arr[:1000]
+        
+        time_ms = self.benchmark_operation(format_name, "Sequential Access (1K)", seq_access_medium_op, number=5, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Sequential Access (1K)", time_ms)
+            print(f"  ✓ Sequential Access (1K): {time_ms:.3f}ms")
+        
+        # Large Batch (10K)
+        def seq_access_large_op():
+            with np.load(path) as npz:
+                arr = npz[array_name]
+                _ = arr[:10000]
+        
+        time_ms = self.benchmark_operation(format_name, "Sequential Access (10K)", seq_access_large_op, number=3, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Sequential Access (10K)", time_ms)
+            print(f"  ✓ Sequential Access (10K): {time_ms:.3f}ms")
     
     # ==================== Zarr 测试 ====================
     
@@ -665,16 +862,67 @@ class FormatBenchmark:
             self.results.add(format_name, "Append 100", time_ms)
             print(f"  ✓ Append 100: {time_ms:.3f}ms")
         
-        # Random Access
-        random_indices = np.random.randint(0, min(len(data), 10000), 1000)
+        # Random Access Tests
+        # Small Batch (100)
+        random_indices_small = np.random.randint(0, min(len(data), 10000), 100)
         
-        def random_access_op():
-            _ = z[random_indices]
+        def random_access_small_op():
+            _ = z[random_indices_small]
         
-        time_ms = self.benchmark_operation(format_name, "Random Access (1K)", random_access_op, number=5, repeat=3)
+        time_ms = self.benchmark_operation(format_name, "Random Access (100)", random_access_small_op, number=10, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Random Access (100)", time_ms)
+            print(f"  ✓ Random Access (100): {time_ms:.3f}ms")
+        
+        # Medium Batch (1K)
+        random_indices_medium = np.random.randint(0, min(len(data), 10000), 1000)
+        
+        def random_access_medium_op():
+            _ = z[random_indices_medium]
+        
+        time_ms = self.benchmark_operation(format_name, "Random Access (1K)", random_access_medium_op, number=5, repeat=3)
         if time_ms:
             self.results.add(format_name, "Random Access (1K)", time_ms)
             print(f"  ✓ Random Access (1K): {time_ms:.3f}ms")
+        
+        # Large Batch (10K)
+        random_indices_large = np.random.randint(0, len(data), 10000)
+        
+        def random_access_large_op():
+            _ = z[random_indices_large]
+        
+        time_ms = self.benchmark_operation(format_name, "Random Access (10K)", random_access_large_op, number=3, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Random Access (10K)", time_ms)
+            print(f"  ✓ Random Access (10K): {time_ms:.3f}ms")
+        
+        # Sequential Access Tests
+        # Small Batch (100)
+        def seq_access_small_op():
+            _ = z[:100]
+        
+        time_ms = self.benchmark_operation(format_name, "Sequential Access (100)", seq_access_small_op, number=10, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Sequential Access (100)", time_ms)
+            print(f"  ✓ Sequential Access (100): {time_ms:.3f}ms")
+        
+        # Medium Batch (1K)
+        def seq_access_medium_op():
+            _ = z[:1000]
+        
+        time_ms = self.benchmark_operation(format_name, "Sequential Access (1K)", seq_access_medium_op, number=5, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Sequential Access (1K)", time_ms)
+            print(f"  ✓ Sequential Access (1K): {time_ms:.3f}ms")
+        
+        # Large Batch (10K)
+        def seq_access_large_op():
+            _ = z[:10000]
+        
+        time_ms = self.benchmark_operation(format_name, "Sequential Access (10K)", seq_access_large_op, number=3, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Sequential Access (10K)", time_ms)
+            print(f"  ✓ Sequential Access (10K): {time_ms:.3f}ms")
     
     # ==================== HDF5 测试 ====================
     
@@ -773,19 +1021,79 @@ class FormatBenchmark:
             self.results.add(format_name, "Append 100", time_ms)
             print(f"  ✓ Append 100: {time_ms:.3f}ms")
         
-        # Random Access (HDF5 需要逐个读取或使用mask)
-        random_indices = np.random.randint(0, min(len(data), 10000), 1000)
+        # Random Access Tests (HDF5 需要逐个读取或使用mask)
+        # Small Batch (100)
+        random_indices_small = np.random.randint(0, min(len(data), 10000), 100)
         
-        def random_access_op():
+        def random_access_small_op():
             with h5py.File(path, 'r') as f:
                 dset = f[dataset_name]
-                # 使用列表推导逐个读取（HDF5的限制）
-                _ = np.array([dset[i] for i in random_indices])
+                _ = np.array([dset[i] for i in random_indices_small])
         
-        time_ms = self.benchmark_operation(format_name, "Random Access (1K)", random_access_op, number=5, repeat=3)
+        time_ms = self.benchmark_operation(format_name, "Random Access (100)", random_access_small_op, number=10, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Random Access (100)", time_ms, note="sequential fetch")
+            print(f"  ✓ Random Access (100): {time_ms:.3f}ms (sequential fetch)")
+        
+        # Medium Batch (1K)
+        random_indices_medium = np.random.randint(0, min(len(data), 10000), 1000)
+        
+        def random_access_medium_op():
+            with h5py.File(path, 'r') as f:
+                dset = f[dataset_name]
+                _ = np.array([dset[i] for i in random_indices_medium])
+        
+        time_ms = self.benchmark_operation(format_name, "Random Access (1K)", random_access_medium_op, number=5, repeat=3)
         if time_ms:
             self.results.add(format_name, "Random Access (1K)", time_ms, note="sequential fetch")
             print(f"  ✓ Random Access (1K): {time_ms:.3f}ms (sequential fetch)")
+        
+        # Large Batch (10K)
+        random_indices_large = np.random.randint(0, len(data), 10000)
+        
+        def random_access_large_op():
+            with h5py.File(path, 'r') as f:
+                dset = f[dataset_name]
+                _ = np.array([dset[i] for i in random_indices_large])
+        
+        time_ms = self.benchmark_operation(format_name, "Random Access (10K)", random_access_large_op, number=3, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Random Access (10K)", time_ms, note="sequential fetch")
+            print(f"  ✓ Random Access (10K): {time_ms:.3f}ms (sequential fetch)")
+        
+        # Sequential Access Tests
+        # Small Batch (100)
+        def seq_access_small_op():
+            with h5py.File(path, 'r') as f:
+                dset = f[dataset_name]
+                _ = dset[:100]
+        
+        time_ms = self.benchmark_operation(format_name, "Sequential Access (100)", seq_access_small_op, number=10, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Sequential Access (100)", time_ms)
+            print(f"  ✓ Sequential Access (100): {time_ms:.3f}ms")
+        
+        # Medium Batch (1K)
+        def seq_access_medium_op():
+            with h5py.File(path, 'r') as f:
+                dset = f[dataset_name]
+                _ = dset[:1000]
+        
+        time_ms = self.benchmark_operation(format_name, "Sequential Access (1K)", seq_access_medium_op, number=5, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Sequential Access (1K)", time_ms)
+            print(f"  ✓ Sequential Access (1K): {time_ms:.3f}ms")
+        
+        # Large Batch (10K)
+        def seq_access_large_op():
+            with h5py.File(path, 'r') as f:
+                dset = f[dataset_name]
+                _ = dset[:10000]
+        
+        time_ms = self.benchmark_operation(format_name, "Sequential Access (10K)", seq_access_large_op, number=3, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Sequential Access (10K)", time_ms)
+            print(f"  ✓ Sequential Access (10K): {time_ms:.3f}ms")
     
     # ==================== Parquet 测试 ====================
     
@@ -853,17 +1161,73 @@ class FormatBenchmark:
             self.results.add(format_name, "Append 100", time_ms, note="full rewrite")
             print(f"  ✓ Append 100: {time_ms:.3f}ms (full rewrite)")
         
-        # Random Access (需要加载全部数据)
-        random_indices = np.random.randint(0, min(len(data), 10000), 1000)
+        # Random Access Tests (需要加载全部数据)
+        # Small Batch (100)
+        random_indices_small = np.random.randint(0, min(len(data), 10000), 100)
         
-        def random_access_op():
+        def random_access_small_op():
             df_load = pd.read_parquet(path)
-            _ = df_load.iloc[random_indices].values
+            _ = df_load.iloc[random_indices_small].values
         
-        time_ms = self.benchmark_operation(format_name, "Random Access (1K)", random_access_op, number=5, repeat=3)
+        time_ms = self.benchmark_operation(format_name, "Random Access (100)", random_access_small_op, number=10, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Random Access (100)", time_ms, note="full load")
+            print(f"  ✓ Random Access (100): {time_ms:.3f}ms (full load)")
+        
+        # Medium Batch (1K)
+        random_indices_medium = np.random.randint(0, min(len(data), 10000), 1000)
+        
+        def random_access_medium_op():
+            df_load = pd.read_parquet(path)
+            _ = df_load.iloc[random_indices_medium].values
+        
+        time_ms = self.benchmark_operation(format_name, "Random Access (1K)", random_access_medium_op, number=5, repeat=3)
         if time_ms:
             self.results.add(format_name, "Random Access (1K)", time_ms, note="full load")
             print(f"  ✓ Random Access (1K): {time_ms:.3f}ms (full load)")
+        
+        # Large Batch (10K)
+        random_indices_large = np.random.randint(0, len(data), 10000)
+        
+        def random_access_large_op():
+            df_load = pd.read_parquet(path)
+            _ = df_load.iloc[random_indices_large].values
+        
+        time_ms = self.benchmark_operation(format_name, "Random Access (10K)", random_access_large_op, number=3, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Random Access (10K)", time_ms, note="full load")
+            print(f"  ✓ Random Access (10K): {time_ms:.3f}ms (full load)")
+        
+        # Sequential Access Tests
+        # Small Batch (100)
+        def seq_access_small_op():
+            df_load = pd.read_parquet(path)
+            _ = df_load.iloc[:100].values
+        
+        time_ms = self.benchmark_operation(format_name, "Sequential Access (100)", seq_access_small_op, number=10, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Sequential Access (100)", time_ms, note="full load")
+            print(f"  ✓ Sequential Access (100): {time_ms:.3f}ms (full load)")
+        
+        # Medium Batch (1K)
+        def seq_access_medium_op():
+            df_load = pd.read_parquet(path)
+            _ = df_load.iloc[:1000].values
+        
+        time_ms = self.benchmark_operation(format_name, "Sequential Access (1K)", seq_access_medium_op, number=5, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Sequential Access (1K)", time_ms, note="full load")
+            print(f"  ✓ Sequential Access (1K): {time_ms:.3f}ms (full load)")
+        
+        # Large Batch (10K)
+        def seq_access_large_op():
+            df_load = pd.read_parquet(path)
+            _ = df_load.iloc[:10000].values
+        
+        time_ms = self.benchmark_operation(format_name, "Sequential Access (10K)", seq_access_large_op, number=3, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Sequential Access (10K)", time_ms, note="full load")
+            print(f"  ✓ Sequential Access (10K): {time_ms:.3f}ms (full load)")
     
     # ==================== Arrow/Feather 测试 ====================
     
@@ -931,17 +1295,73 @@ class FormatBenchmark:
             self.results.add(format_name, "Append 100", time_ms, note="full rewrite")
             print(f"  ✓ Append 100: {time_ms:.3f}ms (full rewrite)")
         
-        # Random Access
-        random_indices = np.random.randint(0, min(len(data), 10000), 1000)
+        # Random Access Tests
+        # Small Batch (100)
+        random_indices_small = np.random.randint(0, min(len(data), 10000), 100)
         
-        def random_access_op():
+        def random_access_small_op():
             df_load = feather.read_feather(path)
-            _ = df_load.iloc[random_indices].values
+            _ = df_load.iloc[random_indices_small].values
         
-        time_ms = self.benchmark_operation(format_name, "Random Access (1K)", random_access_op, number=5, repeat=3)
+        time_ms = self.benchmark_operation(format_name, "Random Access (100)", random_access_small_op, number=10, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Random Access (100)", time_ms, note="full load")
+            print(f"  ✓ Random Access (100): {time_ms:.3f}ms (full load)")
+        
+        # Medium Batch (1K)
+        random_indices_medium = np.random.randint(0, min(len(data), 10000), 1000)
+        
+        def random_access_medium_op():
+            df_load = feather.read_feather(path)
+            _ = df_load.iloc[random_indices_medium].values
+        
+        time_ms = self.benchmark_operation(format_name, "Random Access (1K)", random_access_medium_op, number=5, repeat=3)
         if time_ms:
             self.results.add(format_name, "Random Access (1K)", time_ms, note="full load")
             print(f"  ✓ Random Access (1K): {time_ms:.3f}ms (full load)")
+        
+        # Large Batch (10K)
+        random_indices_large = np.random.randint(0, len(data), 10000)
+        
+        def random_access_large_op():
+            df_load = feather.read_feather(path)
+            _ = df_load.iloc[random_indices_large].values
+        
+        time_ms = self.benchmark_operation(format_name, "Random Access (10K)", random_access_large_op, number=3, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Random Access (10K)", time_ms, note="full load")
+            print(f"  ✓ Random Access (10K): {time_ms:.3f}ms (full load)")
+        
+        # Sequential Access Tests
+        # Small Batch (100)
+        def seq_access_small_op():
+            df_load = feather.read_feather(path)
+            _ = df_load.iloc[:100].values
+        
+        time_ms = self.benchmark_operation(format_name, "Sequential Access (100)", seq_access_small_op, number=10, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Sequential Access (100)", time_ms, note="full load")
+            print(f"  ✓ Sequential Access (100): {time_ms:.3f}ms (full load)")
+        
+        # Medium Batch (1K)
+        def seq_access_medium_op():
+            df_load = feather.read_feather(path)
+            _ = df_load.iloc[:1000].values
+        
+        time_ms = self.benchmark_operation(format_name, "Sequential Access (1K)", seq_access_medium_op, number=5, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Sequential Access (1K)", time_ms, note="full load")
+            print(f"  ✓ Sequential Access (1K): {time_ms:.3f}ms (full load)")
+        
+        # Large Batch (10K)
+        def seq_access_large_op():
+            df_load = feather.read_feather(path)
+            _ = df_load.iloc[:10000].values
+        
+        time_ms = self.benchmark_operation(format_name, "Sequential Access (10K)", seq_access_large_op, number=3, repeat=3)
+        if time_ms:
+            self.results.add(format_name, "Sequential Access (10K)", time_ms, note="full load")
+            print(f"  ✓ Sequential Access (10K): {time_ms:.3f}ms (full load)")
 
 
 def print_summary_table(results: BenchmarkResult, operations: List[str], title: str):
@@ -1018,7 +1438,12 @@ def main():
             "GetItem[:100]",
             "Replace 100",
             "Append 100",
+            "Random Access (100)",
             "Random Access (1K)",
+            "Random Access (10K)",
+            "Sequential Access (100)",
+            "Sequential Access (1K)",
+            "Sequential Access (10K)",
             "Normal Mode (100x)",
             "Batch Mode (100x)",
             "Writable Batch Mode (100x)"
