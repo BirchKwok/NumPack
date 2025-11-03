@@ -160,8 +160,11 @@ class NumPack:
         if not isinstance(arrays, dict):
             raise ValueError("arrays must be a dictionary")
         
-        # 🚀 Performance optimization: If cache mode is enabled, only update cache
+        # Performance optimization: If cache mode is enabled, only update cache
         if self._cache_enabled:
+            # Thread-safe: _batch_context is only accessed within the same instance
+            batch_ctx = getattr(self, '_batch_context', None)
+            
             for name, arr in arrays.items():
                 # Critical optimization: Check if it's a reference to a cached array
                 # If so, no update needed (already modified in-place)
@@ -171,16 +174,16 @@ class NumPack:
                     if arr is cached_arr:
                         # Already the same object, no operation needed
                         # 但仍然标记为脏（可能内容已修改）
-                        if hasattr(self, '_batch_context'):
-                            self._batch_context._dirty_arrays.add(name)
+                        if batch_ctx is not None:
+                            batch_ctx._dirty_arrays.add(name)
                         continue
                 
                 # 新数组或替换的数组
                 self._memory_cache[name] = arr  # No copy, directly reference
                 
-                # 🚀 优化：标记为脏数组
-                if hasattr(self, '_batch_context'):
-                    self._batch_context._dirty_arrays.add(name)
+                # 优化：标记为脏数组
+                if batch_ctx is not None:
+                    batch_ctx._dirty_arrays.add(name)
             return
             
         self._npk.save(arrays, None)
@@ -693,11 +696,17 @@ class BatchModeContext:
     
     def __enter__(self):
         """Enter batch mode - enable optimized memory caching"""
+        # 🔒 Thread-safe: Record initial cache state before enabling cache
+        # This avoids race conditions during dictionary iteration
+        try:
+            self._initial_cache_ids = {name: id(arr) for name, arr in self.npk._memory_cache.items()}
+        except RuntimeError:
+            # If dictionary changes during iteration (shouldn't happen in single-threaded context)
+            self._initial_cache_ids = {}
+        
+        # Now enable cache mode and set batch context
         self.npk._cache_enabled = True
-        # 🚀 设置batch context引用，让save方法可以访问脏标记
         self.npk._batch_context = self
-        # 记录初始缓存状态（用于智能检测）
-        self._initial_cache_ids = {name: id(arr) for name, arr in self.npk._memory_cache.items()}
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -706,12 +715,13 @@ class BatchModeContext:
             # 🚀 优化：只刷新修改过的数组（脏数组）
             self._flush_dirty_arrays()
         finally:
+            # 🔒 Thread-safe cleanup: Disable cache first to prevent new operations
             self.npk._cache_enabled = False
             # 清理batch context引用
-            if hasattr(self.npk, '_batch_context'):
-                delattr(self.npk, '_batch_context')
+            self.npk._batch_context = None
             # 清理统计
             self._dirty_arrays.clear()
+            self._initial_cache_ids.clear()
         return False  # Don't suppress exceptions
     
     def _flush_dirty_arrays(self):
@@ -719,19 +729,30 @@ class BatchModeContext:
         if not self.npk._memory_cache:
             return
         
+        # 🔒 Thread-safe: Create snapshot of data structures to avoid modification during iteration
+        try:
+            dirty_names = list(self._dirty_arrays)
+            initial_ids = dict(self._initial_cache_ids)
+            cache_snapshot = dict(self.npk._memory_cache)
+        except (RuntimeError, ValueError):
+            # If any collection changes during iteration, fall back to conservative strategy
+            cache_snapshot = dict(self.npk._memory_cache)
+            dirty_names = []
+            initial_ids = {}
+        
         # 🚀 优化的脏数组检测：只遍历脏标记，而非整个缓存
         dirty_arrays = {}
         
         # 方法1：从脏标记集合获取（O(|dirty|)，而非 O(|cache|)）
-        for name in self._dirty_arrays:
-            if name in self.npk._memory_cache:
-                dirty_arrays[name] = self.npk._memory_cache[name]
+        for name in dirty_names:
+            if name in cache_snapshot:
+                dirty_arrays[name] = cache_snapshot[name]
         
         # 方法2：检查对象ID是否变化（替换了对象）
-        for name, old_id in self._initial_cache_ids.items():
-            if name in self.npk._memory_cache and name not in dirty_arrays:
-                if id(self.npk._memory_cache[name]) != old_id:
-                    dirty_arrays[name] = self.npk._memory_cache[name]
+        for name, old_id in initial_ids.items():
+            if name in cache_snapshot and name not in dirty_arrays:
+                if id(cache_snapshot[name]) != old_id:
+                    dirty_arrays[name] = cache_snapshot[name]
         
         # 🚀 新优化：流式批处理（避免内存峰值）
         if dirty_arrays:
@@ -749,9 +770,9 @@ class BatchModeContext:
                 except:
                     pass  # 兼容性
             self.npk._memory_cache.clear()
-        elif self.npk._memory_cache:
+        elif cache_snapshot:
             # 保守策略：如果无法确定，刷新所有
-            self.npk._npk.save(self.npk._memory_cache, None)
+            self.npk._npk.save(cache_snapshot, None)
             if hasattr(self.npk._npk, 'sync_metadata'):
                 try:
                     self.npk._npk.sync_metadata()
