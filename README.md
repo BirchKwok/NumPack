@@ -14,16 +14,6 @@ NumPack is a high-performance array storage library that combines Rust's perform
 - 💾 Zero-copy operations with minimal memory footprint
 - 🛠 Seamless integration with existing NumPy workflows
 
-## What's New in v0.4.2 ✨
-
-### Major Performance Enhancements 🚀
-
-- **50% faster Full Load** (8.27ms → 4.11ms for 38MB data)
-- **27% faster Save** (16.15ms → 11.76ms)
-- **43% faster Batch Mode** (34ms → 19.5ms)
-- **38% faster Replace** operations (0.047ms → 0.029ms)
-- **15% improvement** in competitive advantage (1.3x → 1.50x faster than NPY)
-
 ### New I/O Optimizations 🔧
 
 1. **Adaptive Buffer Sizing**
@@ -297,13 +287,6 @@ All benchmarks were conducted on macOS (Apple Silicon) using the Rust backend wi
    - File size identical to NPY (38.15MB)
    - ~10% smaller than Zarr/NPZ (compressed formats)
 
-7. **New in v0.4.2** ✨
-   - Adaptive buffer sizing (256KB/4MB/16MB based on data size)
-   - Smart parallelization strategy
-   - Fast overwrite path for same-shape arrays
-   - SIMD-accelerated large file operations
-   - Intelligent dirty tracking for Batch Mode
-   - **Random Access Optimization**: Zero-copy data conversion and sequential access detection (1K indices improved from 397x to 2.4x slower than NPY) 🔥
 
 ### When to Use NumPack
 
