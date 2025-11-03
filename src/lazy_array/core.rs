@@ -37,7 +37,7 @@ pub struct OptimizedLazyArray {
     file_path: PathBuf,
     cache: Arc<SmartCache>,
     stats: Arc<Mutex<AccessStats>>,
-    batch_engine: BatchAccessEngine,
+    batch_engine: Arc<BatchAccessEngine>,
     simd_processor: SIMDProcessor,
 }
 
@@ -59,7 +59,7 @@ impl OptimizedLazyArray {
             file_path,
             cache,
             stats,
-            batch_engine: BatchAccessEngine::new(),
+            batch_engine: Arc::new(BatchAccessEngine::new()),
             simd_processor,
         })
     }

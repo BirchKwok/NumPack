@@ -1698,10 +1698,10 @@ impl StreamProcessor {
 // 主要的批量访问引擎
 #[derive(Debug)]
 pub struct BatchAccessEngine {
-    parallel_executor: ParallelExecutor,
-    chunk_optimizer: ChunkOptimizer,
-    stream_processor: StreamProcessor,
-    strategy_selector: StrategySelector,
+    parallel_executor: Arc<Mutex<ParallelExecutor>>,
+    chunk_optimizer: Arc<RwLock<ChunkOptimizer>>,
+    stream_processor: Arc<Mutex<StreamProcessor>>,
+    strategy_selector: Arc<RwLock<StrategySelector>>,
     performance_monitor: Arc<Mutex<BatchAccessMetrics>>,
 }
 
@@ -1767,10 +1767,10 @@ impl StrategySelector {
 impl BatchAccessEngine {
     pub fn new() -> Self {
         Self {
-            parallel_executor: ParallelExecutor::new(rayon::current_num_threads()),
-            chunk_optimizer: ChunkOptimizer::new(),
-            stream_processor: StreamProcessor::new(),
-            strategy_selector: StrategySelector::new(),
+            parallel_executor: Arc::new(Mutex::new(ParallelExecutor::new(rayon::current_num_threads()))),
+            chunk_optimizer: Arc::new(RwLock::new(ChunkOptimizer::new())),
+            stream_processor: Arc::new(Mutex::new(StreamProcessor::new())),
+            strategy_selector: Arc::new(RwLock::new(StrategySelector::new())),
             performance_monitor: Arc::new(Mutex::new(BatchAccessMetrics::default())),
         }
     }
@@ -1778,8 +1778,11 @@ impl BatchAccessEngine {
     pub fn process_request(&self, request: BatchAccessRequest, data_context: &dyn BatchDataContext) -> BatchAccessResult {
         let start_time = Instant::now();
         
-        // 选择最优策略
-        let strategy = self.strategy_selector.select_strategy(&request, data_context.total_size());
+        // 选择最优策略（只读访问，使用RwLock的read）
+        let strategy = {
+            let selector = self.strategy_selector.read().unwrap();
+            selector.select_strategy(&request, data_context.total_size())
+        };
         
         // 根据策略执行请求
         let result = match strategy {
@@ -1819,18 +1822,20 @@ impl BatchAccessEngine {
     fn process_chunked(&self, request: BatchAccessRequest, context: &dyn BatchDataContext) -> BatchAccessResult {
         match request {
             BatchAccessRequest::Rows(indices) => {
-                // 分析访问连续性
-                let continuity_report = self.chunk_optimizer.detect_access_continuity(&indices);
+                // 分析访问连续性（只读访问）
+                let chunk_optimizer = self.chunk_optimizer.read().unwrap();
+                let continuity_report = chunk_optimizer.detect_access_continuity(&indices);
                 
                 let chunk_size = if continuity_report.is_highly_continuous {
                     // 高连续性使用大块
-                    self.chunk_optimizer.optimize_chunk_size(indices.len(), "sequential")
+                    chunk_optimizer.optimize_chunk_size(indices.len(), "sequential")
                 } else {
                     // 低连续性使用小块
-                    self.chunk_optimizer.optimize_chunk_size(indices.len(), "random")
+                    chunk_optimizer.optimize_chunk_size(indices.len(), "random")
                 };
                 
-                let chunks = self.chunk_optimizer.split_into_chunks(indices, chunk_size);
+                let chunks = chunk_optimizer.split_into_chunks(indices, chunk_size);
+                drop(chunk_optimizer); // 尽早释放读锁
                 
                 // 简化：使用顺序处理避免线程安全问题  
                 let results: Vec<Vec<u8>> = chunks.into_iter()
@@ -1842,15 +1847,7 @@ impl BatchAccessEngine {
                 BatchAccessResult::Owned(results)
             }
             BatchAccessRequest::Range(start, end) => {
-                // 对于范围访问，使用范围优化
-                let ranges = vec![(start, end)];
-                let _range_request = RangeAccessRequest {
-                    ranges,
-                    total_size: end - start,
-                    expected_sequentiality: 1.0,
-                };
-                
-                // 注意：这里需要可变借用，但为了简化暂时跳过优化
+                // 对于范围访问，直接获取数据
                 let data = context.get_range_data(start, end);
                 BatchAccessResult::Range(data)
             }

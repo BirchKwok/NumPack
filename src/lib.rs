@@ -42,6 +42,7 @@ use crate::io::ParallelIO;
 use crate::core::DataType;
 use crate::storage::{BinaryMetadataStore, BinaryArrayMetadata, BinaryDataType, BinaryCachedStore};
 use crate::lazy_array::{OptimizedLazyArray, FastTypeConversion};
+use crate::numpack::core::clear_mmap_cache_for_array;
 use rayon::prelude::*;
 use crate::storage::DeletionBitmap;
 use crate::lazy_array::LogicalRowMap;
@@ -3732,6 +3733,9 @@ impl NumPack {
                             "indexes must be a slice or list of integers"
                         ));
                     };
+                    
+                    // 在Windows上修改文件前，清理mmap缓存以避免错误1224
+                    clear_mmap_cache_for_array(&self.base_dir, name);
                     self.io.drop_arrays(name, Some(&deleted_indices))?;
                     
                     // 清除元数据缓存
@@ -3745,6 +3749,11 @@ impl NumPack {
             
             Ok(())
         } else {
+            // 批量删除数组前，清理所有相关的mmap缓存
+            for name in &names {
+                clear_mmap_cache_for_array(&self.base_dir, name);
+            }
+            
             self.io.batch_drop_arrays(&names, None)?;
             
             // 清除所有被删除数组的元数据缓存

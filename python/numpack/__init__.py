@@ -246,6 +246,15 @@ class NumPack:
         
         # Rust backend expects dictionary parameters
         self._npk.append(arrays)
+        
+        # 关键修复：清理受影响数组的内存缓存
+        # append改变了数组shape，需要清理缓存
+        for name in arrays.keys():
+            if name in self._memory_cache:
+                del self._memory_cache[name]
+            # 如果在batch context中，也要从dirty集合中移除
+            if hasattr(self, '_batch_context') and self._batch_context:
+                self._batch_context._dirty_arrays.discard(name)
 
     def drop(self, array_name: Union[str, List[str]], indexes: Optional[Union[List[int], int, np.ndarray]] = None) -> None:
         """Drop arrays or specific rows from NumPack file
@@ -272,8 +281,17 @@ class NumPack:
             elif not isinstance(indexes, slice):
                 raise ValueError("The indexes must be int, list, tuple, numpy.ndarray or slice.")
         
-
+        # 执行drop操作
         self._npk.drop(array_name, indexes)
+        
+        # 关键修复：清理受影响数组的内存缓存
+        # 这对于batch_mode很重要，因为drop改变了数组shape
+        for name in array_name:
+            if name in self._memory_cache:
+                del self._memory_cache[name]
+            # 如果在batch context中，也要从dirty集合中移除
+            if hasattr(self, '_batch_context') and self._batch_context:
+                self._batch_context._dirty_arrays.discard(name)
 
     def getitem(self, array_name: str, indexes: Union[List[int], int, np.ndarray]) -> np.ndarray:
         """Random access to specified rows from NumPack file

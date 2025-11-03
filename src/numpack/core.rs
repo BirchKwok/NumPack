@@ -24,6 +24,19 @@ lazy_static::lazy_static! {
     static ref MMAP_CACHE: Mutex<HashMap<String, (Arc<Mmap>, i64)>> = Mutex::new(HashMap::new());
 }
 
+/// 清理指定文件的mmap缓存（Windows平台上修改文件前必须调用）
+pub(crate) fn clear_mmap_cache_for_file(file_path: &str) {
+    if let Ok(mut cache) = MMAP_CACHE.lock() {
+        cache.remove(file_path);
+    }
+}
+
+/// 清理指定数组的所有相关文件的mmap缓存
+pub(crate) fn clear_mmap_cache_for_array(base_dir: &Path, array_name: &str) {
+    let data_path = base_dir.join(format!("data_{}.npkd", array_name));
+    clear_mmap_cache_for_file(&data_path.to_string_lossy());
+}
+
 /// NumPack主结构体 - 提供高性能数组存储和管理功能
 #[pyclass]
 pub struct NumPack {
