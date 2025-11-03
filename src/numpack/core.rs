@@ -646,7 +646,8 @@ impl NumPack {
         let mut new_shape = meta.shape.iter().map(|&x| x as usize).collect::<Vec<_>>();
         new_shape[0] = indices.len();
         
-        // Create a NumPy array based on the data type
+        // 🚀 优化策略：使用 zero-copy 转换，避免 to_vec() 的内存复制
+        // 直接从 Vec<u8> 转换为目标类型的 Vec<T>
         let array: PyObject = match meta.get_dtype() {
             DataType::Bool => {
                 let array = unsafe {
@@ -657,99 +658,141 @@ impl NumPack {
                 array.into_pyarray(py).into()
             }
             DataType::Uint8 => {
+                // 🚀 优化：直接使用 data，无需 to_vec()
                 let array = unsafe {
-                    let slice: &[u8] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                    ArrayD::from_shape_vec_unchecked(new_shape, data)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Uint16 => {
                 let array = unsafe {
-                    let slice: &[u16] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                    let len = data.len() / std::mem::size_of::<u16>();
+                    let ptr = data.as_ptr() as *mut u16;
+                    let capacity = data.capacity() / std::mem::size_of::<u16>();
+                    std::mem::forget(data);
+                    let vec_u16 = Vec::from_raw_parts(ptr, len, capacity);
+                    ArrayD::from_shape_vec_unchecked(new_shape, vec_u16)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Uint32 => {
                 let array = unsafe {
-                    let slice: &[u32] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                    let len = data.len() / std::mem::size_of::<u32>();
+                    let ptr = data.as_ptr() as *mut u32;
+                    let capacity = data.capacity() / std::mem::size_of::<u32>();
+                    std::mem::forget(data);
+                    let vec_u32 = Vec::from_raw_parts(ptr, len, capacity);
+                    ArrayD::from_shape_vec_unchecked(new_shape, vec_u32)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Uint64 => {
                 let array = unsafe {
-                    let slice: &[u64] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                    let len = data.len() / std::mem::size_of::<u64>();
+                    let ptr = data.as_ptr() as *mut u64;
+                    let capacity = data.capacity() / std::mem::size_of::<u64>();
+                    std::mem::forget(data);
+                    let vec_u64 = Vec::from_raw_parts(ptr, len, capacity);
+                    ArrayD::from_shape_vec_unchecked(new_shape, vec_u64)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Int8 => {
                 let array = unsafe {
-                    let slice: &[i8] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                    let len = data.len();
+                    let ptr = data.as_ptr() as *mut i8;
+                    let capacity = data.capacity();
+                    std::mem::forget(data);
+                    let vec_i8 = Vec::from_raw_parts(ptr, len, capacity);
+                    ArrayD::from_shape_vec_unchecked(new_shape, vec_i8)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Int16 => {
                 let array = unsafe {
-                    let slice: &[i16] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                    let len = data.len() / std::mem::size_of::<i16>();
+                    let ptr = data.as_ptr() as *mut i16;
+                    let capacity = data.capacity() / std::mem::size_of::<i16>();
+                    std::mem::forget(data);
+                    let vec_i16 = Vec::from_raw_parts(ptr, len, capacity);
+                    ArrayD::from_shape_vec_unchecked(new_shape, vec_i16)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Int32 => {
                 let array = unsafe {
-                    let slice: &[i32] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                    let len = data.len() / std::mem::size_of::<i32>();
+                    let ptr = data.as_ptr() as *mut i32;
+                    let capacity = data.capacity() / std::mem::size_of::<i32>();
+                    std::mem::forget(data);
+                    let vec_i32 = Vec::from_raw_parts(ptr, len, capacity);
+                    ArrayD::from_shape_vec_unchecked(new_shape, vec_i32)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Int64 => {
                 let array = unsafe {
-                    let slice: &[i64] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                    let len = data.len() / std::mem::size_of::<i64>();
+                    let ptr = data.as_ptr() as *mut i64;
+                    let capacity = data.capacity() / std::mem::size_of::<i64>();
+                    std::mem::forget(data);
+                    let vec_i64 = Vec::from_raw_parts(ptr, len, capacity);
+                    ArrayD::from_shape_vec_unchecked(new_shape, vec_i64)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Float16 => {
                 let array = unsafe {
-                    let slice: &[f16] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                    let len = data.len() / std::mem::size_of::<f16>();
+                    let ptr = data.as_ptr() as *mut f16;
+                    let capacity = data.capacity() / std::mem::size_of::<f16>();
+                    std::mem::forget(data);
+                    let vec_f16 = Vec::from_raw_parts(ptr, len, capacity);
+                    ArrayD::from_shape_vec_unchecked(new_shape, vec_f16)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Float32 => {
                 let array = unsafe {
-                    let slice: &[f32] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                    let len = data.len() / std::mem::size_of::<f32>();
+                    let ptr = data.as_ptr() as *mut f32;
+                    let capacity = data.capacity() / std::mem::size_of::<f32>();
+                    std::mem::forget(data);
+                    let vec_f32 = Vec::from_raw_parts(ptr, len, capacity);
+                    ArrayD::from_shape_vec_unchecked(new_shape, vec_f32)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Float64 => {
                 let array = unsafe {
-                    let slice: &[f64] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                    let len = data.len() / std::mem::size_of::<f64>();
+                    let ptr = data.as_ptr() as *mut f64;
+                    let capacity = data.capacity() / std::mem::size_of::<f64>();
+                    std::mem::forget(data);
+                    let vec_f64 = Vec::from_raw_parts(ptr, len, capacity);
+                    ArrayD::from_shape_vec_unchecked(new_shape, vec_f64)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Complex64 => {
                 let array = unsafe {
-                    let slice = std::slice::from_raw_parts(
-                        data.as_ptr() as *const Complex32,
-                        data.len() / std::mem::size_of::<Complex32>()
-                    );
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                    let len = data.len() / std::mem::size_of::<Complex32>();
+                    let ptr = data.as_ptr() as *mut Complex32;
+                    let capacity = data.capacity() / std::mem::size_of::<Complex32>();
+                    std::mem::forget(data);
+                    let vec_c64 = Vec::from_raw_parts(ptr, len, capacity);
+                    ArrayD::from_shape_vec_unchecked(new_shape, vec_c64)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Complex128 => {
                 let array = unsafe {
-                    let slice = std::slice::from_raw_parts(
-                        data.as_ptr() as *const Complex64,
-                        data.len() / std::mem::size_of::<Complex64>()
-                    );
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
+                    let len = data.len() / std::mem::size_of::<Complex64>();
+                    let ptr = data.as_ptr() as *mut Complex64;
+                    let capacity = data.capacity() / std::mem::size_of::<Complex64>();
+                    std::mem::forget(data);
+                    let vec_c128 = Vec::from_raw_parts(ptr, len, capacity);
+                    ArrayD::from_shape_vec_unchecked(new_shape, vec_c128)
                 };
                 array.into_pyarray(py).into()
             }

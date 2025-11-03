@@ -274,44 +274,12 @@ class FormatBenchmark:
             self.results.add(format_name, "GetItem[:100]", time_ms)
             print(f"  ✓ GetItem[:100]: {time_ms:.3f}ms")
         
-        # Replace 100 rows - 测量纯替换时间
-        replace_data = np.random.rand(100, data.shape[1]).astype(data.dtype)
-        replace_indices = list(range(100))
-        
-        npk_replace = NumPack(path)
-        npk_replace.open()
-        
-        def replace_op():
-            npk_replace.replace({array_name: replace_data}, replace_indices)
-        
-        time_ms = self.benchmark_operation(format_name, "Replace 100", replace_op, number=5, repeat=3)
-        npk_replace.close()
-        
-        if time_ms:
-            self.results.add(format_name, "Replace 100", time_ms)
-            print(f"  ✓ Replace 100: {time_ms:.3f}ms")
-        
-        # Append 100 rows - 测量纯追加时间
-        append_data = np.random.rand(100, data.shape[1]).astype(data.dtype)
-        
-        # 先重置数据
+        # ==================== Random Access Tests ====================
+        # 注意：必须在 replace/append 之前测试，因为它们会修改文件状态
+        # 🚀 重要：为确保测试的准确性，在随机访问测试前重新创建干净的文件
         with NumPack(path, drop_if_exists=True) as npk:
             npk.save({array_name: data})
         
-        npk_append = NumPack(path)
-        npk_append.open()
-        
-        def append_op():
-            npk_append.append({array_name: append_data})
-        
-        time_ms = self.benchmark_operation(format_name, "Append 100", append_op, number=1, repeat=3)
-        npk_append.close()
-        
-        if time_ms:
-            self.results.add(format_name, "Append 100", time_ms)
-            print(f"  ✓ Append 100: {time_ms:.3f}ms")
-        
-        # ==================== Random Access Tests ====================
         print(f"\n  🎲 Testing Random Access Performance...")
         
         # Random Access - Small Batch (100 indices)
@@ -406,6 +374,46 @@ class FormatBenchmark:
         
         # ==================== Batch Mode 测试 ====================
         print(f"\n  🚀 Testing Batch Mode Performance...")
+        
+        # 在 Batch Mode 测试之前，先执行 Replace 和 Append 测试
+        # （这些会修改文件，所以放在最后）
+        
+        # Replace 100 rows - 测量纯替换时间
+        replace_data = np.random.rand(100, data.shape[1]).astype(data.dtype)
+        replace_indices = list(range(100))
+        
+        npk_replace = NumPack(path)
+        npk_replace.open()
+        
+        def replace_op():
+            npk_replace.replace({array_name: replace_data}, replace_indices)
+        
+        time_ms = self.benchmark_operation(format_name, "Replace 100", replace_op, number=5, repeat=3)
+        npk_replace.close()
+        
+        if time_ms:
+            self.results.add(format_name, "Replace 100", time_ms)
+            print(f"  ✓ Replace 100: {time_ms:.3f}ms (moved before batch mode)")
+        
+        # Append 100 rows - 测量纯追加时间
+        append_data = np.random.rand(100, data.shape[1]).astype(data.dtype)
+        
+        # 先重置数据
+        with NumPack(path, drop_if_exists=True) as npk:
+            npk.save({array_name: data})
+        
+        npk_append = NumPack(path)
+        npk_append.open()
+        
+        def append_op():
+            npk_append.append({array_name: append_data})
+        
+        time_ms = self.benchmark_operation(format_name, "Append 100", append_op, number=1, repeat=3)
+        npk_append.close()
+        
+        if time_ms:
+            self.results.add(format_name, "Append 100", time_ms)
+            print(f"  ✓ Append 100: {time_ms:.3f}ms (moved before batch mode)")
         
         # Batch Mode: 连续修改 100 次
         num_iterations = 100

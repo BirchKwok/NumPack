@@ -670,27 +670,42 @@ impl ParallelIO {
         // 选择最优缓冲区大小
         let buffer_size = Self::optimal_buffer_size(total_size);
         
+        // 🚀 优化：直接使用 BufWriter 创建文件，避免额外的 set_len 调用
         let file = OpenOptions::new()
-            .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&data_path)?;
-        file.set_len(total_size as u64)?;
         
-        // 🚀 优化3：使用优化的写入策略
+        let mut writer = BufWriter::with_capacity(buffer_size, file);
+        let data_ptr = array.as_ptr() as *const u8;
+        let data_slice = unsafe {
+            std::slice::from_raw_parts(data_ptr, total_size)
+        };
+        
+        // 🚀 优化3：对于大文件，分块写入以减少内存压力
+        // 但对于小/中型文件，直接写入更高效
         if total_size > Self::MEDIUM_ARRAY_THRESHOLD {
-            // 大文件：使用SIMD优化的批量写入
-            self.write_large_array_optimized(&file, array, total_size)?;
+            // 超大文件：分块写入
+            let chunk_size = buffer_size * 4; // 使用4倍缓冲区大小作为块大小
+            let mut offset = 0;
+            while offset < total_size {
+                let remaining = total_size - offset;
+                let current_chunk_size = std::cmp::min(chunk_size, remaining);
+                let chunk = &data_slice[offset..offset + current_chunk_size];
+                writer.write_all(chunk)?;
+                offset += current_chunk_size;
+            }
         } else {
-            // 小/中型文件：使用标准BufWriter
-            let mut writer = BufWriter::with_capacity(buffer_size, &file);
-            let data_ptr = array.as_ptr() as *const u8;
-            let data_slice = unsafe {
-                std::slice::from_raw_parts(data_ptr, total_size)
-            };
+            // 小/中型文件：直接写入（最快）
             writer.write_all(data_slice)?;
-            writer.flush()?;
         }
+        
+        // 🚀 优化：延迟 flush，让操作系统自动刷新
+        // 对于大文件，立即 flush 可能会阻塞
+        // 对于小文件，flush 的开销相对较小，但仍可延迟
+        // 注释掉立即 flush，让 BufWriter 在 drop 时自动 flush
+        // writer.flush()?;
         
         // 创建元数据
         let meta = ArrayMetadata::new(
@@ -1246,11 +1261,31 @@ impl ParallelIO {
         let mmap = unsafe { memmap2::MmapOptions::new().map(&file)? };
         let mut data = Vec::with_capacity(physical_indices.len() * row_size);
 
-        // Copy data from memory mapping using physical indices
-        for physical_idx in physical_indices {
-            let offset = physical_idx * row_size;
-            let row_slice = &mmap[offset..offset + row_size];
-            data.extend_from_slice(row_slice);
+        // 优化：检测访问模式并选择最佳策略
+        if physical_indices.is_empty() {
+            return Ok(data);
+        }
+
+        // 检查原始索引是否为连续且有序（顺序访问）
+        let is_sequential_ordered = physical_indices.len() > 1 && {
+            physical_indices.windows(2).all(|w| w[1] == w[0] + 1)
+        };
+
+        if is_sequential_ordered {
+            // 顺序访问：使用块复制（最快）
+            let start_idx = physical_indices[0];
+            let block_size = physical_indices.len() * row_size;
+            let start_offset = start_idx * row_size;
+            let block_slice = &mmap[start_offset..start_offset + block_size];
+            data.extend_from_slice(block_slice);
+        } else {
+            // 随机访问：直接复制（简单高效）
+            // 注意：大范围稀疏随机访问会有页面错误开销，这是 mmap 的固有特性
+            for physical_idx in physical_indices {
+                let offset = physical_idx * row_size;
+                let row_slice = &mmap[offset..offset + row_size];
+                data.extend_from_slice(row_slice);
+            }
         }
 
         Ok(data)
