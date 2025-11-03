@@ -459,8 +459,28 @@ impl BinaryMetadataStore {
     }
 
     pub fn save(&self, path: &Path) -> NpkResult<()> {
-        let temp_path = path.with_extension("tmp");
+        // 生成唯一的临时文件名，避免多线程冲突
+        // 格式：metadata.npkm.tmp.{pid}_{tid}_{timestamp}
+        use std::time::{SystemTime, UNIX_EPOCH};
         
+        let pid = std::process::id();
+        let tid = std::thread::current().id();
+        let tid_str = format!("{:?}", tid).replace("ThreadId(", "").replace(")", "");
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        
+        let temp_filename = format!(
+            "{}.tmp.{}_{}_{}", 
+            path.file_name().unwrap().to_string_lossy(),
+            pid, 
+            tid_str,
+            timestamp
+        );
+        let temp_path = path.with_file_name(temp_filename);
+        
+        // 写入临时文件
         {
             let file = File::create(&temp_path)?;
             let mut writer = BufWriter::new(file);
@@ -483,10 +503,19 @@ impl BinaryMetadataStore {
             }
 
             writer.flush()?;
+            // 确保文件写入完成
+            drop(writer);
         }
 
-        std::fs::rename(temp_path, path)?;
-        Ok(())
+        // 原子性重命名（如果失败，清理临时文件）
+        match std::fs::rename(&temp_path, path) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                // 清理临时文件
+                let _ = std::fs::remove_file(&temp_path);
+                Err(NpkError::IoError(e))
+            }
+        }
     }
 
     pub fn add_array(&mut self, meta: BinaryArrayMetadata) {
@@ -553,12 +582,34 @@ impl BinaryCachedStore {
     }
 
     fn sync_to_disk(&self) -> NpkResult<()> {
-        let store = self.store.read().unwrap();
-        store.save(&self.path)?;
+        // 多线程环境下可能出现临时的文件访问冲突，添加重试机制
+        const MAX_RETRIES: usize = 3;
+        const RETRY_DELAY_MS: u64 = 10;
         
-        let mut last_sync = self.last_sync.lock().unwrap();
-        *last_sync = SystemTime::now();
-        Ok(())
+        let mut last_error = None;
+        for attempt in 0..MAX_RETRIES {
+            let store = self.store.read().unwrap();
+            match store.save(&self.path) {
+                Ok(_) => {
+                    drop(store);
+                    let mut last_sync = self.last_sync.lock().unwrap();
+                    *last_sync = SystemTime::now();
+                    return Ok(());
+                }
+                Err(e) => {
+                    last_error = Some(e);
+                    drop(store);
+                    
+                    // 最后一次尝试不需要等待
+                    if attempt < MAX_RETRIES - 1 {
+                        std::thread::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS));
+                    }
+                }
+            }
+        }
+        
+        // 所有重试都失败，返回最后一个错误
+        Err(last_error.unwrap())
     }
 
     pub fn add_array(&self, meta: BinaryArrayMetadata) -> NpkResult<()> {
