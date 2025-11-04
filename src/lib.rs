@@ -3153,6 +3153,20 @@ impl NumPack {
             self.io.save_arrays(&complex128_arrays)?;
         }
 
+        // 清理所有保存的数组的元数据缓存
+        // 因为 save 操作会更新文件和元数据（shape、modify_time 等）
+        for (i, (key, _value)) in arrays.iter().enumerate() {
+            let name = if let Some(prefix) = &array_name {
+                format!("{}{}", prefix, i)
+            } else {
+                key.extract::<String>()?
+            };
+            
+            let meta_cache_key = format!("{}:{}", self.base_dir.display(), name);
+            let mut meta_cache = METADATA_CACHE.lock().unwrap();
+            meta_cache.remove(&meta_cache_key);
+        }
+
         Ok(())
     }
 
