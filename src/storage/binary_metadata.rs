@@ -588,12 +588,12 @@ impl BinaryCachedStore {
         
         let mut last_error = None;
         for attempt in 0..MAX_RETRIES {
-            let store = self.store.read().unwrap();
+        let store = self.store.read().unwrap();
             match store.save(&self.path) {
                 Ok(_) => {
                     drop(store);
-                    let mut last_sync = self.last_sync.lock().unwrap();
-                    *last_sync = SystemTime::now();
+        let mut last_sync = self.last_sync.lock().unwrap();
+        *last_sync = SystemTime::now();
                     return Ok(());
                 }
                 Err(e) => {

@@ -74,6 +74,17 @@ impl NumPack {
     }
 
     fn save(&self, arrays: &Bound<'_, PyDict>, array_name: Option<String>) -> PyResult<()> {
+        // Windows 修复：在保存之前清理所有要写入的数组的 mmap 缓存
+        // 这样可以避免 Windows 错误 1224（文件被 mmap 打开时无法写入）
+        for (i, (key, _value)) in arrays.iter().enumerate() {
+            let name = if let Some(prefix) = &array_name {
+                format!("{}{}", prefix, i)
+            } else {
+                key.extract::<String>().unwrap_or_default()
+            };
+            clear_mmap_cache_for_array(&self.base_dir, &name);
+        }
+        
         let mut bool_arrays = Vec::new();
         let mut u8_arrays = Vec::new();
         let mut u16_arrays = Vec::new();
