@@ -101,90 +101,6 @@ class TestUserIntentRecognition:
         np.testing.assert_array_almost_equal(result, expected, decimal=5)
         print("✅ Slice access correct")
 
-    @pytest.mark.skip(reason="性能测试可能受环境影响，功能正确性已在其他测试中验证")
-    def test_performance_comparison(self):
-        """比较不同访问模式的性能"""
-        lazy_array = self.npk.load('test_array', lazy=True)
-        
-        # 增加测试规模以获得更稳定的性能差异
-        indices = np.random.randint(0, self.rows, 2000).tolist()
-        
-        print("\nPerformance comparison test:")
-        
-        # 多次运行以获得稳定的测量结果
-        wrong_times = []
-        correct_times = []
-        
-        for run in range(3):  # 运行3次取平均值
-            # ❌ 错误的用法（循环单次访问）
-            start_time = time.time()
-            wrong_results = []
-            for i in indices[:300]:  # 增加到300个以获得更明显的时间差异
-                result = lazy_array[i]
-                wrong_results.append(result)
-            wrong_usage_time = time.time() - start_time
-            wrong_times.append(wrong_usage_time)
-            
-            # ✅ 正确的用法（批量访问）
-            start_time = time.time()
-            correct_result = lazy_array[indices]  # 2000个索引
-            correct_usage_time = time.time() - start_time
-            correct_times.append(correct_usage_time)
-        
-        # 计算平均时间
-        avg_wrong_time = sum(wrong_times) / len(wrong_times)
-        avg_correct_time = sum(correct_times) / len(correct_times)
-        
-        print(f"❌ Wrong usage (300 loop single accesses) average time: {avg_wrong_time:.4f}s")
-        print(f"✅ Correct usage (batch access 2000 indices) average time: {avg_correct_time:.4f}s")
-        
-        # 性能提升比例
-        if avg_correct_time > 0 and avg_wrong_time > 0:
-            # 标准化到相同数量的访问
-            normalized_wrong_time = avg_wrong_time * (2000 / 300)
-            speedup = normalized_wrong_time / avg_correct_time
-            print(f"🚀 Batch access performance improvement: {speedup:.1f}x")
-            
-            # 适当降低阈值以适应不同环境的差异和系统负载
-            # 在高负载环境下，批量访问仍应该比循环访问快
-            min_speedup = 1.5  # 降低到1.5x以适应CI环境和系统负载波动
-            
-            if speedup <= min_speedup:
-                # 如果首次测试未通过，重试一次（可能是系统负载导致）
-                print(f"⚠️  First test speedup={speedup:.2f}x, retrying...")
-                import gc
-                gc.collect()
-                time.sleep(0.1)
-                
-                # 重新测试一次
-                start = time.time()
-                wrong_results2 = [lazy_array[i] for i in indices[:300]]
-                wrong_time2 = time.time() - start
-                
-                start = time.time()
-                correct_result2 = lazy_array[indices]
-                correct_time2 = time.time() - start
-                
-                normalized_wrong2 = wrong_time2 * (2000 / 300)
-                speedup2 = normalized_wrong2 / correct_time2
-                print(f"  After retry speedup={speedup2:.2f}x")
-                
-                speedup = max(speedup, speedup2)  # 使用较好的结果
-            
-            assert speedup > min_speedup, f"Batch access performance improvement insufficient: {speedup:.1f}x (required > {min_speedup}x)"
-        else:
-            # 如果时间测量不准确，尝试验证功能正确性
-            print("⚠️ Time measurement precision insufficient, verifying functionality...")
-            # 确保批量访问和循环访问结果一致
-            test_indices = indices[:100]
-            batch_result = lazy_array[test_indices]
-            individual_results = [lazy_array[i] for i in test_indices]
-            
-            # 验证结果一致性
-            for i, (batch_row, individual_row) in enumerate(zip(batch_result, individual_results)):
-                assert np.allclose(batch_row, individual_row), f"Results inconsistent at index {i}"
-            print("✅ Functionality verification passed - batch access results correct")
-
     def test_user_intent_examples(self):
         """展示正确的用户意图用法示例"""
         lazy_array = self.npk.load('test_array', lazy=True)
@@ -228,7 +144,6 @@ if __name__ == "__main__":
         test.test_batch_access_intent()
         test.test_numpy_array_batch_access()
         test.test_slice_access()
-        test.test_performance_comparison()
         test.test_user_intent_examples()
         
         print("\n🎉 All user intent recognition tests passed!")
