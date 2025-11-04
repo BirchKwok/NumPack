@@ -24,14 +24,18 @@ lazy_static::lazy_static! {
     static ref MMAP_CACHE: Mutex<HashMap<String, (Arc<Mmap>, i64)>> = Mutex::new(HashMap::new());
 }
 
-/// 清理指定文件的mmap缓存（Windows平台上修改文件前必须调用）
+/// 清理指定文件的mmap缓存（Windows平台专用）
+/// 在 Windows 上修改文件前必须调用，以避免错误 1224
+/// Unix 平台不需要（系统允许同时 mmap 和修改文件）
+#[cfg(windows)]
 pub(crate) fn clear_mmap_cache_for_file(file_path: &str) {
     if let Ok(mut cache) = MMAP_CACHE.lock() {
         cache.remove(file_path);
     }
 }
 
-/// 清理指定数组的所有相关文件的mmap缓存
+/// 清理指定数组的所有相关文件的mmap缓存（Windows平台专用）
+#[cfg(windows)]
 pub(crate) fn clear_mmap_cache_for_array(base_dir: &Path, array_name: &str) {
     let data_path = base_dir.join(format!("data_{}.npkd", array_name));
     clear_mmap_cache_for_file(&data_path.to_string_lossy());
@@ -74,17 +78,6 @@ impl NumPack {
     }
 
     fn save(&self, arrays: &Bound<'_, PyDict>, array_name: Option<String>) -> PyResult<()> {
-        // Windows 修复：在保存之前清理所有要写入的数组的 mmap 缓存
-        // 这样可以避免 Windows 错误 1224（文件被 mmap 打开时无法写入）
-        for (i, (key, _value)) in arrays.iter().enumerate() {
-            let name = if let Some(prefix) = &array_name {
-                format!("{}{}", prefix, i)
-            } else {
-                key.extract::<String>().unwrap_or_default()
-            };
-            clear_mmap_cache_for_array(&self.base_dir, &name);
-        }
-        
         let mut bool_arrays = Vec::new();
         let mut u8_arrays = Vec::new();
         let mut u16_arrays = Vec::new();

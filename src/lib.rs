@@ -25,7 +25,7 @@ use pyo3::exceptions::PyKeyError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
 use pyo3::types::PySlice;
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io::Write;
 use num_complex::{Complex32, Complex64};
 use ndarray::ArrayD;
@@ -42,7 +42,11 @@ use crate::io::ParallelIO;
 use crate::core::DataType;
 use crate::storage::{BinaryMetadataStore, BinaryArrayMetadata, BinaryDataType, BinaryCachedStore};
 use crate::lazy_array::{OptimizedLazyArray, FastTypeConversion};
+
+// Windows 平台专用：mmap 清理函数
+#[cfg(windows)]
 use crate::numpack::core::clear_mmap_cache_for_array;
+
 use rayon::prelude::*;
 use crate::storage::DeletionBitmap;
 use crate::lazy_array::LogicalRowMap;
@@ -3188,7 +3192,7 @@ impl NumPack {
             (dtype, shape, itemsize, modify_time)
         };
 
-        // 2. 复用mmap缓存，避免重复映射
+        // 2. 平台特定的数据加载策略
         let mut filename = String::with_capacity(5 + array_name.len() + 5); // "data_" + name + ".npkd"
         filename.push_str("data_");
         filename.push_str(array_name);
@@ -3196,7 +3200,17 @@ impl NumPack {
         let data_path = self.base_dir.join(&filename);
         let array_path_string = data_path.to_string_lossy().to_string();
 
-        let mmap_arc = {
+        // Windows 平台专用逻辑：
+        // 在 Windows 上，eager load 不使用 mmap 缓存，以避免错误 1224
+        // （文件被 mmap 打开时无法执行 save/drop/append 等修改操作）
+        #[cfg(windows)]
+        let use_mmap_cache = false;
+        
+        #[cfg(not(windows))]
+        let use_mmap_cache = true;
+
+        let mmap_arc = if use_mmap_cache {
+            // Unix 平台（macOS、Linux）：使用 mmap 缓存优化性能
             let mut mmap_cache = MMAP_CACHE.lock().unwrap();
             if let Some((cached_mmap, cached_time)) = mmap_cache.get(&array_path_string) {
                 if *cached_time == modify_time {
@@ -3207,6 +3221,12 @@ impl NumPack {
             } else {
                 create_optimized_mmap(&data_path, modify_time, &mut mmap_cache)?
             }
+        } else {
+            // Windows 平台：直接创建 mmap，不缓存
+            // 这样在 save/drop/append 时不会有遗留的 mmap 句柄
+            let file = File::open(&data_path)?;
+            let mmap = unsafe { memmap2::MmapOptions::new().map(&file)? };
+            Arc::new(mmap)
         };
 
         let mmap_bytes = mmap_arc.as_ref().as_ref();
@@ -3734,8 +3754,11 @@ impl NumPack {
                         ));
                     };
                     
-                    // 在Windows上修改文件前，清理mmap缓存以避免错误1224
+                    // Windows 平台：修改文件前清理 mmap 缓存（lazy load 可能创建的）
+                    // Unix 平台：系统允许同时 mmap 和修改文件，不需要清理
+                    #[cfg(windows)]
                     clear_mmap_cache_for_array(&self.base_dir, name);
+                    
                     self.io.drop_arrays(name, Some(&deleted_indices))?;
                     
                     // 清除元数据缓存
@@ -3749,7 +3772,9 @@ impl NumPack {
             
             Ok(())
         } else {
-            // 批量删除数组前，清理所有相关的mmap缓存
+            // Windows 平台：批量删除数组前清理 mmap 缓存
+            // Unix 平台：系统允许同时 mmap 和修改文件，不需要清理
+            #[cfg(windows)]
             for name in &names {
                 clear_mmap_cache_for_array(&self.base_dir, name);
             }
