@@ -80,79 +80,11 @@ impl AdaptiveCacheController {
             return AdaptationResult::NoActionNeeded;
         }
         
-        // 收集当前性能指标
-        let cache_stats = self.target_cache.get_comprehensive_stats();
-        let system_summary = self.performance_monitor.get_summary();
-        
-        // 分析性能和决定调整策略
-        let adaptation_strategy = self.analyze_and_decide_adaptation(&cache_stats, &system_summary);
-        
-        match adaptation_strategy {
-            AdaptationStrategy::None => AdaptationResult::NoActionNeeded,
-            AdaptationStrategy::IncreaseL1Size(factor) => {
-                self.adjust_l1_size(factor, "Low L1 hit rate detected");
-                AdaptationResult::L1SizeIncreased(factor)
-            }
-            AdaptationStrategy::DecreaseL1Size(factor) => {
-                self.adjust_l1_size(factor, "High memory pressure, reducing L1");
-                AdaptationResult::L1SizeDecreased(factor)
-            }
-            AdaptationStrategy::RebalanceLayers => {
-                self.rebalance_cache_layers(&cache_stats);
-                AdaptationResult::LayersRebalanced
-            }
-            AdaptationStrategy::AdjustCompression(threshold) => {
-                self.adjust_compression_threshold(threshold);
-                AdaptationResult::CompressionAdjusted(threshold)
-            }
-        }
+        // 性能统计功能已移除，自适应优化功能暂时禁用
+        self.last_adaptation = Instant::now();
+        AdaptationResult::NoActionNeeded
     }
     
-    /// 分析当前性能并决定自适应策略
-    fn analyze_and_decide_adaptation(
-        &self, 
-        cache_stats: &crate::cache::multilevel_cache::MultiLevelCacheReport,
-        system_summary: &crate::performance::SystemSummary
-    ) -> AdaptationStrategy {
-        // L1命中率分析
-        if cache_stats.l1_hit_rate < 0.5 && (system_summary.memory_usage_mb as f64) < self.memory_pressure_threshold {
-            // L1命中率低且内存充足，增加L1大小
-            return AdaptationStrategy::IncreaseL1Size(1.5);
-        }
-        
-        // 内存压力分析
-        if (system_summary.memory_usage_mb as f64) > self.memory_pressure_threshold {
-            // 内存压力大，减少缓存大小
-            if cache_stats.l1_hit_rate > 0.8 {
-                // L1命中率高，优先减少L2/L3
-                return AdaptationStrategy::RebalanceLayers;
-            } else {
-                // 整体命中率不高，减少L1大小
-                return AdaptationStrategy::DecreaseL1Size(0.8);
-            }
-        }
-        
-        // CPU使用率分析
-        if system_summary.cpu_utilization > self.cpu_usage_threshold {
-            // CPU使用率高，调整压缩策略减少CPU开销
-            return AdaptationStrategy::AdjustCompression(16 * 1024); // 提高压缩阈值
-        }
-        
-        // 层级不平衡分析
-        let total_requests = cache_stats.l1_hits + cache_stats.l1_misses;
-        let l2_utilization = if total_requests > 0 {
-            cache_stats.l2_hits as f64 / total_requests as f64
-        } else {
-            0.0
-        };
-        
-        if l2_utilization > 0.4 && cache_stats.l1_hit_rate < 0.6 {
-            // L2使用率高但L1命中率低，需要重新平衡
-            return AdaptationStrategy::RebalanceLayers;
-        }
-        
-        AdaptationStrategy::None
-    }
     
     /// 调整L1缓存大小
     fn adjust_l1_size(&mut self, factor: f64, reason: &str) {
@@ -172,42 +104,8 @@ impl AdaptiveCacheController {
     }
     
     /// 重新平衡缓存层级
-    fn rebalance_cache_layers(&mut self, cache_stats: &crate::cache::multilevel_cache::MultiLevelCacheReport) {
-        // 基于当前使用模式重新分配各层级大小
-        let total_size = cache_stats.total_size;
-        
-        // 如果L1命中率高，增加L1比例
-        let l1_ratio = if cache_stats.l1_hit_rate > 0.8 {
-            0.3 // 30%给L1
-        } else if cache_stats.l1_hit_rate > 0.6 {
-            0.2 // 20%给L1
-        } else {
-            0.15 // 15%给L1
-        };
-        
-        let l2_ratio = if cache_stats.l2_hit_rate > 0.6 {
-            0.4 // 40%给L2
-        } else {
-            0.35 // 35%给L2
-        };
-        
-        let l3_ratio = 1.0 - l1_ratio - l2_ratio; // 剩余给L3
-        
-        // 记录重平衡事件
-        let event = AdaptationEvent {
-            timestamp: Instant::now(),
-            event_type: AdaptationType::LayerRebalance,
-            old_sizes: (cache_stats.l1_size, cache_stats.l2_size, cache_stats.l3_size),
-            new_sizes: (
-                (total_size as f64 * l1_ratio) as usize,
-                (total_size as f64 * l2_ratio) as usize,
-                (total_size as f64 * l3_ratio) as usize,
-            ),
-            trigger_reason: "Cache layer rebalancing based on hit rates".to_string(),
-            performance_impact: 0.0,
-        };
-        
-        self.adaptation_history.push(event);
+    fn rebalance_cache_layers(&mut self) {
+        // 性能统计功能已移除，重新平衡功能暂时禁用
         self.last_adaptation = Instant::now();
     }
     

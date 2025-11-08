@@ -12,14 +12,6 @@ use crate::cache::smart_cache::SmartCache;
 use crate::io::batch_access_engine::BatchAccessEngine;
 use crate::memory::simd_processor::SIMDProcessor;
 
-#[derive(Debug, Default)]
-struct AccessStats {
-    cache_hits: u64,
-    cache_misses: u64,
-    prefetch_hits: u64,
-    total_reads: u64,
-}
-
 // 访问模式分析相关类型
 #[derive(Debug, Clone)]
 enum AccessPatternType {
@@ -36,7 +28,6 @@ pub struct OptimizedLazyArray {
     pub itemsize: usize,
     file_path: PathBuf,
     cache: Arc<SmartCache>,
-    stats: Arc<Mutex<AccessStats>>,
     batch_engine: Arc<BatchAccessEngine>,
     simd_processor: SIMDProcessor,
 }
@@ -48,7 +39,6 @@ impl OptimizedLazyArray {
         
         let itemsize = dtype.size_bytes() as usize;
         let cache = Arc::new(SmartCache::new());
-        let stats = Arc::new(Mutex::new(AccessStats::default()));
         let simd_processor = SIMDProcessor::new();
 
         Ok(Self {
@@ -58,7 +48,6 @@ impl OptimizedLazyArray {
             itemsize,
             file_path,
             cache,
-            stats,
             batch_engine: Arc::new(BatchAccessEngine::new()),
             simd_processor,
         })
@@ -256,24 +245,9 @@ impl OptimizedLazyArray {
         }
     }
     
-    pub fn get_cache_stats(&self) -> (u64, u64, f64) {
-        // 模拟缓存统计
-        let stats = self.stats.lock().unwrap();
-        let hit_rate = if stats.cache_hits + stats.cache_misses > 0 {
-            stats.cache_hits as f64 / (stats.cache_hits + stats.cache_misses) as f64
-        } else {
-            0.0
-        };
-        (stats.cache_hits, stats.cache_misses, hit_rate)
-    }
-    
     pub fn clear_cache(&self) {
-        // 重置统计信息
-        let mut stats = self.stats.lock().unwrap();
-        stats.cache_hits = 0;
-        stats.cache_misses = 0;
-        stats.prefetch_hits = 0;
-        stats.total_reads = 0;
+        // 清空缓存
+        self.cache.clear();
     }
     
     pub fn boolean_index_adaptive_prefetch(&self, mask: &[bool]) -> Vec<Vec<u8>> {
@@ -462,22 +436,6 @@ impl OptimizedLazyArray {
     pub fn boolean_index_adaptive_algorithm(&self, mask: &[bool]) -> Vec<Vec<u8>> {
         // 自适应算法：动态选择最佳策略
         self.boolean_index_production(mask)
-    }
-    
-    pub fn get_extended_cache_stats(&self) -> (u64, u64, f64, usize, usize, usize) {
-        let stats = self.stats.lock().unwrap();
-        let hit_rate = if stats.cache_hits + stats.cache_misses > 0 {
-            stats.cache_hits as f64 / (stats.cache_hits + stats.cache_misses) as f64
-        } else {
-            0.0
-        };
-        
-        // 扩展统计：(hits, misses, hit_rate, current_size, max_size, total_blocks)
-        let current_size = (self.shape.iter().product::<usize>() * self.itemsize) / 1024; // KB
-        let max_size = current_size * 2; // 估算最大缓存大小
-        let total_blocks = self.shape[0];
-        
-        (stats.cache_hits, stats.cache_misses, hit_rate, current_size, max_size, total_blocks)
     }
     
     pub fn boolean_index(&self, mask: &[bool]) -> Vec<Vec<u8>> {

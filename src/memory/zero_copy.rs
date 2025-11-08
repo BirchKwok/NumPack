@@ -218,31 +218,6 @@ impl ZeroCopyHandler {
         true
     }
     
-    /// 获取性能统计信息
-    pub fn get_performance_stats(&self) -> ZeroCopyStats {
-        let zero_copy_hits = *self.zero_copy_hits.lock().unwrap();
-        let fallback_to_copy = *self.fallback_to_copy.lock().unwrap();
-        let total_accesses = zero_copy_hits + fallback_to_copy;
-        
-        ZeroCopyStats {
-            zero_copy_hits,
-            fallback_to_copy,
-            zero_copy_rate: if total_accesses > 0 { 
-                zero_copy_hits as f64 / total_accesses as f64 
-            } else { 
-                0.0 
-            },
-            total_zero_copy_memory: *self.total_zero_copy_memory.lock().unwrap(),
-            total_accesses,
-        }
-    }
-    
-    /// 重置统计信息
-    pub fn reset_stats(&self) {
-        *self.zero_copy_hits.lock().unwrap() = 0;
-        *self.fallback_to_copy.lock().unwrap() = 0;
-        *self.total_zero_copy_memory.lock().unwrap() = 0;
-    }
 }
 
 /// 零拷贝性能统计

@@ -162,16 +162,6 @@ impl LRUCache {
         self.current_size = 0;
     }
     
-    pub fn get_stats(&self) -> (u64, u64, f64, usize, usize) {
-        let total_accesses: usize = self.metadata.values().map(|m| m.access_count).sum();
-        let hit_rate = if total_accesses > 0 { 
-            total_accesses as f64 / (total_accesses as f64 + 1.0) // 简化计算
-        } else { 
-            0.0 
-        };
-        (0, 0, hit_rate, self.items.len(), self.current_size)
-    }
-    
     pub fn get_metadata(&self, key: usize) -> Option<&CacheItemMetadata> {
         self.metadata.get(&key)
     }
@@ -335,16 +325,6 @@ impl AdaptiveCache {
         self.metadata.clear();
         self.frequency_buckets.clear();
         self.current_size = 0;
-    }
-    
-    pub fn get_stats(&self) -> (u64, u64, f64, usize, usize) {
-        let total_accesses: usize = self.metadata.values().map(|m| m.access_count).sum();
-        let hit_rate = if total_accesses > 0 { 
-            total_accesses as f64 / (total_accesses as f64 + 1.0) 
-        } else { 
-            0.0 
-        };
-        (0, 0, hit_rate, self.items.len(), self.current_size)
     }
     
     pub fn get_frequency_distribution(&self) -> HashMap<u8, usize> {
@@ -556,27 +536,6 @@ impl CompressedCache {
         self.compression_ratio_history.clear();
     }
     
-    pub fn get_stats(&self) -> (u64, u64, f64, usize, usize) {
-        let total_accesses: usize = self.metadata.values().map(|m| m.access_count).sum();
-        let hit_rate = if total_accesses > 0 { 
-            total_accesses as f64 / (total_accesses as f64 + 1.0) 
-        } else { 
-            0.0 
-        };
-        (0, 0, hit_rate, self.items.len(), self.current_size)
-    }
-    
-    pub fn get_compression_stats(&self) -> (usize, usize, f64) {
-        let total_uncompressed: usize = self.uncompressed_sizes.values().sum();
-        let current_compressed = self.current_size;
-        let ratio = if total_uncompressed > 0 {
-            current_compressed as f64 / total_uncompressed as f64
-        } else {
-            1.0
-        };
-        (total_uncompressed, current_compressed, ratio)
-    }
-    
     pub fn get_metadata(&self, key: usize) -> Option<&CacheItemMetadata> {
         self.metadata.get(&key)
     }
@@ -593,22 +552,6 @@ pub struct MultiLevelCache {
     l2_cache: Arc<Mutex<AdaptiveCache>>,      // L2: 自适应缓存 (频率优化)
     l3_cache: Arc<Mutex<CompressedCache>>,    // L3: 压缩缓存 (大容量)
     policy: CachePolicy,
-    global_stats: Arc<Mutex<MultiLevelCacheStats>>,
-    promotion_count: Arc<Mutex<u64>>,
-    demotion_count: Arc<Mutex<u64>>,
-}
-
-#[derive(Debug, Default)]
-pub struct MultiLevelCacheStats {
-    pub l1_hits: u64,
-    pub l1_misses: u64,
-    pub l2_hits: u64,
-    pub l2_misses: u64,
-    pub l3_hits: u64,
-    pub l3_misses: u64,
-    pub total_promotions: u64,
-    pub total_demotions: u64,
-    pub cache_consistency_checks: u64,
 }
 
 impl MultiLevelCache {
@@ -618,9 +561,6 @@ impl MultiLevelCache {
             l2_cache: Arc::new(Mutex::new(AdaptiveCache::new(policy.l2_max_size))),
             l3_cache: Arc::new(Mutex::new(CompressedCache::new(policy.l3_max_size, policy.compression_threshold))),
             policy,
-            global_stats: Arc::new(Mutex::new(MultiLevelCacheStats::default())),
-            promotion_count: Arc::new(Mutex::new(0)),
-            demotion_count: Arc::new(Mutex::new(0)),
         }
     }
     
@@ -633,24 +573,13 @@ impl MultiLevelCache {
         // 首先检查L1缓存
         if let Ok(mut l1) = self.l1_cache.lock() {
             if let Some(data) = l1.get(key) {
-                if let Ok(mut stats) = self.global_stats.lock() {
-                    stats.l1_hits += 1;
-                }
                 return Some(data);
-            } else {
-                if let Ok(mut stats) = self.global_stats.lock() {
-                    stats.l1_misses += 1;
-                }
             }
         }
         
         // 检查L2缓存，如果命中则考虑提升到L1
         if let Ok(mut l2) = self.l2_cache.lock() {
             if let Some(data) = l2.get(key) {
-                if let Ok(mut stats) = self.global_stats.lock() {
-                    stats.l2_hits += 1;
-                }
-                
                 // 检查是否需要提升到L1
                 if let Some(meta) = l2.get_metadata(key) {
                     if meta.access_frequency >= self.policy.l2_to_l1_threshold {
@@ -659,20 +588,12 @@ impl MultiLevelCache {
                 }
                 
                 return Some(data);
-            } else {
-                if let Ok(mut stats) = self.global_stats.lock() {
-                    stats.l2_misses += 1;
-                }
             }
         }
         
         // 检查L3缓存，如果命中则考虑提升到L2
         if let Ok(mut l3) = self.l3_cache.lock() {
             if let Some(data) = l3.get(key) {
-                if let Ok(mut stats) = self.global_stats.lock() {
-                    stats.l3_hits += 1;
-                }
-                
                 // 检查是否需要提升到L2
                 if let Some(meta) = l3.get_metadata(key) {
                     if meta.access_frequency >= self.policy.l3_to_l2_threshold {
@@ -681,10 +602,6 @@ impl MultiLevelCache {
                 }
                 
                 return Some(data);
-            } else {
-                if let Ok(mut stats) = self.global_stats.lock() {
-                    stats.l3_misses += 1;
-                }
             }
         }
         
@@ -735,30 +652,18 @@ impl MultiLevelCache {
     }
     
     fn promote_to_l1(&self, key: usize, data: Vec<u8>, _meta: CacheItemMetadata) {
-        if let Ok(mut promotion_count) = self.promotion_count.lock() {
-            *promotion_count += 1;
-        }
         self.put_to_l1(key, data);
     }
     
     fn promote_to_l2(&self, key: usize, data: Vec<u8>, _meta: CacheItemMetadata) {
-        if let Ok(mut promotion_count) = self.promotion_count.lock() {
-            *promotion_count += 1;
-        }
         self.put_to_l2(key, data);
     }
     
     fn demote_to_l2(&self, key: usize, data: Vec<u8>, _meta: CacheItemMetadata) {
-        if let Ok(mut demotion_count) = self.demotion_count.lock() {
-            *demotion_count += 1;
-        }
         self.put_to_l2(key, data);
     }
     
     fn demote_to_l3(&self, key: usize, data: Vec<u8>, _meta: CacheItemMetadata) {
-        if let Ok(mut demotion_count) = self.demotion_count.lock() {
-            *demotion_count += 1;
-        }
         self.put_to_l3(key, data);
     }
     
@@ -801,113 +706,6 @@ impl MultiLevelCache {
         if let Ok(mut l3) = self.l3_cache.lock() {
             l3.clear();
         }
-        
-        if let Ok(mut stats) = self.global_stats.lock() {
-            *stats = MultiLevelCacheStats::default();
-        }
     }
     
-    /// 获取缓存统计信息
-    pub fn get_comprehensive_stats(&self) -> MultiLevelCacheReport {
-        let mut report = MultiLevelCacheReport::default();
-        
-        if let Ok(l1) = self.l1_cache.lock() {
-            let (hits, misses, hit_rate, items, size) = l1.get_stats();
-            report.l1_hits = hits;
-            report.l1_misses = misses;
-            report.l1_hit_rate = hit_rate;
-            report.l1_items = items;
-            report.l1_size = size;
-        }
-        
-        if let Ok(l2) = self.l2_cache.lock() {
-            let (hits, misses, hit_rate, items, size) = l2.get_stats();
-            report.l2_hits = hits;
-            report.l2_misses = misses;
-            report.l2_hit_rate = hit_rate;
-            report.l2_items = items;
-            report.l2_size = size;
-            report.l2_frequency_distribution = l2.get_frequency_distribution();
-        }
-        
-        if let Ok(l3) = self.l3_cache.lock() {
-            let (hits, misses, hit_rate, items, size) = l3.get_stats();
-            let (total_uncompressed, total_compressed, compression_ratio) = l3.get_compression_stats();
-            
-            report.l3_hits = hits;
-            report.l3_misses = misses;
-            report.l3_hit_rate = hit_rate;
-            report.l3_items = items;
-            report.l3_size = size;
-            report.l3_compression_ratio = compression_ratio;
-            report.l3_total_uncompressed = total_uncompressed;
-            report.l3_total_compressed = total_compressed;
-            report.l3_actual_compression_ratio = if total_uncompressed > 0 {
-                total_compressed as f64 / total_uncompressed as f64
-            } else {
-                1.0
-            };
-        }
-        
-        // 计算整体统计
-        let total_hits = report.l1_hits + report.l2_hits + report.l3_hits;
-        let total_misses = report.l1_misses + report.l2_misses + report.l3_misses;
-        let total_requests = total_hits + total_misses;
-        
-        report.overall_hit_rate = if total_requests > 0 {
-            total_hits as f64 / total_requests as f64
-        } else {
-            0.0
-        };
-        
-        report.total_items = report.l1_items + report.l2_items + report.l3_items;
-        report.total_size = report.l1_size + report.l2_size + report.l3_size;
-        
-        if let Ok(promotion_count) = self.promotion_count.lock() {
-            report.total_promotions = *promotion_count;
-        }
-        
-        if let Ok(demotion_count) = self.demotion_count.lock() {
-            report.total_demotions = *demotion_count;
-        }
-        
-        report
-    }
-}
-
-// 多级缓存报告
-#[derive(Debug, Default)]
-pub struct MultiLevelCacheReport {
-    // L1统计
-    pub l1_hits: u64,
-    pub l1_misses: u64,
-    pub l1_hit_rate: f64,
-    pub l1_items: usize,
-    pub l1_size: usize,
-    
-    // L2统计
-    pub l2_hits: u64,
-    pub l2_misses: u64,
-    pub l2_hit_rate: f64,
-    pub l2_items: usize,
-    pub l2_size: usize,
-    pub l2_frequency_distribution: HashMap<u8, usize>,
-    
-    // L3统计
-    pub l3_hits: u64,
-    pub l3_misses: u64,
-    pub l3_hit_rate: f64,
-    pub l3_items: usize,
-    pub l3_size: usize,
-    pub l3_compression_ratio: f64,
-    pub l3_total_uncompressed: usize,
-    pub l3_total_compressed: usize,
-    pub l3_actual_compression_ratio: f64,
-    
-    // 整体统计
-    pub overall_hit_rate: f64,
-    pub total_items: usize,
-    pub total_size: usize,
-    pub total_promotions: u64,
-    pub total_demotions: u64,
 }

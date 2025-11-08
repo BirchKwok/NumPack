@@ -274,20 +274,8 @@ impl FancyIndexEngine {
         }
     }
     
-    /// 获取FancyIndexEngine性能统计
-    pub fn get_performance_stats(&self) -> Option<(f64, usize, usize)> {
-        // 返回 (hit_rate, hit_count, miss_count) 格式以保持兼容性
-        if let Ok(prefetch_mgr) = self.prefetch_manager.lock() {
-            let hit_rate = prefetch_mgr.get_hit_rate();
-            let hit_count = prefetch_mgr.get_hit_count();
-            let miss_count = prefetch_mgr.get_miss_count();
-            Some((hit_rate, hit_count as usize, miss_count as usize))
-        } else {
-            None
-        }
-    }
-    
-    /// 获取详细的FancyIndexEngine性能统计
+    /// 获取详细的FancyIndexEngine性能统计 (已弃用，保留空实现以兼容)
+    #[deprecated(note = "性能统计功能已移除")]
     pub fn get_detailed_performance_stats(&self) -> FancyIndexEngineStats {
         if let Ok(stats) = self.performance_stats.lock() {
             stats.clone()

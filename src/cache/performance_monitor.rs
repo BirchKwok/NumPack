@@ -158,34 +158,19 @@ impl CachePerformanceMonitor {
         }
     }
     
-    /// 获取当前性能统计
+    /// 获取当前性能统计 (已弃用，保留空实现以兼容)
+    #[deprecated(note = "性能统计功能已移除")]
     pub fn get_performance_stats(&self) -> CachePerformanceStats {
-        let hit_rate = if self.total_requests > 0 {
-            self.hit_count as f64 / self.total_requests as f64
-        } else {
-            0.0
-        };
-        
-        let avg_latency = if !self.latency_samples.is_empty() {
-            let total: Duration = self.latency_samples.iter().sum();
-            total / self.latency_samples.len() as u32
-        } else {
-            Duration::from_nanos(0)
-        };
-        
-        let current_throughput = self.calculate_current_throughput();
-        let current_memory_usage = self.memory_usage_samples.last().map(|(_, usage)| *usage).unwrap_or(0);
-        
         CachePerformanceStats {
-            hit_rate,
-            total_requests: self.total_requests,
-            avg_latency,
-            max_latency: self.max_latency,
-            min_latency: self.min_latency,
-            current_throughput,
-            peak_memory_usage: self.peak_memory_usage,
-            current_memory_usage,
-            concurrent_operations: self.concurrent_operations.lock().map_or(0, |c| *c),
+            hit_rate: 0.0,
+            total_requests: 0,
+            avg_latency: Duration::from_nanos(0),
+            max_latency: Duration::from_nanos(0),
+            min_latency: Duration::from_nanos(0),
+            current_throughput: 0.0,
+            peak_memory_usage: 0,
+            current_memory_usage: 0,
+            concurrent_operations: 0,
             max_concurrent_operations: self.max_concurrent_operations,
             lock_contention_count: self.lock_contention_count,
             promotion_efficiency: self.promotion_efficiency,

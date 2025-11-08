@@ -252,22 +252,6 @@ impl SmartCache {
         *total_size = 0;
     }
 
-    pub fn get_stats(&self) -> (usize, usize, f64) {
-        let blocks = self.blocks.read().unwrap();
-        let total_size = self.total_size.lock().unwrap();
-        let block_count = blocks.len();
-        let size = *total_size;
-        
-        // 计算平均访问频率
-        let avg_frequency = if !blocks.is_empty() {
-            blocks.values().map(|b| b.get_access_frequency()).sum::<f64>() / blocks.len() as f64
-        } else {
-            0.0
-        };
-        
-        (block_count, size, avg_frequency)
-    }
-
     pub fn get_current_max_size(&self) -> usize {
         *self.current_max_size.lock().unwrap()
     }

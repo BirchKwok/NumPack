@@ -923,17 +923,6 @@ impl LazyArray {
         Ok(())
     }
     
-    /// 获取性能统计信息
-    fn get_performance_stats(&self) -> PyResult<Vec<(String, f64)>> {
-        // 返回基本统计信息，格式为 [(name, value), ...]
-        let stats = vec![
-            ("array_size_mb".to_string(), (self.mmap.len() as f64) / (1024.0 * 1024.0)),
-            ("logical_rows".to_string(), self.len_logical() as f64),
-            ("physical_rows".to_string(), self.shape[0] as f64),
-        ];
-        Ok(stats)
-    }
-    
     /// 生产级布尔索引 - 优化的布尔掩码访问
     fn boolean_index_production(&self, py: Python, mask: Vec<bool>) -> PyResult<PyObject> {
         self.parallel_boolean_index(py, mask)

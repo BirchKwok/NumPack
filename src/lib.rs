@@ -14,6 +14,11 @@ mod cache;
 mod indexing;
 mod lazy_array;
 mod numpack;
+mod vector_engine;          // 向量计算引擎（SimSIMD + GPU）
+
+// GPU 模块（可选特性）
+#[cfg(feature = "gpu")]
+mod gpu;
 
 // 测试模块
 #[cfg(test)]
@@ -783,31 +788,6 @@ impl LazyArray {
         }
         
         Ok(())
-    }
-
-    fn get_performance_stats(&self) -> PyResult<Vec<(String, f64)>> {
-        // 如果有优化引擎，获取真实的性能统计
-        if let Some(ref engine) = self.optimized_engine {
-            let (hits, misses, hit_rate, current_size, max_size, total_blocks) = engine.get_extended_cache_stats();
-            return Ok(vec![
-                ("cache_hits".to_string(), hits as f64),
-                ("cache_misses".to_string(), misses as f64),
-                ("hit_rate".to_string(), hit_rate),
-                ("cache_blocks".to_string(), total_blocks as f64),
-                ("current_cache_size".to_string(), current_size as f64),
-                ("max_cache_size".to_string(), max_size as f64),
-            ]);
-        }
-        
-        // 回退到基本的性能统计
-        Ok(vec![
-            ("cache_hits".to_string(), 0.0),
-            ("cache_misses".to_string(), 0.0),
-            ("hit_rate".to_string(), 0.0),
-            ("cache_blocks".to_string(), 0.0),
-            ("current_cache_size".to_string(), 0.0),
-            ("max_cache_size".to_string(), 0.0),
-        ])
     }
 
     // 阶段4：算法级优化
@@ -2492,11 +2472,6 @@ impl HighPerformanceLazyArray {
         Ok(())
     }
 
-    // 获取缓存统计
-    fn get_cache_stats(&self) -> PyResult<(u64, u64, f64)> {
-        Ok(self.optimized_array.get_cache_stats())
-    }
-
     // 清理缓存
     fn clear_cache(&self) -> PyResult<()> {
         self.optimized_array.clear_cache();
@@ -2856,21 +2831,6 @@ impl HighPerformanceLazyArray {
         };
         
         Ok(algorithm.to_string())
-    }
-
-    // 性能分析方法
-    fn get_performance_stats(&self) -> PyResult<Vec<(String, f64)>> {
-        let stats = self.optimized_array.get_extended_cache_stats();
-        let (hits, misses, hit_rate, blocks, current_size, max_size) = stats;
-        
-        Ok(vec![
-            ("cache_hits".to_string(), hits as f64),
-            ("cache_misses".to_string(), misses as f64),
-            ("hit_rate".to_string(), hit_rate),
-            ("cache_blocks".to_string(), blocks as f64),
-            ("current_cache_size".to_string(), current_size as f64),
-            ("max_cache_size".to_string(), max_size as f64),
-        ])
     }
 
     // 新增：完整的性能基准测试方法
@@ -4555,6 +4515,9 @@ fn _lib_numpack(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // 注册新模块的Python绑定
     numpack::python_bindings::register_python_bindings(m)?;
+    
+    // 注册向量引擎模块
+    vector_engine::python_bindings::register_vector_engine_module(m)?;
     
     Ok(())
 }

@@ -72,8 +72,6 @@ pub struct LRUCache {
     access_order: VecDeque<usize>,
     current_size: usize,
     max_size: usize,
-    hit_count: u64,
-    miss_count: u64,
 }
 
 impl LRUCache {
@@ -84,15 +82,11 @@ impl LRUCache {
             access_order: VecDeque::new(),
             current_size: 0,
             max_size,
-            hit_count: 0,
-            miss_count: 0,
         }
     }
     
     pub fn get(&mut self, key: usize) -> Option<Vec<u8>> {
         if self.items.contains_key(&key) {
-            self.hit_count += 1;
-            
             // 更新元数据
             if let Some(meta) = self.metadata.get_mut(&key) {
                 meta.access();
@@ -104,7 +98,6 @@ impl LRUCache {
             // 获取数据
             self.items.get(&key).cloned()
         } else {
-            self.miss_count += 1;
             None
         }
     }
@@ -154,12 +147,6 @@ impl LRUCache {
     fn move_to_front(&mut self, key: usize) {
         self.access_order.retain(|&k| k != key);
         self.access_order.push_front(key);
-    }
-    
-    pub fn get_stats(&self) -> (u64, u64, f64, usize, usize) {
-        let total = self.hit_count + self.miss_count;
-        let hit_rate = if total > 0 { self.hit_count as f64 / total as f64 } else { 0.0 };
-        (self.hit_count, self.miss_count, hit_rate, self.items.len(), self.current_size)
     }
     
     pub fn clear(&mut self) {

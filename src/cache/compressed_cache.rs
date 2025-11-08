@@ -13,8 +13,6 @@ pub struct CompressedCache {
     uncompressed_sizes: HashMap<usize, usize>, // 原始大小映射
     current_size: usize,             // 压缩后的大小
     max_size: usize,
-    hit_count: u64,
-    miss_count: u64,
     compression_ratio: f64,          // 平均压缩比
     compression_threshold: usize,    // 压缩阈值
 }
@@ -27,8 +25,6 @@ impl CompressedCache {
             uncompressed_sizes: HashMap::new(),
             current_size: 0,
             max_size,
-            hit_count: 0,
-            miss_count: 0,
             compression_ratio: 0.7, // 假设70%的压缩比
             compression_threshold,
         }
@@ -36,8 +32,6 @@ impl CompressedCache {
     
     pub fn get(&mut self, key: usize) -> Option<Vec<u8>> {
         if let Some(compressed_data) = self.items.get(&key) {
-            self.hit_count += 1;
-            
             // 更新元数据
             if let Some(meta) = self.metadata.get_mut(&key) {
                 meta.access();
@@ -46,7 +40,6 @@ impl CompressedCache {
             // 解压数据
             Some(self.decompress_data(compressed_data))
         } else {
-            self.miss_count += 1;
             None
         }
     }
@@ -183,23 +176,6 @@ impl CompressedCache {
         } else {
             None
         }
-    }
-    
-    pub fn get_stats(&self) -> (u64, u64, f64, usize, usize, f64) {
-        let total = self.hit_count + self.miss_count;
-        let hit_rate = if total > 0 { self.hit_count as f64 / total as f64 } else { 0.0 };
-        (self.hit_count, self.miss_count, hit_rate, self.items.len(), self.current_size, self.compression_ratio)
-    }
-    
-    pub fn get_compression_stats(&self) -> (usize, usize, f64) {
-        let total_uncompressed: usize = self.uncompressed_sizes.values().sum();
-        let current_compressed = self.current_size;
-        let ratio = if total_uncompressed > 0 {
-            current_compressed as f64 / total_uncompressed as f64
-        } else {
-            1.0
-        };
-        (total_uncompressed, current_compressed, ratio)
     }
     
     pub fn get_metadata(&self, key: usize) -> Option<&CacheItemMetadata> {

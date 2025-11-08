@@ -431,11 +431,6 @@ impl AccessPatternSIMD {
         }
     }
 
-    /// 获取性能统计
-    pub fn get_performance_stats(&self, pattern: AccessPattern) -> Option<&AccessStats> {
-        self.current_stats.get(&pattern)
-    }
-
     /// 清理过期的性能记录
     pub fn cleanup_expired_records(&mut self, max_age: Duration) {
         let cutoff = Instant::now() - max_age;

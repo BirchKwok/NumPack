@@ -195,21 +195,23 @@ class TestLazyArrayAdvancedMethods:
                 pass
 
     def test_get_performance_stats(self, lazy_array_large):
-        """测试 get_performance_stats 方法"""
+        """测试 get_performance_stats 方法 - 已弃用"""
         lazy_arr, _ = lazy_array_large
         
+        # 性能统计功能已移除，此测试跳过
         try:
             # 先执行一些操作以生成统计信息
             _ = lazy_arr[0:10]
             _ = lazy_arr[100:200]
             
-            # 获取性能统计
-            stats = lazy_arr.get_performance_stats()
-            assert isinstance(stats, list)
+            # 获取性能统计 - 方法已删除
+            # stats = lazy_arr.get_performance_stats()
+            # assert isinstance(stats, list)
             
-            for stat_name, stat_value in stats:
-                assert isinstance(stat_name, str)
-                assert isinstance(stat_value, (int, float))
+            # for stat_name, stat_value in stats:
+            #     assert isinstance(stat_name, str)
+            #     assert isinstance(stat_value, (int, float))
+            pass
                 
         except AttributeError:
             # 不跳过测试，让测试失败
@@ -334,10 +336,10 @@ class TestLazyArrayAdvancedMethods:
                 rows = lazy_arr.mega_batch_get_rows(indices, 50)
                 assert len(rows) == len(indices)
             
-            # 步骤3：获取性能统计
-            if hasattr(lazy_arr, 'get_performance_stats'):
-                stats = lazy_arr.get_performance_stats()
-                assert isinstance(stats, list)
+            # 步骤3：获取性能统计 - 已移除
+            # if hasattr(lazy_arr, 'get_performance_stats'):
+            #     stats = lazy_arr.get_performance_stats()
+            #     assert isinstance(stats, list)
             
         except AttributeError:
             # 不跳过测试，让测试失败

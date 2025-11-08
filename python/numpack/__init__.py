@@ -17,6 +17,7 @@ try:
     import numpack._lib_numpack as rust_backend
     _NumPack = rust_backend.NumPack
     LazyArray = rust_backend.LazyArray
+    VectorEngine = rust_backend.VectorEngine
     _BACKEND_TYPE = "rust"
 except ImportError as e:
     raise ImportError(
@@ -756,7 +757,14 @@ class BatchModeContext:
             self.npk._memory_cache.clear()
 
 
-__all__ = ['NumPack', 'LazyArray', 'force_cleanup_windows_handles', 'get_backend_info', 'BatchModeContext']
+__all__ = [
+    'NumPack', 
+    'LazyArray', 
+    'VectorEngine',
+    'force_cleanup_windows_handles', 
+    'get_backend_info', 
+    'BatchModeContext'
+]
 
 # Backend information query
 def get_backend_info():
@@ -765,9 +773,20 @@ def get_backend_info():
     Returns:
         Dict: Dictionary containing backend type, platform, version, etc.
     """
-    return {
+    info = {
         'backend_type': _BACKEND_TYPE,
         'platform': platform.system(),
         'is_windows': _is_windows(),
-        'version': __version__
+        'version': __version__,
     }
+    
+    # 检查 GPU 可用性（通过 VectorEngine）
+    try:
+        engine = VectorEngine()
+        info['gpu_available'] = engine.is_gpu_available()
+        if info['gpu_available']:
+            info['gpu_devices'] = engine.get_gpu_info()
+    except:
+        info['gpu_available'] = False
+    
+    return info

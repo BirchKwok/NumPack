@@ -142,11 +142,6 @@ impl HighPerformanceLazyArray {
         Ok(())
     }
 
-    // 获取缓存统计
-    fn get_cache_stats(&self) -> PyResult<(u64, u64, f64)> {
-        Ok(self.optimized_array.get_cache_stats())
-    }
-
     // 清理缓存
     fn clear_cache(&self) -> PyResult<()> {
         self.optimized_array.clear_cache();
