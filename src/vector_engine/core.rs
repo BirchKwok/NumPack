@@ -202,26 +202,30 @@ impl VectorEngine {
         metric: MetricType,
         use_gpu: bool,
     ) -> Result<Vec<f64>> {
-        // 尝试使用 GPU
+        // 回退链：专用 GPU > WebGPU > CPU
+        
         #[cfg(feature = "gpu")]
         {
-            if use_gpu && self.gpu_backend.is_some() && candidates.len() >= 1000 {
+            if use_gpu && self.gpu_backend.is_some() {
                 if let Some(gpu) = &self.gpu_backend {
                     let mut gpu_lock = gpu.lock().unwrap();
+                    
+                    // 尝试 GPU 计算（可能是 MPS/CUDA/ROCm/WebGPU）
                     match gpu_lock.batch_compute(query, candidates, metric) {
                         Ok(scores) => {
                             // GPU 计算成功
                             return Ok(scores);
                         }
-                        Err(_) => {
-                            // GPU 失败，回退到 CPU
+                        Err(e) => {
+                            // GPU 失败，自动回退到 CPU
+                            eprintln!("⚠️  GPU 计算失败: {}, 回退到 CPU", e);
                         }
                     }
                 }
             }
         }
         
-        // 使用 CPU（默认或回退）
+        // 使用 CPU（默认或 GPU 失败后回退）
         self.cpu_backend.batch_compute_f64(query, candidates, metric)
     }
     

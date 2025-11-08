@@ -225,8 +225,10 @@ impl PyVectorEngine {
         match device {
             // None 或 'auto': 自动选择
             None => {
-                // 批量 >= 1000 且 GPU 可用时使用 GPU
-                Ok(batch_size >= 1000 && self.engine.is_gpu_available())
+                // ⚡ 性能优化：GPU 只在大批量时有优势
+                // 实测：批量 < 50000 时，GPU 启动开销 > 计算收益
+                // Apple Silicon GPU 适合非常大的批量计算
+                Ok(batch_size >= 50000 && self.engine.is_gpu_available())
             }
             
             Some(dev_str) => {

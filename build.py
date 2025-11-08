@@ -1,319 +1,363 @@
 #!/usr/bin/env python3
 """
-NumPack conditional build script
+NumPack 智能构建脚本
 
-NumPack only supports Rust backend builds on all platforms.
+自动检测平台和 GPU 能力，使用最高性能配置编译
 
-Build requirements:
-- All platforms (including Windows) require Rust toolchain
-- Environment variable NUMPACK_PYTHON_ONLY=1 is deprecated and will be ignored
+特性:
+- 自动检测 GPU（MPS/WebGPU）并启用对应特性
+- 默认使用 release 模式和最高性能优化
+- 自动处理多 Python 版本环境
+- 简单运行: python build.py
 
-Recommended usage:
-- Development mode: maturin develop --release
-- Build wheel: maturin build --release
-- Build sdist: maturin build --sdist
+用法:
+  python build.py              # 智能构建（自动检测 GPU + release 模式）
+  python build.py --no-gpu     # 禁用 GPU，仅 CPU
+  python build.py --gpu mps    # 强制使用 MPS
+  python build.py --help       # 显示帮助
 """
 
 import os
 import sys
 import platform
-import shutil
 import subprocess
+import argparse
+import tempfile
 from pathlib import Path
 
 
-def is_called_as_module():
-    """Check if this script is being called as 'python -m build'"""
-    # Check if this is being run as a module
-    # When called as 'python -m build', the script path will be 'build.py' and no command arguments
-    return (
-        len(sys.argv) >= 1 and 
-        (sys.argv[0].endswith('build.py') or sys.argv[0] == 'build.py') and
-        (len(sys.argv) == 1 or not any(cmd in sys.argv for cmd in ['build', 'develop', 'info']))
-    )
+def print_banner():
+    """打印横幅"""
+    print("\n" + "=" * 70)
+    print("NumPack 智能构建系统")
+    print("=" * 70)
 
 
-def call_real_build():
-    """Call the real build package, not this script"""
-    try:
-        # Remove the current directory from sys.path temporarily
-        original_path = sys.path[:]
-        original_argv = sys.argv[:]
-        current_dir = os.getcwd()
-        
-        # Remove current directory from path to avoid recursion
-        paths_to_remove = ['', '.', current_dir]
-        for path in paths_to_remove:
-            while path in sys.path:
-                sys.path.remove(path)
-        
-        # Import and run the real build module
-        import build.__main__
-        
-        # Prepare arguments (remove the script name, keep the rest)
-        cli_args = sys.argv[1:] if len(sys.argv) > 1 else []
-        build.__main__.main(cli_args)
-        
-    except ImportError:
-        print("Error: The 'build' package is not installed. Please install it with: pip install build")
-        sys.exit(1)
-    except SystemExit as e:
-        sys.exit(e.code)
-    finally:
-        # Restore original path and argv
-        sys.path[:] = original_path
-        sys.argv[:] = original_argv
-
-
-def is_windows():
-    """Detect if running on Windows platform"""
-    return platform.system().lower() == 'windows'
-
-
-def should_use_python_only():
-    """Decide whether to use pure Python build
+def detect_platform():
+    """检测平台信息"""
+    system = platform.system()
+    machine = platform.machine()
     
-    Note: NumPack only supports Rust builds. This function is kept for backward compatibility only.
-    All platforms (including Windows) require Rust backend.
+    print(f"\n🔍 平台检测:")
+    print(f"  操作系统: {system}")
+    print(f"  架构: {machine}")
+    print(f"  Python: {platform.python_version()}")
+    print(f"  Python 路径: {sys.executable}")
+    
+    return system, machine
+
+
+def detect_gpu_capability(system, machine):
     """
-    # Check environment variable
-    if os.environ.get('NUMPACK_PYTHON_ONLY', '').lower() in ['1', 'true', 'yes']:
-        print("=" * 60)
-        print("WARNING: NUMPACK_PYTHON_ONLY is deprecated")
-        print("NumPack only supports Rust backend, all platforms require Rust toolchain")
-        print("This environment variable will be ignored and Rust build will be used")
-        print("=" * 60)
-        return False
+    自动检测 GPU 能力并返回推荐的特性
     
-    # Windows also uses Rust backend
-    if is_windows():
-        print("Note: Windows platform uses Rust backend build")
-    
-    return False
-
-
-def backup_original_config():
-    """Backup original configuration file"""
-    if Path('pyproject.toml').exists():
-        shutil.copy('pyproject.toml', 'pyproject.toml.backup')
-        print("Backed up original pyproject.toml")
-
-
-def restore_original_config():
-    """Restore original configuration file"""
-    if Path('pyproject.toml.backup').exists():
-        shutil.copy('pyproject.toml.backup', 'pyproject.toml')
-        Path('pyproject.toml.backup').unlink()
-        print("Restored original pyproject.toml")
-
-
-def setup_python_only_build():
-    """Setup pure Python build
-    
-    Note: This function is deprecated, NumPack only supports Rust builds.
+    Returns:
+        list: GPU 特性列表，如 ['gpu-mps'] 或 []
     """
-    print("=" * 60)
-    print("ERROR: Attempting to use pure Python build mode")
-    print("")
-    print("NumPack only supports Rust backend builds.")
-    print("")
-    print("Please ensure Rust toolchain is installed:")
-    print("  - Visit https://rustup.rs/ to install Rust")
-    print("  - Install maturin: pip install maturin")
-    print("  - Build with maturin: maturin develop --release")
-    print("=" * 60)
-    return False
-
-
-def setup_rust_build():
-    """Setup Rust + Python build"""
-    print("Setting up Rust + Python build mode...")
+    print(f"\n🎮 GPU 检测:")
     
-    # Use original configuration file (contains maturin)
-    if Path('pyproject.toml.backup').exists():
-        restore_original_config()
+    gpu_features = []
     
-    return True
-
-
-def run_build(build_args=None):
-    """Execute build"""
-    build_args = build_args or []
-    
-    if should_use_python_only():
-        print(f"Executing pure Python build (Platform: {platform.system()})")
-        
-        if not setup_python_only_build():
-            return False
-        
+    # 1. 检测 Apple Silicon (MPS)
+    if system == "Darwin" and machine == "arm64":
+        # Apple Silicon - 支持 MPS
         try:
-            # Call the real build module directly, not via command line
-            original_argv = sys.argv[:]
-            original_path = sys.path[:]
-            current_dir = os.getcwd()
-            
-            try:
-                # Remove current directory from path to avoid recursion, but keep other paths
-                paths_to_remove = ['', '.', current_dir]
-                removed_paths = []
-                for path in paths_to_remove:
-                    while path in sys.path:
-                        idx = sys.path.index(path)
-                        removed_paths.append((idx, path))
-                        sys.path.remove(path)
-                
-                # Import and call the real build module
-                import build.__main__
-                
-                # Prepare arguments for the real build module
-                cli_args = build_args if build_args else []
-                build.__main__.main(cli_args)
-                
-            finally:
-                # Restore original state
-                sys.argv[:] = original_argv
-                sys.path[:] = original_path
-            
-            print("Pure Python build successful")
-            return True
-            
-        except SystemExit as e:
-            if e.code == 0:
-                print("Pure Python build successful")
-                return True
+            # 尝试检测 Metal 是否可用
+            result = subprocess.run(
+                ["system_profiler", "SPDisplaysDataType"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if "Metal" in result.stdout or result.returncode == 0:
+                print("  ✓ 检测到 Apple Silicon GPU (Metal Performance Shaders)")
+                gpu_features.append('gpu-mps')
             else:
-                print(f"Pure Python build failed with exit code: {e.code}")
-                return False
-        except ImportError:
-            print("Error: 'build' module not found, please install: pip install build")
-            return False
-        except Exception as e:
-            print(f"Pure Python build failed: {e}")
-            return False
-        finally:
-            # Restore original configuration
-            restore_original_config()
+                print("  ⚠ Apple Silicon 但未检测到 Metal")
+        except:
+            # 如果无法运行 system_profiler，仍然假设有 Metal
+            print("  ✓ 检测到 Apple Silicon - 假设支持 MPS")
+            gpu_features.append('gpu-mps')
     
-    else:
-        print(f"Executing Rust + Python build (Platform: {platform.system()})")
-        
-        setup_rust_build()
-        
+    # 2. 检测 NVIDIA GPU (CUDA)
+    elif system == "Linux" or system == "Windows":
+        # 尝试检测 NVIDIA GPU
         try:
-            # Use maturin build
-            cmd = ['maturin', 'build', '--release'] + build_args
-            print(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, check=True)
-            print("Rust + Python build successful")
-            return True
-            
-        except subprocess.CalledProcessError as e:
-            print(f"Rust build failed: {e}")
-            return False
-        except FileNotFoundError:
-            print("Error: 'maturin' not found, please install: pip install maturin")
-            return False
+            result = subprocess.run(
+                ["nvidia-smi"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                print("  ✓ 检测到 NVIDIA GPU")
+                print("  ⚠ CUDA 支持尚未实现，将使用 WebGPU")
+                gpu_features.append('gpu-wgpu')
+            else:
+                print("  ℹ 未检测到 NVIDIA GPU")
+        except:
+            print("  ℹ 未检测到 NVIDIA GPU")
+    
+    # 3. 如果没有检测到特定 GPU，尝试 WebGPU（通用）
+    if not gpu_features:
+        print("  ✗ 未检测到 GPU - 将使用纯 CPU 构建")
+    
+    return gpu_features
 
 
-def run_develop():
-    """Execute development mode installation"""
-    if should_use_python_only():
-        print(f"Executing pure Python development install (Platform: {platform.system()})")
-        
-        if not setup_python_only_build():
-            return False
-        
-        try:
-            # Use pip editable install
-            cmd = [sys.executable, '-m', 'pip', 'install', '-e', '.']
-            print(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, check=True)
-            print("Pure Python development install successful")
-            return True
-            
-        except subprocess.CalledProcessError as e:
-            print(f"Pure Python development install failed: {e}")
-            return False
-        finally:
-            # Restore original configuration
-            restore_original_config()
+def build_feature_string(gpu_features):
+    """
+    构建 Cargo features 字符串
     
-    else:
-        print(f"Executing Rust + Python development install (Platform: {platform.system()})")
+    Args:
+        gpu_features: GPU 特性列表
+    
+    Returns:
+        str: features 字符串，如 "extension-module,rayon,gpu-mps"
+    """
+    # 默认特性
+    default_features = ['extension-module', 'rayon']
+    
+    # 添加 GPU 特性
+    all_features = default_features + gpu_features
+    
+    return ','.join(all_features)
+
+
+def run_maturin_build_wheel(features_str, python_interpreter):
+    """
+    使用 maturin 构建 wheel 文件
+    
+    Args:
+        features_str: Cargo features 字符串
+        python_interpreter: Python 解释器路径
+    
+    Returns:
+        str: 构建的 wheel 文件路径，失败则返回 None
+    """
+    # 创建临时输出目录
+    output_dir = tempfile.mkdtemp(prefix='numpack_build_')
+    
+    # 构建命令 - 使用 -i 参数指定 Python 版本
+    cmd = ['maturin', 'build', '--release', '-i', python_interpreter, '-o', output_dir]
+    
+    # 添加 features
+    if features_str:
+        cmd.extend(['--features', features_str])
+    
+    print(f"\n执行命令: {' '.join(cmd)}")
+    print("=" * 70)
+    
+    try:
+        # 运行构建
+        result = subprocess.run(cmd, check=True, capture_output=False)
         
-        try:
-            # Use maturin develop
-            cmd = ['maturin', 'develop', '--release']
-            print(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, check=True)
-            print("Rust + Python development install successful")
-            return True
+        # 查找生成的 wheel 文件
+        wheel_files = list(Path(output_dir).glob('*.whl'))
+        if wheel_files:
+            return str(wheel_files[0])
+        else:
+            return None
+        
+    except subprocess.CalledProcessError as e:
+        print(f"❌ 构建失败: {e}")
+        return None
+    except FileNotFoundError:
+        print("❌ 错误: 未找到 maturin")
+        print("请安装: pip install maturin")
+        return None
+
+
+def install_wheel(wheel_path, python_interpreter):
+    """
+    安装 wheel 文件
+    
+    Args:
+        wheel_path: wheel 文件路径
+        python_interpreter: Python 解释器路径
+    """
+    print("\n" + "=" * 70)
+    print("📦 安装 wheel 文件")
+    print("=" * 70)
+    
+    cmd = [python_interpreter, '-m', 'pip', 'install', '--force-reinstall', wheel_path]
+    
+    print(f"执行命令: {' '.join(cmd)}")
+    try:
+        result = subprocess.run(cmd, check=True)
+        print("✓ 安装成功!")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"❌ 安装失败: {e}")
+        return False
+
+
+def verify_installation(python_interpreter):
+    """验证安装"""
+    print(f"\n🔍 验证安装:")
+    
+    try:
+        # 尝试导入 numpack
+        result = subprocess.run(
+            [python_interpreter, '-c', 
+             'import numpack; '
+             'print("NumPack 版本:", numpack.__version__ if hasattr(numpack, "__version__") else "未知"); '
+             'engine = numpack.VectorEngine(); '
+             'print("能力:", engine.capabilities()); '
+             'print("GPU 可用:", engine.is_gpu_available())'],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        if result.returncode == 0:
+            print("  ✓ NumPack 导入成功")
+            for line in result.stdout.strip().split('\n'):
+                print(f"  {line}")
             
-        except subprocess.CalledProcessError as e:
-            print(f"Rust development install failed: {e}")
+            # 检查 stderr（GPU 初始化信息）
+            if result.stderr:
+                for line in result.stderr.strip().split('\n'):
+                    if 'Metal' in line or 'GPU' in line:
+                        print(f"  {line}")
+            
+            return True
+        else:
+            print("  ❌ NumPack 导入失败")
+            print(f"  {result.stderr}")
             return False
-        except FileNotFoundError:
-            print("Error: 'maturin' not found, please install: pip install maturin")
-            return False
+            
+    except Exception as e:
+        print(f"  ⚠ 验证时出错: {e}")
+        return False
 
 
 def main():
-    """Main function"""
-    import argparse
+    """主函数"""
+    parser = argparse.ArgumentParser(
+        description="NumPack 智能构建脚本 - 自动检测 GPU 并使用最高性能配置",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  python build.py                # 智能构建（自动检测）
+  python build.py --no-gpu       # 禁用 GPU
+  python build.py --gpu mps      # 强制使用 MPS
+  python build.py --verify-only  # 仅验证安装
+        """
+    )
     
-    parser = argparse.ArgumentParser(description="NumPack conditional build script")
-    parser.add_argument('command', choices=['build', 'develop', 'info'], 
-                        help='Command to execute')
-    parser.add_argument('--python-only', action='store_true',
-                        help='Force pure Python build')
-    parser.add_argument('--out', help='Output directory (for build only)')
+    parser.add_argument(
+        '--no-gpu',
+        action='store_true',
+        help='禁用 GPU，使用纯 CPU 构建'
+    )
+    
+    parser.add_argument(
+        '--gpu',
+        choices=['mps', 'wgpu', 'cuda', 'rocm', 'all', 'universal'],
+        help='强制使用指定的 GPU 后端（覆盖自动检测）\n'
+             'universal: 编译所有GPU后端（通用包）'
+    )
+    
+    parser.add_argument(
+        '--verify-only',
+        action='store_true',
+        help='仅验证当前安装，不构建'
+    )
     
     args = parser.parse_args()
     
-    # 设置环境变量
-    if args.python_only:
-        os.environ['NUMPACK_PYTHON_ONLY'] = '1'
+    # 打印横幅
+    print_banner()
     
-    print(f"NumPack Build Script")
-    print(f"Platform: {platform.system()} {platform.machine()}")
-    print(f"Python: {sys.version}")
-    print(f"Build mode: {'Pure Python' if should_use_python_only() else 'Rust + Python'}")
-    print("-" * 50)
-    
-    if args.command == 'info':
-        print(f"Current configuration:")
-        print(f"  - Platform: {platform.system()}")
-        print(f"  - Use Pure Python: {should_use_python_only()}")
-        print(f"  - NUMPACK_PYTHON_ONLY: {os.environ.get('NUMPACK_PYTHON_ONLY', 'unset')}")
+    # 仅验证模式
+    if args.verify_only:
+        verify_installation(sys.executable)
         return
     
-    elif args.command == 'build':
-        build_args = []
-        if args.out:
-            build_args.extend(['--out', args.out])
-        
-        success = run_build(build_args)
-        sys.exit(0 if success else 1)
+    # 检测平台
+    system, machine = detect_platform()
     
-    elif args.command == 'develop':
-        success = run_develop()
-        sys.exit(0 if success else 1)
-
-
-# Check if we're being called as 'python -m build'
-if is_called_as_module():
-    # If we should use Python-only build, set up the configuration first
-    if should_use_python_only():
-        setup_python_only_build()
+    # 确定 GPU 特性
+    gpu_features = []
     
+    if args.no_gpu:
+        print(f"\n⚙️  GPU 已禁用（用户指定）")
+    elif args.gpu:
+        # 用户指定 GPU
+        print(f"\n⚙️  使用指定的 GPU: {args.gpu}")
+        if args.gpu == 'mps':
+            gpu_features = ['gpu-mps']
+        elif args.gpu == 'wgpu':
+            gpu_features = ['gpu-wgpu']
+        elif args.gpu == 'cuda':
+            gpu_features = ['gpu-cuda']
+        elif args.gpu == 'rocm':
+            gpu_features = ['gpu-rocm']
+        elif args.gpu == 'all':
+            gpu_features = ['gpu-all']
+        elif args.gpu == 'universal':
+            print("  ⚡ 通用包模式：启用所有 GPU 后端")
+            print("  ℹ️  运行时会自动检测并选择可用的 GPU")
+            gpu_features = ['gpu-universal']
+    else:
+        # 自动检测
+        gpu_features = detect_gpu_capability(system, machine)
+    
+    # 构建 features 字符串
+    features_str = build_feature_string(gpu_features)
+    
+    print(f"\n🔨 开始构建:")
+    print(f"  模式: release (最高性能)")
+    print(f"  特性: {features_str}")
+    print(f"  目标 Python: {sys.executable}")
+    
+    # 步骤 1: 构建 wheel
+    wheel_path = run_maturin_build_wheel(features_str, sys.executable)
+    
+    if not wheel_path:
+        print("\n" + "=" * 70)
+        print("❌ 构建失败")
+        print("=" * 70)
+        sys.exit(1)
+    
+    print("=" * 70)
+    print(f"✓ Wheel 构建成功: {wheel_path}")
+    
+    # 步骤 2: 安装 wheel
+    if not install_wheel(wheel_path, sys.executable):
+        print("\n" + "=" * 70)
+        print("❌ 安装失败")
+        print("=" * 70)
+        sys.exit(1)
+    
+    # 步骤 3: 验证安装
+    verify_installation(sys.executable)
+    
+    # 清理临时文件
     try:
-        call_real_build()
-    finally:
-        # Restore original configuration if we modified it
-        if should_use_python_only():
-            restore_original_config()
+        Path(wheel_path).parent.rmdir()
+    except:
+        pass
     
-    sys.exit(0)
+    # 打印使用提示
+    print("\n" + "=" * 70)
+    print("🎉 完成!")
+    print("=" * 70)
+    
+    print("\n📚 后续步骤:")
+    print("  1. 快速测试: python quick_test.py")
+    print("  2. 完整测试: python test_gpu_detection.py")
+    print("  3. 运行示例: python examples/gpu_demo.py")
+    print("  4. 验证安装: python build.py --verify-only")
+    
+    print("\n💡 使用提示:")
+    print("  import numpack")
+    print("  engine = numpack.VectorEngine()")
+    print("  scores = engine.batch_compute(query, candidates, metric='dot', device='mps')")
+    
+    print("\n" + "=" * 70 + "\n")
+
 
 if __name__ == '__main__':
     main() 

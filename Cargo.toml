@@ -75,7 +75,8 @@ gpu-cuda = ["gpu", "cudarc/cuda-12060"]  # NVIDIA GPU (CUDA 12.6)
 gpu-cuda-11 = ["gpu", "cudarc/cuda-11080"]  # NVIDIA GPU (CUDA 11.8)
 gpu-rocm = ["gpu"]  # AMD GPU (ROCm) - 通过 HIP
 gpu-wgpu = ["gpu", "wgpu", "pollster"]  # 通用 GPU (WebGPU)
-gpu-all = ["gpu-mps", "gpu-wgpu"]  # 全部 GPU 支持（不包括 CUDA，需要单独启用）
+gpu-all = ["gpu-mps", "gpu-wgpu"]  # MPS + WebGPU（不包括 CUDA）
+gpu-universal = ["gpu-mps", "gpu-cuda", "gpu-rocm", "gpu-wgpu"]  # 所有 GPU（通用包）
 
 [package.metadata.maturin]
 python-source = "python"
