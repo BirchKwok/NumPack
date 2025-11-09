@@ -423,8 +423,8 @@ impl HighPerformanceLazyArray {
     // 尖端性能优化方法  
     // ===========================
 
-    fn gpu_accelerated_gather(&self, py: Python, indices: Vec<usize>) -> PyResult<PyObject> {
-        let rows = self.optimized_array.gpu_accelerated_gather(&indices);
+    fn cpu_accelerated_gather(&self, py: Python, indices: Vec<usize>) -> PyResult<PyObject> {
+        let rows = self.optimized_array.cpu_accelerated_gather(&indices);
         let mut new_shape = self.shape.clone();
         new_shape[0] = rows.len();
         

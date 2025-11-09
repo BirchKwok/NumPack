@@ -641,21 +641,20 @@ impl OptimizedLazyArray {
         }
     }
     
-    pub fn gpu_accelerated_gather(&self, indices: &[usize]) -> Vec<Vec<u8>> {
-        // GPU加速聚合：模拟GPU并行处理
-        // 注意：实际GPU实现需要CUDA或OpenCL，这里提供CPU模拟
+    pub fn cpu_accelerated_gather(&self, indices: &[usize]) -> Vec<Vec<u8>> {
+        // CPU加速聚合：使用并行处理
         if indices.is_empty() {
             return vec![];
         }
         
         use rayon::prelude::*;
         
-        // 模拟GPU的大规模并行处理
-        const GPU_THREAD_BLOCK_SIZE: usize = 256;
+        // CPU并行处理
+        const CPU_THREAD_BLOCK_SIZE: usize = 256;
         
-        indices.par_chunks(GPU_THREAD_BLOCK_SIZE)
+        indices.par_chunks(CPU_THREAD_BLOCK_SIZE)
             .flat_map(|chunk| {
-                // 模拟GPU的共享内存优化
+                // 本地缓存优化
                 let mut local_cache: std::collections::HashMap<usize, Vec<u8>> = std::collections::HashMap::new();
                 
                 chunk.iter().map(|&idx| {

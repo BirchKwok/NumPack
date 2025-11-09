@@ -14,11 +14,7 @@ mod cache;
 mod indexing;
 mod lazy_array;
 mod numpack;
-mod vector_engine;          // 向量计算引擎（SimSIMD + GPU）
-
-// GPU 模块（可选特性）
-#[cfg(feature = "gpu")]
-mod gpu;
+mod vector_engine;          // 向量计算引擎（SimSIMD）
 
 // 测试模块
 #[cfg(test)]

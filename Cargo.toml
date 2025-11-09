@@ -35,12 +35,6 @@ rand = "0.8"
 # 向量计算引擎：高性能 SIMD 库
 simsimd = "6.5.4"
 
-# GPU 加速支持（可选特性）
-metal = { version = "0.29", optional = true }
-objc = { version = "0.2", optional = true }
-cudarc = { version = "0.12", optional = true, default-features = false }  # CUDA 支持
-wgpu = { version = "22", optional = true }  # WebGPU 支持
-pollster = { version = "0.3", optional = true }  # WebGPU 异步支持
 
 # 高级压缩算法
 zstd = "0.13"
@@ -68,15 +62,6 @@ avx512 = []
 rayon = ["dep:rayon"]
 io-uring-support = ["io-uring"]  # Linux io_uring支持
 
-# GPU 加速特性
-gpu = []
-gpu-mps = ["gpu", "metal", "objc"]  # Apple Silicon GPU (Metal Performance Shaders)
-gpu-cuda = ["gpu", "cudarc/cuda-12060"]  # NVIDIA GPU (CUDA 12.6)
-gpu-cuda-11 = ["gpu", "cudarc/cuda-11080"]  # NVIDIA GPU (CUDA 11.8)
-gpu-rocm = ["gpu"]  # AMD GPU (ROCm) - 通过 HIP
-gpu-wgpu = ["gpu", "wgpu", "pollster"]  # 通用 GPU (WebGPU)
-gpu-all = ["gpu-mps", "gpu-wgpu"]  # MPS + WebGPU（不包括 CUDA）
-gpu-universal = ["gpu-mps", "gpu-cuda", "gpu-rocm", "gpu-wgpu"]  # 所有 GPU（通用包）
 
 [package.metadata.maturin]
 python-source = "python"

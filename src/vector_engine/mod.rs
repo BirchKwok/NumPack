@@ -2,7 +2,6 @@
 //! 
 //! 提供高性能向量相似度计算，支持：
 //! - SimSIMD SIMD 加速（CPU）
-//! - GPU 加速（MPS, CUDA, WebGPU）
 //! - 多种数据类型（f64, f32, i8, u8, f16）
 //! - 多种度量（dot, cosine, l2, l2sq, kl, js, hamming, jaccard）
 

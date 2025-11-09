@@ -74,22 +74,16 @@ impl PyVectorEngine {
     ///     query: 查询向量 (1D numpy array, any supported dtype)
     ///     candidates: 候选向量矩阵 (2D numpy array, shape: [N, D], same dtype as query)
     ///     metric: 度量类型字符串
-    ///     device: 计算设备（PyTorch 风格）
-    ///             - None: 自动选择（默认）
-    ///             - 'cpu': CPU 计算
-    ///             - 'mps': Apple Silicon GPU
-    ///             - 'cuda' or 'cuda:0': NVIDIA GPU
     /// 
     /// Returns:
     ///     度量值数组 (1D numpy array, shape: [N], always f64)
-    #[pyo3(signature = (query, candidates, metric, device=None))]
+    #[pyo3(signature = (query, candidates, metric))]
     pub fn batch_compute(
         &self,
         py: Python,
         query: &Bound<'_, PyAny>,
         candidates: &Bound<'_, PyAny>,
         metric: &str,
-        device: Option<&str>,
     ) -> PyResult<Py<PyArray1<f64>>> {
         // 解析度量类型
         let metric_type = MetricType::from_str(metric)
@@ -110,11 +104,11 @@ impl PyVectorEngine {
         // 根据 dtype 分派到不同的计算路径
         // 这样可以避免不必要的类型转换，直接使用 SimSIMD 的原生支持
         match query_dtype.as_str() {
-            "float64" => self.batch_compute_f64(py, query, candidates, metric_type, device),
-            "float32" => self.batch_compute_f32(py, query, candidates, metric_type, device),
-            "float16" => self.batch_compute_f16(py, query, candidates, metric_type, device),
-            "int8" => self.batch_compute_i8(py, query, candidates, metric_type, device),
-            "uint8" => self.batch_compute_u8(py, query, candidates, metric_type, device),
+            "float64" => self.batch_compute_f64(py, query, candidates, metric_type),
+            "float32" => self.batch_compute_f32(py, query, candidates, metric_type),
+            "float16" => self.batch_compute_f16(py, query, candidates, metric_type),
+            "int8" => self.batch_compute_i8(py, query, candidates, metric_type),
+            "uint8" => self.batch_compute_u8(py, query, candidates, metric_type),
             _ => Err(PyTypeError::new_err(format!(
                 "Unsupported dtype: {}. Supported: float64, float32, float16, int8, uint8",
                 query_dtype
@@ -132,7 +126,6 @@ impl PyVectorEngine {
     ///     candidates: 候选向量矩阵 (2D numpy array, same dtype as query)
     ///     metric: 度量类型字符串
     ///     k: 返回的结果数量
-    ///     device: 计算设备（PyTorch 风格）
     /// 
     /// Returns:
     ///     (indices, scores): 
@@ -141,7 +134,7 @@ impl PyVectorEngine {
     ///         
     ///     对于相似度度量（dot, cosine），返回最高的 k 个
     ///     对于距离度量（l2, l2sq, hamming, jaccard, kl, js），返回最低的 k 个
-    #[pyo3(signature = (query, candidates, metric, k, device=None))]
+    #[pyo3(signature = (query, candidates, metric, k))]
     pub fn top_k_search(
         &self,
         py: Python,
@@ -149,7 +142,6 @@ impl PyVectorEngine {
         candidates: &Bound<'_, PyAny>,
         metric: &str,
         k: usize,
-        device: Option<&str>,
     ) -> PyResult<(Py<PyArray1<usize>>, Py<PyArray1<f64>>)> {
         // 解析度量类型
         let metric_type = MetricType::from_str(metric)
@@ -169,10 +161,10 @@ impl PyVectorEngine {
         
         // 根据 dtype 分派
         match query_dtype.as_str() {
-            "float64" => self.top_k_search_f64(py, query, candidates, metric_type, k, device),
-            "float32" => self.top_k_search_f32(py, query, candidates, metric_type, k, device),
-            "int8" => self.top_k_search_i8(py, query, candidates, metric_type, k, device),
-            "uint8" => self.top_k_search_u8(py, query, candidates, metric_type, k, device),
+            "float64" => self.top_k_search_f64(py, query, candidates, metric_type, k),
+            "float32" => self.top_k_search_f32(py, query, candidates, metric_type, k),
+            "int8" => self.top_k_search_i8(py, query, candidates, metric_type, k),
+            "uint8" => self.top_k_search_u8(py, query, candidates, metric_type, k),
             _ => Err(PyTypeError::new_err(format!(
                 "Unsupported dtype: {}. Supported: float64, float32, int8, uint8",
                 query_dtype
@@ -180,91 +172,6 @@ impl PyVectorEngine {
         }
     }
     
-    /// 检查 GPU 是否可用
-    #[pyo3(signature = ())]
-    pub fn is_gpu_available(&self) -> bool {
-        self.engine.is_gpu_available()
-    }
-    
-    /// 获取 GPU 设备信息
-    #[pyo3(signature = ())]
-    pub fn get_gpu_info(&self, py: Python) -> PyResult<PyObject> {
-        #[cfg(feature = "gpu")]
-        {
-            let devices = self.engine.get_gpu_info();
-            let list = pyo3::types::PyList::empty(py);
-            
-            for device in devices {
-                let dict = pyo3::types::PyDict::new(py);
-                dict.set_item("name", device.name)?;
-                dict.set_item("backend", format!("{}", device.backend_type))?;
-                dict.set_item("memory_mb", device.memory_mb)?;
-                dict.set_item("available", device.available)?;
-                list.append(dict)?;
-            }
-            
-            Ok(list.into())
-        }
-        
-        #[cfg(not(feature = "gpu"))]
-        {
-            Ok(pyo3::types::PyList::empty(py).into())
-        }
-    }
-    
-    /// 解析 device 参数为 GPU 标志（PyTorch 风格）
-    /// 
-    /// 支持的格式：
-    /// - None: 自动选择
-    /// - 'cpu': CPU
-    /// - 'mps': Apple Silicon GPU
-    /// - 'cuda' or 'cuda:0': NVIDIA GPU
-    /// - 'rocm': AMD GPU
-    /// - 'webgpu': WebGPU
-    fn parse_device_to_gpu_flag(&self, device: Option<&str>, batch_size: usize) -> PyResult<bool> {
-        match device {
-            // None 或 'auto': 自动选择
-            None => {
-                // ⚡ 性能优化：GPU 只在大批量时有优势
-                // 实测：批量 < 50000 时，GPU 启动开销 > 计算收益
-                // Apple Silicon GPU 适合非常大的批量计算
-                Ok(batch_size >= 50000 && self.engine.is_gpu_available())
-            }
-            
-            Some(dev_str) => {
-                let dev_lower = dev_str.to_lowercase();
-                
-                // CPU
-                if dev_lower == "cpu" {
-                    return Ok(false);
-                }
-                
-                // GPU 相关
-                if dev_lower == "mps" 
-                    || dev_lower == "cuda" 
-                    || dev_lower.starts_with("cuda:")
-                    || dev_lower == "rocm"
-                    || dev_lower == "webgpu"
-                    || dev_lower == "gpu" {
-                    
-                    // 检查 GPU 是否可用
-                    if !self.engine.is_gpu_available() {
-                        // 警告但不报错，回退到 CPU
-                        eprintln!("Warning: GPU device '{}' requested but not available, falling back to CPU", dev_str);
-                        return Ok(false);
-                    }
-                    
-                    return Ok(true);
-                }
-                
-                // 未知设备
-                Err(PyValueError::new_err(format!(
-                    "Invalid device '{}'. Supported: None, 'cpu', 'mps', 'cuda', 'cuda:0', 'rocm', 'webgpu'",
-                    dev_str
-                )))
-            }
-        }
-    }
 }
 
 // ========================================================================
@@ -282,7 +189,6 @@ impl PyVectorEngine {
         query: &Bound<'_, PyAny>,
         candidates: &Bound<'_, PyAny>,
         metric_type: MetricType,
-        device: Option<&str>,
     ) -> PyResult<Py<PyArray1<f64>>> {
         use numpy::PyArrayMethods;
         
@@ -307,7 +213,6 @@ impl PyVectorEngine {
             )));
         }
         
-        let use_gpu = self.parse_device_to_gpu_flag(device, n_candidates)?;
         let candidates_slice = candidates_arr.as_slice()?;
         
         // 🚀 关键优化：使用 usize 传递地址（可以跨线程）
@@ -381,7 +286,6 @@ impl PyVectorEngine {
         query: &Bound<'_, PyAny>,
         candidates: &Bound<'_, PyAny>,
         metric_type: MetricType,
-        _device: Option<&str>,
     ) -> PyResult<Py<PyArray1<f64>>> {
         use numpy::PyArrayMethods;
         
@@ -457,7 +361,6 @@ impl PyVectorEngine {
         _query: &Bound<'_, PyAny>,
         _candidates: &Bound<'_, PyAny>,
         _metric_type: MetricType,
-        _device: Option<&str>,
     ) -> PyResult<Py<PyArray1<f64>>> {
         // TODO: 实现 f16 支持（需要 half crate 集成）
         Err(PyTypeError::new_err(
@@ -472,7 +375,6 @@ impl PyVectorEngine {
         query: &Bound<'_, PyAny>,
         candidates: &Bound<'_, PyAny>,
         metric_type: MetricType,
-        _device: Option<&str>,
     ) -> PyResult<Py<PyArray1<f64>>> {
         use numpy::PyArrayMethods;
         
@@ -546,7 +448,6 @@ impl PyVectorEngine {
         query: &Bound<'_, PyAny>,
         candidates: &Bound<'_, PyAny>,
         metric_type: MetricType,
-        _device: Option<&str>,
     ) -> PyResult<Py<PyArray1<f64>>> {
         use numpy::PyArrayMethods;
         
@@ -633,10 +534,9 @@ impl PyVectorEngine {
         candidates: &Bound<'_, PyAny>,
         metric_type: MetricType,
         k: usize,
-        device: Option<&str>,
     ) -> PyResult<(Py<PyArray1<usize>>, Py<PyArray1<f64>>)> {
         // 先计算所有分数
-        let scores_array = self.batch_compute_f64(py, query, candidates, metric_type, device)?;
+        let scores_array = self.batch_compute_f64(py, query, candidates, metric_type)?;
         
         // 提取分数
         let scores = scores_array.bind(py).readonly();
@@ -659,9 +559,8 @@ impl PyVectorEngine {
         candidates: &Bound<'_, PyAny>,
         metric_type: MetricType,
         k: usize,
-        device: Option<&str>,
     ) -> PyResult<(Py<PyArray1<usize>>, Py<PyArray1<f64>>)> {
-        let scores_array = self.batch_compute_f32(py, query, candidates, metric_type, device)?;
+        let scores_array = self.batch_compute_f32(py, query, candidates, metric_type)?;
         let scores = scores_array.bind(py).readonly();
         let scores_slice = scores.as_slice()?;
         let (indices, top_scores) = Self::select_top_k(scores_slice, k, metric_type.is_similarity());
@@ -680,9 +579,8 @@ impl PyVectorEngine {
         candidates: &Bound<'_, PyAny>,
         metric_type: MetricType,
         k: usize,
-        device: Option<&str>,
     ) -> PyResult<(Py<PyArray1<usize>>, Py<PyArray1<f64>>)> {
-        let scores_array = self.batch_compute_i8(py, query, candidates, metric_type, device)?;
+        let scores_array = self.batch_compute_i8(py, query, candidates, metric_type)?;
         let scores = scores_array.bind(py).readonly();
         let scores_slice = scores.as_slice()?;
         let (indices, top_scores) = Self::select_top_k(scores_slice, k, metric_type.is_similarity());
@@ -701,9 +599,8 @@ impl PyVectorEngine {
         candidates: &Bound<'_, PyAny>,
         metric_type: MetricType,
         k: usize,
-        device: Option<&str>,
     ) -> PyResult<(Py<PyArray1<usize>>, Py<PyArray1<f64>>)> {
-        let scores_array = self.batch_compute_u8(py, query, candidates, metric_type, device)?;
+        let scores_array = self.batch_compute_u8(py, query, candidates, metric_type)?;
         let scores = scores_array.bind(py).readonly();
         let scores_slice = scores.as_slice()?;
         // u8 的度量都是距离（越小越好）

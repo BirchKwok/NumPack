@@ -2,73 +2,21 @@
 
 use crate::vector_engine::metrics::MetricType;
 use crate::vector_engine::simd_backend::{SimdBackend, SimdError, Result};
-use std::sync::{Arc, Mutex};
-
-#[cfg(feature = "gpu")]
-use crate::gpu::{GpuEngine, GpuBackendType};
 
 /// 向量计算引擎
 pub struct VectorEngine {
     /// SimSIMD 后端（CPU）- 公开以允许直接访问
     pub(crate) cpu_backend: SimdBackend,
-    /// GPU 后端（可选）
-    #[cfg(feature = "gpu")]
-    gpu_backend: Option<Arc<Mutex<GpuEngine>>>,
 }
 
 impl VectorEngine {
     /// 创建新的向量引擎实例
     /// 
-    /// 自动检测 CPU SIMD 能力和 GPU 硬件
+    /// 自动检测 CPU SIMD 能力
     pub fn new() -> Self {
-        #[cfg(feature = "gpu")]
-        let gpu_backend = {
-            match GpuEngine::new() {
-                Ok(engine) if engine.is_gpu_available() => {
-                    Some(Arc::new(Mutex::new(engine)))
-                }
-                _ => None,
-            }
-        };
-        
         Self {
             cpu_backend: SimdBackend::new(),
-            #[cfg(feature = "gpu")]
-            gpu_backend,
         }
-    }
-    
-    /// 检查 GPU 是否可用
-    #[cfg(feature = "gpu")]
-    pub fn is_gpu_available(&self) -> bool {
-        self.gpu_backend.is_some()
-    }
-    
-    /// 检查 GPU 是否可用（无 GPU 特性时）
-    #[cfg(not(feature = "gpu"))]
-    pub fn is_gpu_available(&self) -> bool {
-        false
-    }
-    
-    /// 获取当前可用的后端类型
-    #[cfg(feature = "gpu")]
-    pub fn get_backend_type(&self, use_gpu: bool) -> String {
-        if use_gpu && self.gpu_backend.is_some() {
-            if let Some(gpu) = &self.gpu_backend {
-                let gpu_lock = gpu.lock().unwrap();
-                format!("{}", gpu_lock.get_backend_type())
-            } else {
-                "CPU (SimSIMD)".to_string()
-            }
-        } else {
-            "CPU (SimSIMD)".to_string()
-        }
-    }
-    
-    /// 获取当前可用的后端类型（无 GPU 特性时）
-    #[cfg(not(feature = "gpu"))]
-    pub fn get_backend_type(&self, _use_gpu: bool) -> String {
-        "CPU (SimSIMD)".to_string()
     }
     
     /// 获取 CPU SIMD 能力信息
@@ -89,40 +37,11 @@ impl VectorEngine {
             features.push("SVE");
         }
         
-        let cpu_info = if features.is_empty() {
+        if features.is_empty() {
             "CPU: scalar (no SIMD)".to_string()
         } else {
             format!("CPU: {}", features.join(", "))
-        };
-        
-        // 添加 GPU 信息
-        #[cfg(feature = "gpu")]
-        {
-            if let Some(gpu) = &self.gpu_backend {
-                let gpu_lock = gpu.lock().unwrap();
-                let gpu_type = gpu_lock.get_backend_type();
-                return format!("{}, GPU: {}", cpu_info, gpu_type);
-            }
         }
-        
-        cpu_info
-    }
-    
-    /// 获取 GPU 设备信息
-    #[cfg(feature = "gpu")]
-    pub fn get_gpu_info(&self) -> Vec<crate::gpu::GpuDevice> {
-        if let Some(gpu) = &self.gpu_backend {
-            let gpu_lock = gpu.lock().unwrap();
-            gpu_lock.get_gpu_info()
-        } else {
-            Vec::new()
-        }
-    }
-    
-    /// 获取 GPU 设备信息（无 GPU 特性时）
-    #[cfg(not(feature = "gpu"))]
-    pub fn get_gpu_info(&self) -> Vec<String> {
-        Vec::new()
     }
     
     /// 计算两个向量的度量值
@@ -139,7 +58,7 @@ impl VectorEngine {
     /// 
     /// # Note
     /// 
-    /// 单次计算不使用 GPU（GPU 启动开销大）
+    /// 单次计算使用 CPU
     /// 
     /// # Example
     /// 
@@ -153,7 +72,7 @@ impl VectorEngine {
     /// let similarity = engine.compute_metric(&a, &b, MetricType::Cosine).unwrap();
     /// ```
     pub fn compute_metric(&self, a: &[f64], b: &[f64], metric: MetricType) -> Result<f64> {
-        // 单次计算总是使用 CPU（GPU 开销大）
+        // 单次计算使用 CPU
         self.cpu_backend.compute_f64(a, b, metric)
     }
     
@@ -169,7 +88,6 @@ impl VectorEngine {
     /// * `query` - 查询向量
     /// * `candidates` - 候选向量列表
     /// * `metric` - 度量类型
-    /// * `use_gpu` - 是否使用 GPU（如果可用）
     /// 
     /// # Returns
     /// 
@@ -190,42 +108,15 @@ impl VectorEngine {
     /// let candidate_refs: Vec<&[f64]> = candidates.iter().map(|v| v.as_slice()).collect();
     /// 
     /// // CPU 计算
-    /// let scores = engine.batch_compute(&query, &candidate_refs, MetricType::Cosine, false).unwrap();
-    /// 
-    /// // GPU 计算（如果可用）
-    /// let scores = engine.batch_compute(&query, &candidate_refs, MetricType::Cosine, true).unwrap();
+    /// let scores = engine.batch_compute(&query, &candidate_refs, MetricType::Cosine).unwrap();
     /// ```
     pub fn batch_compute(
         &self,
         query: &[f64],
         candidates: &[&[f64]],
         metric: MetricType,
-        use_gpu: bool,
     ) -> Result<Vec<f64>> {
-        // 回退链：专用 GPU > WebGPU > CPU
-        
-        #[cfg(feature = "gpu")]
-        {
-            if use_gpu && self.gpu_backend.is_some() {
-                if let Some(gpu) = &self.gpu_backend {
-                    let mut gpu_lock = gpu.lock().unwrap();
-                    
-                    // 尝试 GPU 计算（可能是 MPS/CUDA/ROCm/WebGPU）
-                    match gpu_lock.batch_compute(query, candidates, metric) {
-                        Ok(scores) => {
-                            // GPU 计算成功
-                            return Ok(scores);
-                        }
-                        Err(e) => {
-                            // GPU 失败，自动回退到 CPU
-                            eprintln!("⚠️  GPU 计算失败: {}, 回退到 CPU", e);
-                        }
-                    }
-                }
-            }
-        }
-        
-        // 使用 CPU（默认或 GPU 失败后回退）
+        // 使用 CPU 计算
         self.cpu_backend.batch_compute_f64(query, candidates, metric)
     }
     
@@ -236,7 +127,7 @@ impl VectorEngine {
         candidates: &[&[f32]],
         metric: MetricType,
     ) -> Result<Vec<f32>> {
-        // f32 版本只使用 CPU（GPU 内部已转换为 f32）
+        // f32 版本使用 CPU
         self.cpu_backend.batch_compute_f32(query, candidates, metric)
     }
     

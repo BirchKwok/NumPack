@@ -780,13 +780,5 @@ def get_backend_info():
         'version': __version__,
     }
     
-    # 检查 GPU 可用性（通过 VectorEngine）
-    try:
-        engine = VectorEngine()
-        info['gpu_available'] = engine.is_gpu_available()
-        if info['gpu_available']:
-            info['gpu_devices'] = engine.get_gpu_info()
-    except:
-        info['gpu_available'] = False
     
     return info
