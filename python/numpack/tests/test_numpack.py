@@ -313,5 +313,104 @@ def test_stream_load(numpack, dtype, test_values, ndim, shape):
     with pytest.raises(ValueError):
         next(numpack.stream_load('array', buffer_size=0))
 
+@pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+@pytest.mark.parametrize("ndim,shape", ARRAY_DIMS)
+def test_clone_basic(numpack, dtype, test_values, ndim, shape):
+    """Test basic clone functionality for all data types and dimensions"""
+    def run_test():
+        # Create and save original array
+        original_array = create_test_array(dtype, shape)
+        numpack.save({'original': original_array})
+        
+        # Clone the array
+        numpack.clone('original', 'cloned')
+        
+        # Load both arrays
+        loaded_original = numpack.load('original')
+        loaded_cloned = numpack.load('cloned')
+        
+        # Verify both arrays are identical
+        assert np.array_equal(original_array, loaded_original)
+        assert np.array_equal(original_array, loaded_cloned)
+        assert loaded_original.dtype == loaded_cloned.dtype
+        assert loaded_original.shape == loaded_cloned.shape
+        
+        # Verify both arrays exist in member list
+        member_list = numpack.get_member_list()
+        assert 'original' in member_list
+        assert 'cloned' in member_list
+    
+    handle_complex_test(dtype, run_test)
+
+@pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+@pytest.mark.parametrize("ndim,shape", ARRAY_DIMS)
+def test_clone_independence(numpack, dtype, test_values, ndim, shape):
+    """Test that cloned arrays are independent and can be modified separately"""
+    def run_test():
+        # Create and save original array
+        original_array = create_test_array(dtype, shape)
+        numpack.save({'original': original_array})
+        
+        # Clone the array
+        numpack.clone('original', 'cloned')
+        
+        # Modify the cloned array
+        cloned_array = numpack.load('cloned')
+        if dtype == np.bool_:
+            cloned_array = ~cloned_array  # Invert boolean values
+        elif np.issubdtype(dtype, np.complexfloating):
+            cloned_array = cloned_array * 2 + 1j
+        else:
+            cloned_array = cloned_array * 2
+        
+        numpack.save({'cloned': cloned_array})
+        
+        # Verify original array is unchanged
+        loaded_original = numpack.load('original')
+        assert np.array_equal(original_array, loaded_original)
+        
+        # Verify cloned array was modified
+        loaded_cloned = numpack.load('cloned')
+        assert not np.array_equal(original_array, loaded_cloned)
+        assert np.array_equal(cloned_array, loaded_cloned)
+    
+    handle_complex_test(dtype, run_test)
+
+def test_clone_errors(numpack):
+    """Test error handling for clone operations"""
+    # Test cloning non-existent array
+    with pytest.raises(KeyError):
+        numpack.clone('non_existent', 'target')
+    
+    # Test cloning to existing array name
+    array = create_test_array(np.float64, (10, 5))
+    numpack.save({'existing': array})
+    numpack.clone('existing', 'clone1')
+    
+    with pytest.raises(ValueError):
+        numpack.clone('existing', 'clone1')  # clone1 already exists
+
+@pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+def test_clone_with_metadata(numpack, dtype, test_values):
+    """Test that metadata is correctly cloned"""
+    shape = (20, 10)
+    original_array = create_test_array(dtype, shape)
+    numpack.save({'original': original_array})
+    
+    # Clone the array
+    numpack.clone('original', 'cloned')
+    
+    # Get metadata for both arrays
+    metadata = numpack.get_metadata()
+    
+    original_meta = metadata['arrays']['original']
+    cloned_meta = metadata['arrays']['cloned']
+    
+    # Verify metadata matches
+    assert original_meta['shape'] == cloned_meta['shape']
+    assert original_meta['dtype'] == cloned_meta['dtype']
+    # Note: size_bytes should be the same since arrays are identical
+    assert original_meta['size_bytes'] == cloned_meta['size_bytes']
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

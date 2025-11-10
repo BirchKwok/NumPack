@@ -383,6 +383,43 @@ class NumPack:
         self._check_context_mode()
         self._npk.update(array_name)
 
+    def clone(self, source_name: str, target_name: str) -> None:
+        """Clone an existing array to a new array
+        
+        This method creates a complete copy of the source array, including its data 
+        and metadata. The cloned array is independent of the original and can be 
+        modified separately.
+        
+        Parameters:
+            source_name (str): Name of the source array to clone
+            target_name (str): Name for the cloned array
+            
+        Example:
+            ```python
+            # Clone an existing array
+            npk.clone('original_array', 'cloned_array')
+            
+            # The cloned array can now be modified independently
+            data = npk.load('cloned_array')
+            data *= 2  # Modify the clone
+            npk.save({'cloned_array': data})
+            
+            # Original array remains unchanged
+            original = npk.load('original_array')
+            ```
+        
+        Raises:
+            KeyError: If source array doesn't exist
+            ValueError: If target array already exists
+        
+        Note:
+            - Both data and metadata are fully copied
+            - The clone is independent of the original
+            - This operation requires memory for the array data
+        """
+        self._check_context_mode()
+        self._npk.clone(source_name, target_name)
+
     def get_metadata(self) -> Dict[str, Any]:
         """Get the metadata of NumPack file"""
         self._check_context_mode()

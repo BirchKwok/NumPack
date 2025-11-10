@@ -4242,6 +4242,72 @@ impl NumPack {
     }
     
     // ===========================
+    // Array Cloning
+    // ===========================
+    
+    /// Clone an existing array to a new array with a different name
+    /// 
+    /// This method creates a complete copy of the source array, including its data and metadata.
+    /// The cloned array is independent of the original and can be modified separately.
+    /// 
+    /// Parameters:
+    ///     source_name (str): Name of the source array to clone
+    ///     target_name (str): Name for the cloned array
+    /// 
+    /// Example:
+    ///     ```python
+    ///     # Clone an existing array
+    ///     npk.clone('original_array', 'cloned_array')
+    ///     
+    ///     # The cloned array can now be modified independently
+    ///     data = npk.load('cloned_array')
+    ///     ```
+    /// 
+    /// Raises:
+    ///     PyKeyError: If source array doesn't exist
+    ///     PyValueError: If target array already exists
+    fn clone(&self, py: Python, source_name: &str, target_name: &str) -> PyResult<()> {
+        // Check if source array exists
+        if !self.io.has_array(source_name) {
+            return Err(PyErr::new::<PyKeyError, _>(
+                format!("Source array '{}' not found", source_name)
+            ));
+        }
+        
+        // Check if target array already exists
+        if self.io.has_array(target_name) {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                format!("Target array '{}' already exists. Please use a different name or drop the existing array first.", target_name)
+            ));
+        }
+        
+        // Get source array metadata
+        let meta = self.io.get_array_meta(source_name)
+            .ok_or_else(|| PyErr::new::<PyKeyError, _>(
+                format!("Failed to get metadata for array '{}'", source_name)
+            ))?;
+        
+        let dtype = meta.get_dtype();
+        
+        // Load the source array data (eager mode)
+        let source_data = self.load(py, source_name, Some(false))?;
+        
+        // Create a dictionary to save the cloned data
+        let dict = PyDict::new(py);
+        dict.set_item(target_name, source_data)?;
+        
+        // Save the cloned array with the new name
+        self.save(&dict, None)?;
+        
+        // Clear metadata cache for the new array to ensure fresh reads
+        let meta_cache_key = format!("{}:{}", self.base_dir.display(), target_name);
+        let mut meta_cache = METADATA_CACHE.lock().unwrap();
+        meta_cache.remove(&meta_cache_key);
+        
+        Ok(())
+    }
+    
+    // ===========================
     // Context Manager支持
     // ===========================
     

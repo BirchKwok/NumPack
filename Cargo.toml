@@ -32,25 +32,20 @@ futures = "0.3"
 dashmap = "5.5"
 rand = "0.8"
 
-# 向量计算引擎：高性能 SIMD 库
 simsimd = "6.5.4"
 
-
-# 高级压缩算法
 zstd = "0.13"
 lz4 = "1.24"
-snap = "1.1"  # Snappy压缩
+snap = "1.1"
 
-# LRU缓存
 lru = "0.12"
 parking_lot = "0.12"
 smallvec = { version = "1.11", features = ["union"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
-io-uring = { version = "0.6", optional = true }  # 高性能异步I/O
+io-uring = { version = "0.6", optional = true } 
 
-# Windows 特定依赖已移除，不再需要
 
 [build-dependencies]
 pyo3-build-config = "0.25.0"
@@ -60,7 +55,7 @@ extension-module = ["pyo3/extension-module"]
 default = ["extension-module", "rayon"]
 avx512 = []
 rayon = ["dep:rayon"]
-io-uring-support = ["io-uring"]  # Linux io_uring支持
+io-uring-support = ["io-uring"] 
 
 
 [package.metadata.maturin]
@@ -69,9 +64,6 @@ target-triple-features = [
     "aarch64-unknown-linux-gnu",
 ]
 
-# ================================
-# Phase 6: 编译优化配置
-# ================================
 
 [profile.release]
 opt-level = 3                # 最高优化级别
@@ -83,6 +75,16 @@ overflow-checks = false      # 发布版本禁用溢出检查
 
 # 优化所有依赖
 [profile.release.package."*"]
+opt-level = 3
+codegen-units = 1
+
+# 🚀 新增：针对向量计算的额外优化
+[profile.release.package.simsimd]
+opt-level = 3
+codegen-units = 1
+
+# 🚀 新增：针对当前crate的额外优化
+[profile.release.package.numpack]
 opt-level = 3
 codegen-units = 1
 
