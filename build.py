@@ -19,7 +19,6 @@ import sys
 import platform
 import subprocess
 import argparse
-import tempfile
 from pathlib import Path
 
 
@@ -59,20 +58,21 @@ def build_feature_string():
 
 def run_maturin_build_wheel(features_str, python_interpreter):
     """
-    使用 maturin 构建 wheel 文件
-    
+    使用 maturin 构建 wheel 和 tar.gz 文件
+
     Args:
         features_str: Cargo features 字符串
         python_interpreter: Python 解释器路径
-    
+
     Returns:
-        str: 构建的 wheel 文件路径，失败则返回 None
+        list: 构建的文件路径列表 (wheel 和 tar.gz)，失败则返回 None
     """
-    # 创建临时输出目录
-    output_dir = tempfile.mkdtemp(prefix='numpack_build_')
-    
-    # 构建命令 - 使用 -i 参数指定 Python 版本
-    cmd = ['maturin', 'build', '--release', '-i', python_interpreter, '-o', output_dir]
+    # 使用项目根目录的 dist/ 文件夹作为输出目录
+    output_dir = Path(__file__).parent / 'dist'
+    output_dir.mkdir(exist_ok=True)  # 确保目录存在
+
+    # 构建命令 - 使用 -i 参数指定 Python 版本，同时生成 wheel 和 tar.gz
+    cmd = ['maturin', 'build', '--release', '--sdist', '-i', python_interpreter, '-o', str(output_dir)]
     
     # 添加 features
     if features_str:
@@ -85,10 +85,11 @@ def run_maturin_build_wheel(features_str, python_interpreter):
         # 运行构建
         result = subprocess.run(cmd, check=True, capture_output=False)
         
-        # 查找生成的 wheel 文件
-        wheel_files = list(Path(output_dir).glob('*.whl'))
-        if wheel_files:
-            return str(wheel_files[0])
+        # 查找生成的文件 (wheel 和 tar.gz)
+        built_files = list(Path(output_dir).glob('*.whl')) + list(Path(output_dir).glob('*.tar.gz'))
+        if built_files:
+            # 返回所有构建文件的路径列表
+            return [str(f) for f in built_files]
         else:
             return None
         
@@ -101,19 +102,30 @@ def run_maturin_build_wheel(features_str, python_interpreter):
         return None
 
 
-def install_wheel(wheel_path, python_interpreter):
+def install_wheel(wheel_paths, python_interpreter):
     """
     安装 wheel 文件
-    
+
     Args:
-        wheel_path: wheel 文件路径
+        wheel_paths: wheel 文件路径列表或单个路径
         python_interpreter: Python 解释器路径
     """
     print("\n" + "=" * 70)
     print("📦 安装 wheel 文件")
     print("=" * 70)
-    
-    cmd = [python_interpreter, '-m', 'pip', 'install', '--force-reinstall', wheel_path]
+
+    # 确保 wheel_paths 是列表
+    if isinstance(wheel_paths, str):
+        wheel_paths = [wheel_paths]
+
+    # 只安装 wheel 文件，跳过 tar.gz 文件
+    wheel_files = [p for p in wheel_paths if p.endswith('.whl')]
+
+    if not wheel_files:
+        print("⚠️  未找到 wheel 文件")
+        return False
+
+    cmd = [python_interpreter, '-m', 'pip', 'install', '--force-reinstall'] + wheel_files
     
     print(f"执行命令: {' '.join(cmd)}")
     try:
@@ -197,20 +209,22 @@ def main():
     print(f"  特性: {features_str}")
     print(f"  目标 Python: {sys.executable}")
     
-    # 步骤 1: 构建 wheel
-    wheel_path = run_maturin_build_wheel(features_str, sys.executable)
-    
-    if not wheel_path:
+    # 步骤 1: 构建 wheel 和 tar.gz
+    built_files = run_maturin_build_wheel(features_str, sys.executable)
+
+    if not built_files:
         print("\n" + "=" * 70)
         print("❌ 构建失败")
         print("=" * 70)
         sys.exit(1)
-    
+
     print("=" * 70)
-    print(f"✓ Wheel 构建成功: {wheel_path}")
-    
+    print("✓ 构建成功，生成的文件:")
+    for file_path in built_files:
+        print(f"  - {Path(file_path).name}")
+
     # 步骤 2: 安装 wheel
-    if not install_wheel(wheel_path, sys.executable):
+    if not install_wheel(built_files, sys.executable):
         print("\n" + "=" * 70)
         print("❌ 安装失败")
         print("=" * 70)
@@ -218,13 +232,7 @@ def main():
     
     # 步骤 3: 验证安装
     verify_installation(sys.executable)
-    
-    # 清理临时文件
-    try:
-        Path(wheel_path).parent.rmdir()
-    except:
-        pass
-    
+
     # 打印使用提示
     print("\n" + "=" * 70)
     print("🎉 完成!")
