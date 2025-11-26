@@ -125,7 +125,18 @@ def install_wheel(wheel_paths, python_interpreter):
         print("⚠️  未找到 wheel 文件")
         return False
 
-    cmd = [python_interpreter, '-m', 'pip', 'install', '--force-reinstall'] + wheel_files
+    # 获取当前 Python 版本 (major.minor)
+    python_version = f"{sys.version_info.major}{sys.version_info.minor}"
+
+    # 只安装匹配当前 Python 版本的 wheel 文件
+    compatible_wheels = [w for w in wheel_files if f"cp{python_version}" in w]
+
+    if not compatible_wheels:
+        print(f"⚠️  未找到兼容 Python {python_version} 的 wheel 文件")
+        return False
+
+    print(f"  找到 {len(compatible_wheels)} 个兼容的 wheel 文件")
+    cmd = [python_interpreter, '-m', 'pip', 'install', '--force-reinstall'] + compatible_wheels
     
     print(f"执行命令: {' '.join(cmd)}")
     try:
