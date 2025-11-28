@@ -1,5 +1,5 @@
 // NumPack元数据定义
-// 
+//
 // 本文件仅保留核心数据类型定义
 // 实际元数据存储使用 binary_metadata.rs 中的 BinaryMetadataStore
 
@@ -48,20 +48,20 @@ impl DataType {
 }
 
 /// 数组元数据（用于内部类型转换）
-/// 
+///
 /// 注意：这个类型主要用于 parallel_io.rs 中的内部转换
 /// 实际元数据存储使用 BinaryArrayMetadata
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArrayMetadata {
     pub name: String,
-    pub shape: Vec<u64>,         // Data shape
-    pub data_file: String,       // Data file name
-    pub last_modified: u64,      // Last modified time in microseconds
-    pub size_bytes: u64,         // Data size
-    pub dtype: u8,               // Data type as u8 to match Python
+    pub shape: Vec<u64>,    // Data shape
+    pub data_file: String,  // Data file name
+    pub last_modified: u64, // Last modified time in microseconds
+    pub size_bytes: u64,    // Data size
+    pub dtype: u8,          // Data type as u8 to match Python
     #[serde(skip)]
-    pub raw_data: Option<ByteBuf>,  // For zero-copy serialization
+    pub raw_data: Option<ByteBuf>, // For zero-copy serialization
 }
 
 impl ArrayMetadata {
@@ -74,13 +74,13 @@ impl ArrayMetadata {
             last_modified: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_micros() as u64,  // Use microseconds to match Python
+                .as_micros() as u64, // Use microseconds to match Python
             size_bytes: total_elements * dtype.size_bytes() as u64,
-            dtype: dtype as u8,  // Convert DataType enum to u8
+            dtype: dtype as u8, // Convert DataType enum to u8
             raw_data: None,
         }
     }
-    
+
     // Helper method to get DataType from u8
     pub fn get_dtype(&self) -> DataType {
         match self.dtype {

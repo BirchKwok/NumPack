@@ -1,14 +1,14 @@
 //! 索引算法实现
-//! 
+//!
 //! 从lazy_array_original.rs中提取的各种高性能索引算法
 
 // 恢复必要的导入
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
 use crate::indexing::types::*;
 pub use crate::performance::metrics::IndexAlgorithm;
 use rayon::prelude::*;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
@@ -37,10 +37,12 @@ impl IndexAlgorithmExecutor {
         itemsize: usize,
     ) -> Result<(Vec<Vec<u8>>, AccessStatistics), IndexError> {
         let start_time = Instant::now();
-        
+
         let result = match algorithm {
             IndexAlgorithm::BooleanBitmap => self.boolean_bitmap(mask, data, shape, itemsize),
-            IndexAlgorithm::BooleanHierarchical => self.boolean_hierarchical(mask, data, shape, itemsize),
+            IndexAlgorithm::BooleanHierarchical => {
+                self.boolean_hierarchical(mask, data, shape, itemsize)
+            }
             IndexAlgorithm::BooleanSparse => self.boolean_sparse(mask, data, shape, itemsize),
             IndexAlgorithm::BooleanDense => self.boolean_dense(mask, data, shape, itemsize),
             IndexAlgorithm::BooleanExtreme => self.boolean_extreme(mask, data, shape, itemsize),
@@ -96,25 +98,32 @@ impl IndexAlgorithmExecutor {
         let mut result = Vec::with_capacity(selected_count);
 
         // 预先构建选中索引的位图
-        let selected_indices: Vec<usize> = mask.iter()
+        let selected_indices: Vec<usize> = mask
+            .iter()
             .enumerate()
             .filter_map(|(i, &selected)| if selected { Some(i) } else { None })
             .collect();
 
         // 并行处理选中的行
         if self.config.enable_parallel && selected_indices.len() > 100 {
-            let chunk_size = self.config.chunk_size.min(selected_indices.len() / self.config.thread_pool_size);
+            let chunk_size = self
+                .config
+                .chunk_size
+                .min(selected_indices.len() / self.config.thread_pool_size);
             let chunks: Vec<Vec<u8>> = selected_indices
                 .par_chunks(chunk_size)
                 .flat_map(|chunk| {
-                    chunk.iter().map(|&row_idx| {
-                        let offset = row_idx * row_size;
-                        if offset + row_size <= data.len() {
-                            data[offset..offset + row_size].to_vec()
-                        } else {
-                            vec![0u8; row_size] // 错误情况下的默认值
-                        }
-                    }).collect::<Vec<_>>()
+                    chunk
+                        .iter()
+                        .map(|&row_idx| {
+                            let offset = row_idx * row_size;
+                            if offset + row_size <= data.len() {
+                                data[offset..offset + row_size].to_vec()
+                            } else {
+                                vec![0u8; row_size] // 错误情况下的默认值
+                            }
+                        })
+                        .collect::<Vec<_>>()
                 })
                 .collect();
             result = chunks;
@@ -144,7 +153,7 @@ impl IndexAlgorithmExecutor {
         }
 
         let row_size = shape[1..].iter().product::<usize>() * itemsize;
-        
+
         // 第一层：快速SIMD过滤，构建层次索引
         let mut level1_indices = Vec::new();
         let mut level2_indices = Vec::new();
@@ -152,7 +161,7 @@ impl IndexAlgorithmExecutor {
         if self.config.enable_simd {
             // 使用SIMD加速布尔掩码处理
             let simd_selected = self.simd_boolean_filter(mask);
-            
+
             // 分层分组：连续的索引放在level1，分散的放在level2
             let mut current_group = Vec::new();
             let mut last_idx = None;
@@ -216,18 +225,18 @@ impl IndexAlgorithmExecutor {
         }
 
         let density = mask.iter().filter(|&&b| b).count() as f64 / mask.len() as f64;
-        
+
         // 如果不是稀疏访问，使用更适合的算法
         if density > 0.2 {
             return self.boolean_dense(mask, data, shape, itemsize);
         }
 
         let row_size = shape[1..].iter().product::<usize>() * itemsize;
-        
+
         // 稀疏索引优化：使用跳跃扫描
         let mut result = Vec::new();
         let mut i = 0;
-        
+
         while i < mask.len() {
             if mask[i] {
                 let offset = i * row_size;
@@ -273,7 +282,7 @@ impl IndexAlgorithmExecutor {
                 .map(|(chunk_idx, chunk_mask)| {
                     let mut chunk_result = Vec::new();
                     let base_offset = chunk_idx * chunk_size;
-                    
+
                     for (local_idx, &selected) in chunk_mask.iter().enumerate() {
                         if selected {
                             let global_idx = base_offset + local_idx;
@@ -319,7 +328,7 @@ impl IndexAlgorithmExecutor {
         }
 
         let row_size = shape[1..].iter().product::<usize>() * itemsize;
-        
+
         // 使用最高性能的SIMD过滤
         let selected_indices = if self.config.enable_simd {
             self.extreme_simd_boolean_filter(mask)
@@ -339,25 +348,31 @@ impl IndexAlgorithmExecutor {
             selected_indices
                 .par_chunks(64)
                 .flat_map(|chunk| {
-                    chunk.iter().filter_map(|&row_idx| {
-                        let offset = row_idx * row_size;
-                        if offset + row_size <= data.len() {
-                            Some(data[offset..offset + row_size].to_vec())
-                        } else {
-                            None
-                        }
-                    }).collect::<Vec<_>>()
+                    chunk
+                        .iter()
+                        .filter_map(|&row_idx| {
+                            let offset = row_idx * row_size;
+                            if offset + row_size <= data.len() {
+                                Some(data[offset..offset + row_size].to_vec())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
                 })
                 .collect()
         } else {
-            selected_indices.iter().filter_map(|&row_idx| {
-                let offset = row_idx * row_size;
-                if offset + row_size <= data.len() {
-                    Some(data[offset..offset + row_size].to_vec())
-                } else {
-                    None
-                }
-            }).collect()
+            selected_indices
+                .iter()
+                .filter_map(|&row_idx| {
+                    let offset = row_idx * row_size;
+                    if offset + row_size <= data.len() {
+                        Some(data[offset..offset + row_size].to_vec())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
         };
 
         Ok(result)
@@ -373,17 +388,13 @@ impl IndexAlgorithmExecutor {
     ) -> Result<Vec<Vec<u8>>, IndexError> {
         let start_time = Instant::now();
         let row_size = shape[1..].iter().product::<usize>() * itemsize;
-        
+
         // 标准化索引（处理负数索引）
         let normalized_indices: Result<Vec<usize>, IndexError> = indices
             .iter()
             .map(|&idx| {
-                let normalized = if idx < 0 {
-                    shape[0] as i64 + idx
-                } else {
-                    idx
-                };
-                
+                let normalized = if idx < 0 { shape[0] as i64 + idx } else { idx };
+
                 if normalized >= 0 && (normalized as usize) < shape[0] {
                     Ok(normalized as usize)
                 } else {
@@ -391,10 +402,11 @@ impl IndexAlgorithmExecutor {
                 }
             })
             .collect();
-        
+
         let normalized_indices = normalized_indices?;
-        
-        let result: Vec<Vec<u8>> = if self.config.enable_parallel && normalized_indices.len() > 100 {
+
+        let result: Vec<Vec<u8>> = if self.config.enable_parallel && normalized_indices.len() > 100
+        {
             // 并行花式索引
             normalized_indices
                 .par_iter()
@@ -441,7 +453,7 @@ impl IndexAlgorithmExecutor {
                 return self.avx2_boolean_filter(mask);
             }
         }
-        
+
         // 回退到标准实现
         mask.iter()
             .enumerate()
@@ -460,7 +472,7 @@ impl IndexAlgorithmExecutor {
                 return self.avx2_boolean_filter(mask);
             }
         }
-        
+
         self.simd_boolean_filter(mask)
     }
 
@@ -468,14 +480,14 @@ impl IndexAlgorithmExecutor {
     #[cfg(target_arch = "x86_64")]
     fn avx2_boolean_filter(&self, mask: &[bool]) -> Vec<usize> {
         let mut selected = Vec::with_capacity(mask.len() / 4);
-        
+
         // 简化的AVX2实现（实际需要更复杂的SIMD操作）
         for (i, &b) in mask.iter().enumerate() {
             if b {
                 selected.push(i);
             }
         }
-        
+
         selected
     }
 
@@ -483,33 +495,43 @@ impl IndexAlgorithmExecutor {
     #[cfg(target_arch = "x86_64")]
     fn avx512_boolean_filter(&self, mask: &[bool]) -> Vec<usize> {
         let mut selected = Vec::with_capacity(mask.len() / 4);
-        
+
         // 简化的AVX-512实现（实际需要更复杂的SIMD操作）
         for (i, &b) in mask.iter().enumerate() {
             if b {
                 selected.push(i);
             }
         }
-        
+
         selected
     }
 
     /// 批量顺序访问
-    fn batch_sequential_access(&self, indices: &[usize], data: &[u8], row_size: usize) -> Vec<Vec<u8>> {
+    fn batch_sequential_access(
+        &self,
+        indices: &[usize],
+        data: &[u8],
+        row_size: usize,
+    ) -> Vec<Vec<u8>> {
         let mut result = Vec::with_capacity(indices.len());
-        
+
         for &idx in indices {
             let offset = idx * row_size;
             if offset + row_size <= data.len() {
                 result.push(data[offset..offset + row_size].to_vec());
             }
         }
-        
+
         result
     }
 
     /// 优化的随机访问
-    fn optimized_random_access(&self, indices: &[usize], data: &[u8], row_size: usize) -> Vec<Vec<u8>> {
+    fn optimized_random_access(
+        &self,
+        indices: &[usize],
+        data: &[u8],
+        row_size: usize,
+    ) -> Vec<Vec<u8>> {
         if self.config.enable_parallel && indices.len() > 50 {
             indices
                 .par_iter()

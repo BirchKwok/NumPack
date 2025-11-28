@@ -1,12 +1,12 @@
 //! LazyArray迭代器实现
-//! 
+//!
 //! 从lib.rs中提取的LazyArrayIterator结构体和实现
 
-use pyo3::prelude::*;
 use crate::lazy_array::standard::LazyArray;
+use pyo3::prelude::*;
 
 /// Iterator for LazyArray that yields rows
-#[pyclass]
+#[pyclass(module = "numpack")]
 pub struct LazyArrayIterator {
     array: LazyArray,
     current_index: usize,
@@ -33,7 +33,7 @@ impl LazyArrayIterator {
 
         let row_array = self.array.create_numpy_array(py, row_data, &row_shape)?;
         self.current_index += 1;
-        
+
         Ok(Some(row_array))
     }
 }
@@ -87,19 +87,19 @@ impl Drop for LazyArrayIterator {
         // 迭代器的Drop应该确保其持有的LazyArray也被正确清理
         // 通过显式触发array的清理来确保资源释放
         let array_path = &self.array.array_path;
-        
+
         // 检查是否为临时文件
         let is_temp = array_path.contains("temp") || array_path.contains("tmp");
         if is_temp {
             // 对于临时文件，强制执行清理流程
             let path = std::path::Path::new(array_path);
-            
+
             // 先强制释放对mmap的引用
             std::mem::drop(std::sync::Arc::clone(&self.array.mmap));
-            
+
             // 触发Windows文件句柄释放
             crate::lazy_array::standard::release_windows_file_handle(path);
-            
+
             // 短暂等待确保Windows有时间处理文件释放
             std::thread::sleep(std::time::Duration::from_millis(5));
         }

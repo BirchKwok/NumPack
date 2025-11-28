@@ -10,7 +10,6 @@ pub fn register_python_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // 注册新的 LazyArray 类（支持算术操作符）
     m.add_class::<crate::lazy_array::standard::LazyArray>()?;
     m.add_class::<crate::lazy_array::iterator::LazyArrayIterator>()?;
-    m.add_class::<crate::lazy_array::high_performance::HighPerformanceLazyArray>()?;
 
     Ok(())
 }

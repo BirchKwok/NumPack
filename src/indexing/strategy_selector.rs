@@ -1,5 +1,5 @@
 //! 访问策略选择器
-//! 
+//!
 //! 智能选择最优的索引访问策略，基于访问模式分析和性能历史
 
 use crate::indexing::types::*;
@@ -67,10 +67,10 @@ impl StrategyPerformanceHistory {
 /// 自适应配置
 #[derive(Debug, Clone)]
 struct AdaptationConfig {
-    adaptation_threshold: f64,     // 适应阈值
-    confidence_decay_rate: f64,    // 信心衰减率
-    learning_rate: f64,            // 学习率
-    performance_window: usize,     // 性能窗口大小
+    adaptation_threshold: f64,         // 适应阈值
+    confidence_decay_rate: f64,        // 信心衰减率
+    learning_rate: f64,                // 学习率
+    performance_window: usize,         // 性能窗口大小
     min_samples_for_adaptation: usize, // 适应所需的最小样本数
 }
 
@@ -107,10 +107,10 @@ impl AccessStrategySelector {
     ) -> StrategySelection {
         // 1. 分析访问模式
         let access_pattern = self.pattern_analyzer.analyze_indices(indices);
-        
+
         // 2. 评估数据特征
         let data_characteristics = self.evaluate_data_characteristics(indices, data_size);
-        
+
         // 3. 考虑系统压力
         let system_context = SystemContext {
             cache_pressure,
@@ -119,17 +119,22 @@ impl AccessStrategySelector {
         };
 
         // 4. 基于历史性能选择策略
-        let candidate_strategies = self.get_candidate_strategies(&access_pattern, &data_characteristics);
-        let selected_strategy = self.rank_and_select_strategy(candidate_strategies, &system_context);
+        let candidate_strategies =
+            self.get_candidate_strategies(&access_pattern, &data_characteristics);
+        let selected_strategy =
+            self.rank_and_select_strategy(candidate_strategies, &system_context);
 
         // 5. 选择具体算法
-        let algorithm = self.algorithm_selector.select_algorithm(&access_pattern, &data_characteristics);
+        let algorithm = self
+            .algorithm_selector
+            .select_algorithm(&access_pattern, &data_characteristics);
 
         StrategySelection {
             strategy: selected_strategy,
             algorithm,
             confidence: self.calculate_selection_confidence(&selected_strategy),
-            expected_performance: self.estimate_performance(&selected_strategy, &data_characteristics),
+            expected_performance: self
+                .estimate_performance(&selected_strategy, &data_characteristics),
         }
     }
 
@@ -141,7 +146,8 @@ impl AccessStrategySelector {
         throughput_mbps: f64,
         success: bool,
     ) {
-        let history = self.performance_history
+        let history = self
+            .performance_history
             .entry(strategy)
             .or_insert_with(StrategyPerformanceHistory::new);
 
@@ -166,9 +172,15 @@ impl AccessStrategySelector {
     }
 
     /// 评估数据特征
-    fn evaluate_data_characteristics(&self, indices: &[Vec<usize>], data_size: usize) -> DataCharacteristics {
+    fn evaluate_data_characteristics(
+        &self,
+        indices: &[Vec<usize>],
+        data_size: usize,
+    ) -> DataCharacteristics {
         let total_elements = indices.iter().map(|dim| dim.len()).product::<usize>();
-        let density = if indices.is_empty() { 0.0 } else {
+        let density = if indices.is_empty() {
+            0.0
+        } else {
             total_elements as f64 / indices[0].len() as f64
         };
 
@@ -198,11 +210,11 @@ impl AccessStrategySelector {
         // 计算相邻元素的平均间距
         let mut total_distance = 0;
         for i in 1..first_dim.len() {
-            total_distance += (first_dim[i] as i64 - first_dim[i-1] as i64).abs();
+            total_distance += (first_dim[i] as i64 - first_dim[i - 1] as i64).abs();
         }
 
         let average_distance = total_distance as f64 / (first_dim.len() - 1) as f64;
-        
+
         // 局部性评分：间距越小，局部性越好
         (10.0 / (1.0 + average_distance)).min(1.0)
     }
@@ -314,7 +326,7 @@ impl AccessStrategySelector {
         if let Some(history) = self.performance_history.get(strategy) {
             let performance_score = self.calculate_performance_score(history);
             score += performance_score * 0.4; // 性能权重40%
-            
+
             let confidence_score = history.confidence_score;
             score += confidence_score * 0.2; // 信心权重20%
         }
@@ -379,13 +391,13 @@ impl AccessStrategySelector {
     /// 计算策略特性评分
     fn calculate_strategy_characteristics_score(&self, strategy: &AccessStrategy) -> f64 {
         match strategy {
-            AccessStrategy::DirectMemory => 0.7,      // 简单可靠
-            AccessStrategy::BlockCopy => 0.8,         // 高效的顺序访问
-            AccessStrategy::VectorizedGather => 0.9,  // 高性能随机访问
+            AccessStrategy::DirectMemory => 0.7,        // 简单可靠
+            AccessStrategy::BlockCopy => 0.8,           // 高效的顺序访问
+            AccessStrategy::VectorizedGather => 0.9,    // 高性能随机访问
             AccessStrategy::ParallelPointAccess => 0.8, // 高并发性能
             AccessStrategy::PrefetchOptimized => 0.85,  // 智能预取
-            AccessStrategy::ZeroCopy => 0.95,         // 极致内存效率
-            AccessStrategy::Adaptive => 0.75,         // 灵活适应
+            AccessStrategy::ZeroCopy => 0.95,           // 极致内存效率
+            AccessStrategy::Adaptive => 0.75,           // 灵活适应
         }
     }
 
@@ -399,7 +411,7 @@ impl AccessStrategySelector {
             } else {
                 0.5
             };
-            
+
             (history.confidence_score + data_confidence) / 2.0
         } else {
             0.5 // 新策略，中等信心
@@ -407,7 +419,11 @@ impl AccessStrategySelector {
     }
 
     /// 估算性能
-    fn estimate_performance(&self, strategy: &AccessStrategy, characteristics: &DataCharacteristics) -> EstimatedPerformance {
+    fn estimate_performance(
+        &self,
+        strategy: &AccessStrategy,
+        characteristics: &DataCharacteristics,
+    ) -> EstimatedPerformance {
         let base_latency_ns = match strategy {
             AccessStrategy::DirectMemory => 1000,
             AccessStrategy::BlockCopy => 500,
@@ -429,8 +445,9 @@ impl AccessStrategySelector {
         let locality_factor = 0.5 + characteristics.locality_score * 0.5;
 
         let estimated_latency_ns = (base_latency_ns as f64 * size_factor / locality_factor) as u64;
-        let estimated_throughput_mbps = characteristics.estimated_memory_footprint as f64 
-            / (estimated_latency_ns as f64 / 1_000_000_000.0) / (1024.0 * 1024.0);
+        let estimated_throughput_mbps = characteristics.estimated_memory_footprint as f64
+            / (estimated_latency_ns as f64 / 1_000_000_000.0)
+            / (1024.0 * 1024.0);
 
         EstimatedPerformance {
             latency_ns: estimated_latency_ns,
@@ -460,7 +477,9 @@ impl AccessStrategySelector {
     pub fn get_performance_report(&self) -> StrategySelectionReport {
         StrategySelectionReport {
             strategy_performance: self.performance_history.clone(),
-            total_selections: self.performance_history.values()
+            total_selections: self
+                .performance_history
+                .values()
                 .map(|h| h.total_operations)
                 .sum(),
             best_performing_strategy: self.get_best_performing_strategy(),
@@ -484,9 +503,12 @@ impl AccessStrategySelector {
         AdaptationStats {
             last_adaptation: self.last_adaptation,
             adaptation_count: 0, // 简化实现
-            average_confidence: self.performance_history.values()
+            average_confidence: self
+                .performance_history
+                .values()
                 .map(|h| h.confidence_score)
-                .sum::<f64>() / self.performance_history.len().max(1) as f64,
+                .sum::<f64>()
+                / self.performance_history.len().max(1) as f64,
         }
     }
 }
@@ -503,7 +525,11 @@ impl AlgorithmSelector {
         }
     }
 
-    fn select_algorithm(&self, pattern: &AccessPattern, characteristics: &DataCharacteristics) -> IndexAlgorithm {
+    fn select_algorithm(
+        &self,
+        pattern: &AccessPattern,
+        characteristics: &DataCharacteristics,
+    ) -> IndexAlgorithm {
         match pattern {
             AccessPattern::Sequential => {
                 if characteristics.density > 0.8 {
@@ -580,4 +606,4 @@ pub struct AdaptationStats {
     pub last_adaptation: Instant,
     pub adaptation_count: u64,
     pub average_confidence: f64,
-} 
+}

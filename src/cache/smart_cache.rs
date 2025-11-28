@@ -1,5 +1,5 @@
 //! 智能缓存实现
-//! 
+//!
 //! 提供自适应缓存管理、访问模式分析和智能缓存块管理
 
 use std::collections::HashMap;
@@ -144,15 +144,15 @@ impl SmartCache {
     pub fn put(&self, block_id: usize, data: Vec<u8>) {
         let data_size = data.len();
         let current_max = *self.current_max_size.lock().unwrap();
-        
+
         let mut blocks = self.blocks.write().unwrap();
         let mut total_size = self.total_size.lock().unwrap();
-        
+
         // 检查是否需要清理缓存
         if *total_size + data_size > current_max {
             self.evict_blocks(&mut blocks, &mut total_size, data_size);
         }
-        
+
         blocks.insert(block_id, CacheBlock::new(data));
         *total_size += data_size;
     }
@@ -161,14 +161,14 @@ impl SmartCache {
     pub fn adaptive_resize(&self, hit_rate: f64, memory_pressure: f64) {
         let mut current_max = self.current_max_size.lock().unwrap();
         let mut last_adjustment = self.last_adjustment.lock().unwrap();
-        
+
         // 每30秒最多调整一次
         if last_adjustment.elapsed().as_secs() < 30 {
             return;
         }
-        
+
         let old_size = *current_max;
-        
+
         if hit_rate > 0.9 && memory_pressure < 0.7 {
             // 高命中率且内存充足，增加缓存大小
             *current_max = (*current_max as f64 * 1.2) as usize;
@@ -178,10 +178,10 @@ impl SmartCache {
             *current_max = (*current_max as f64 * 0.8) as usize;
             *current_max = (*current_max).max(BASE_CACHE_SIZE / 4); // 最小1/4基础大小
         }
-        
+
         if *current_max != old_size {
             *last_adjustment = Instant::now();
-            
+
             // 如果缓存大小减少，需要立即清理
             if *current_max < old_size {
                 let mut blocks = self.blocks.write().unwrap();
@@ -192,27 +192,35 @@ impl SmartCache {
     }
 
     // 驱逐缓存块以释放空间
-    fn evict_blocks(&self, blocks: &mut HashMap<usize, CacheBlock>, total_size: &mut usize, needed_size: usize) {
+    fn evict_blocks(
+        &self,
+        blocks: &mut HashMap<usize, CacheBlock>,
+        total_size: &mut usize,
+        needed_size: usize,
+    ) {
         let target_size = self.current_max_size.lock().unwrap().clone();
-        
+
         // 收集所有块的信息用于排序
-        let mut block_info: Vec<(usize, Instant, f64)> = blocks.iter()
+        let mut block_info: Vec<(usize, Instant, f64)> = blocks
+            .iter()
             .map(|(&id, block)| (id, block.last_access, block.get_access_frequency()))
             .collect();
-        
+
         // 按访问时间和频率排序，优先驱逐老旧且访问频率低的块
         block_info.sort_by(|a, b| {
             let score_a = a.1.elapsed().as_secs_f64() / (a.2 + 1.0);
             let score_b = b.1.elapsed().as_secs_f64() / (b.2 + 1.0);
-            score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+            score_b
+                .partial_cmp(&score_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
-        
+
         // 驱逐块直到有足够空间
         for (block_id, _, _) in block_info {
             if *total_size + needed_size <= target_size {
                 break;
             }
-            
+
             if let Some(removed_block) = blocks.remove(&block_id) {
                 *total_size -= removed_block.data.len();
             }
@@ -220,20 +228,26 @@ impl SmartCache {
     }
 
     // 驱逐到目标大小
-    fn evict_to_target_size(&self, blocks: &mut HashMap<usize, CacheBlock>, total_size: &mut usize, target_size: usize) {
+    fn evict_to_target_size(
+        &self,
+        blocks: &mut HashMap<usize, CacheBlock>,
+        total_size: &mut usize,
+        target_size: usize,
+    ) {
         while *total_size > target_size && !blocks.is_empty() {
             // 找到最老且访问频率最低的块
             let mut worst_block_id = None;
             let mut worst_score = f64::NEG_INFINITY;
-            
+
             for (&id, block) in blocks.iter() {
-                let score = block.last_access.elapsed().as_secs_f64() / (block.get_access_frequency() + 1.0);
+                let score = block.last_access.elapsed().as_secs_f64()
+                    / (block.get_access_frequency() + 1.0);
                 if score > worst_score {
                     worst_score = score;
                     worst_block_id = Some(id);
                 }
             }
-            
+
             if let Some(block_id) = worst_block_id {
                 if let Some(removed_block) = blocks.remove(&block_id) {
                     *total_size -= removed_block.data.len();
@@ -247,7 +261,7 @@ impl SmartCache {
     pub fn clear(&self) {
         let mut blocks = self.blocks.write().unwrap();
         let mut total_size = self.total_size.lock().unwrap();
-        
+
         blocks.clear();
         *total_size = 0;
     }

@@ -1,5 +1,5 @@
 //! SIMD操作模块
-//! 
+//!
 //! 从lazy_array_original.rs中提取的SIMD数学运算和向量化操作
 
 use crate::lazy_array::traits::FastTypeConversion;
@@ -15,26 +15,26 @@ pub mod simd_ops {
             let mut sum = _mm256_setzero_ps();
             let chunks = data.chunks_exact(8);
             let remainder = chunks.remainder();
-            
+
             for chunk in chunks {
                 let vec = _mm256_loadu_ps(chunk.as_ptr());
                 sum = _mm256_add_ps(sum, vec);
             }
-            
+
             // 水平求和
             let sum_high = _mm256_extractf128_ps(sum, 1);
             let sum_low = _mm256_castps256_ps128(sum);
             let sum_final = _mm_add_ps(sum_high, sum_low);
             let sum_final = _mm_hadd_ps(sum_final, sum_final);
             let sum_final = _mm_hadd_ps(sum_final, sum_final);
-            
+
             let mut result = _mm_cvtss_f32(sum_final);
-            
+
             // 处理剩余元素
             for &val in remainder {
                 result += val;
             }
-            
+
             result
         }
     }
@@ -45,25 +45,25 @@ pub mod simd_ops {
             let mut sum = _mm256_setzero_pd();
             let chunks = data.chunks_exact(4);
             let remainder = chunks.remainder();
-            
+
             for chunk in chunks {
                 let vec = _mm256_loadu_pd(chunk.as_ptr());
                 sum = _mm256_add_pd(sum, vec);
             }
-            
+
             // 水平求和
             let sum_high = _mm256_extractf128_pd(sum, 1);
             let sum_low = _mm256_castpd256_pd128(sum);
             let sum_final = _mm_add_pd(sum_high, sum_low);
             let sum_final = _mm_hadd_pd(sum_final, sum_final);
-            
+
             let mut result = _mm_cvtsd_f64(sum_final);
-            
+
             // 处理剩余元素
             for &val in remainder {
                 result += val;
             }
-            
+
             result
         }
     }
@@ -76,7 +76,7 @@ pub mod simd_ops {
         unsafe {
             let chunks = a.len() / 8;
             let remainder = a.len() % 8;
-            
+
             for i in 0..chunks {
                 let offset = i * 8;
                 let vec_a = _mm256_loadu_ps(a.as_ptr().add(offset));
@@ -84,7 +84,7 @@ pub mod simd_ops {
                 let sum = _mm256_add_ps(vec_a, vec_b);
                 _mm256_storeu_ps(result.as_mut_ptr().add(offset), sum);
             }
-            
+
             // 处理剩余元素
             for i in (chunks * 8)..(chunks * 8 + remainder) {
                 result[i] = a[i] + b[i];
@@ -100,7 +100,7 @@ pub mod simd_ops {
         unsafe {
             let chunks = a.len() / 8;
             let remainder = a.len() % 8;
-            
+
             for i in 0..chunks {
                 let offset = i * 8;
                 let vec_a = _mm256_loadu_ps(a.as_ptr().add(offset));
@@ -108,7 +108,7 @@ pub mod simd_ops {
                 let product = _mm256_mul_ps(vec_a, vec_b);
                 _mm256_storeu_ps(result.as_mut_ptr().add(offset), product);
             }
-            
+
             // 处理剩余元素
             for i in (chunks * 8)..(chunks * 8 + remainder) {
                 result[i] = a[i] * b[i];
@@ -124,7 +124,7 @@ pub mod simd_ops {
             let mut sum = _mm256_setzero_ps();
             let chunks = a.len() / 8;
             let remainder = a.len() % 8;
-            
+
             for i in 0..chunks {
                 let offset = i * 8;
                 let vec_a = _mm256_loadu_ps(a.as_ptr().add(offset));
@@ -132,21 +132,21 @@ pub mod simd_ops {
                 let product = _mm256_mul_ps(vec_a, vec_b);
                 sum = _mm256_add_ps(sum, product);
             }
-            
+
             // 水平求和
             let sum_high = _mm256_extractf128_ps(sum, 1);
             let sum_low = _mm256_castps256_ps128(sum);
             let sum_final = _mm_add_ps(sum_high, sum_low);
             let sum_final = _mm_hadd_ps(sum_final, sum_final);
             let sum_final = _mm_hadd_ps(sum_final, sum_final);
-            
+
             let mut result = _mm_cvtss_f32(sum_final);
-            
+
             // 处理剩余元素
             for i in (chunks * 8)..(chunks * 8 + remainder) {
                 result += a[i] * b[i];
             }
-            
+
             result
         }
     }
@@ -160,7 +160,7 @@ pub mod simd_ops {
             let threshold_vec = _mm256_set1_ps(threshold);
             let chunks = a.len() / 8;
             let remainder = a.len() % 8;
-            
+
             for i in 0..chunks {
                 let offset = i * 8;
                 let vec_a = _mm256_loadu_ps(a.as_ptr().add(offset));
@@ -168,14 +168,14 @@ pub mod simd_ops {
                 let diff = _mm256_sub_ps(vec_a, vec_b);
                 let abs_diff = _mm256_andnot_ps(_mm256_set1_ps(-0.0), diff);
                 let cmp = _mm256_cmp_ps(abs_diff, threshold_vec, _CMP_LT_OQ);
-                
+
                 // 提取比较结果
                 let mask = _mm256_movemask_ps(cmp);
                 for j in 0..8 {
                     result[offset + j] = (mask & (1 << j)) != 0;
                 }
             }
-            
+
             // 处理剩余元素
             for i in (chunks * 8)..(chunks * 8 + remainder) {
                 result[i] = (a[i] - b[i]).abs() < threshold;
@@ -195,28 +195,28 @@ pub mod simd_ops {
             let mut max_vec = _mm256_set1_ps(f32::NEG_INFINITY);
             let chunks = data.chunks_exact(8);
             let remainder = chunks.remainder();
-            
+
             for chunk in chunks {
                 let vec = _mm256_loadu_ps(chunk.as_ptr());
                 max_vec = _mm256_max_ps(max_vec, vec);
             }
-            
+
             // 水平最大值
             let max_high = _mm256_extractf128_ps(max_vec, 1);
             let max_low = _mm256_castps256_ps128(max_vec);
             let max_final = _mm_max_ps(max_high, max_low);
             let max_final = _mm_max_ps(max_final, _mm_movehl_ps(max_final, max_final));
             let max_final = _mm_max_ss(max_final, _mm_movehdup_ps(max_final));
-            
+
             let mut result = _mm_cvtss_f32(max_final);
-            
+
             // 处理剩余元素
             for &val in remainder {
                 if val > result {
                     result = val;
                 }
             }
-            
+
             result
         }
     }
@@ -231,28 +231,28 @@ pub mod simd_ops {
             let mut min_vec = _mm256_set1_ps(f32::INFINITY);
             let chunks = data.chunks_exact(8);
             let remainder = chunks.remainder();
-            
+
             for chunk in chunks {
                 let vec = _mm256_loadu_ps(chunk.as_ptr());
                 min_vec = _mm256_min_ps(min_vec, vec);
             }
-            
+
             // 水平最小值
             let min_high = _mm256_extractf128_ps(min_vec, 1);
             let min_low = _mm256_castps256_ps128(min_vec);
             let min_final = _mm_min_ps(min_high, min_low);
             let min_final = _mm_min_ps(min_final, _mm_movehl_ps(min_final, min_final));
             let min_final = _mm_min_ss(min_final, _mm_movehdup_ps(min_final));
-            
+
             let mut result = _mm_cvtss_f32(min_final);
-            
+
             // 处理剩余元素
             for &val in remainder {
                 if val < result {
                     result = val;
                 }
             }
-            
+
             result
         }
     }
@@ -263,12 +263,12 @@ pub mod simd_ops {
             let value_vec = _mm256_set1_ps(value);
             let chunks = array.len() / 8;
             let remainder = array.len() % 8;
-            
+
             for i in 0..chunks {
                 let offset = i * 8;
                 _mm256_storeu_ps(array.as_mut_ptr().add(offset), value_vec);
             }
-            
+
             // 处理剩余元素
             for i in (chunks * 8)..(chunks * 8 + remainder) {
                 array[i] = value;
@@ -285,7 +285,7 @@ pub mod simd_ops {
 
         unsafe {
             let chunks = src.len() / 32;
-            
+
             for i in 0..chunks {
                 let offset = i * 32;
                 let data = _mm256_load_si256(src.as_ptr().add(offset) as *const __m256i);
@@ -302,7 +302,7 @@ pub mod simd_ops {
         unsafe {
             let chunks = a.len() / 8;
             let remainder = a.len() % 8;
-            
+
             for i in 0..chunks {
                 let offset = i * 8;
                 let vec_a = _mm256_loadu_ps(a.as_ptr().add(offset));
@@ -311,7 +311,7 @@ pub mod simd_ops {
                 let mask = _mm256_movemask_ps(cmp);
                 count += mask.count_ones() as usize;
             }
-            
+
             // 处理剩余元素
             for i in (chunks * 8)..(chunks * 8 + remainder) {
                 if a[i] == b[i] {
@@ -449,9 +449,9 @@ mod tests {
         let a = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
         let b = vec![2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
         let mut result = vec![0.0; 8];
-        
+
         add_f32_simd(&a, &b, &mut result);
-        
+
         for i in 0..8 {
             assert_eq!(result[i], a[i] + b[i]);
         }
@@ -461,7 +461,7 @@ mod tests {
     fn test_dot_product_f32_simd() {
         let a = vec![1.0, 2.0, 3.0, 4.0];
         let b = vec![2.0, 3.0, 4.0, 5.0];
-        let expected = 1.0*2.0 + 2.0*3.0 + 3.0*4.0 + 4.0*5.0;
+        let expected = 1.0 * 2.0 + 2.0 * 3.0 + 3.0 * 4.0 + 4.0 * 5.0;
         let result = dot_product_f32_simd(&a, &b);
         assert!((result - expected).abs() < 1e-6);
     }
@@ -484,10 +484,10 @@ mod tests {
     fn test_simd_utils() {
         assert!(SIMDUtils::is_simd_suitable(100, 16));
         assert!(!SIMDUtils::is_simd_suitable(10, 16));
-        
+
         let alignment = SIMDUtils::alignment_size();
         assert!(alignment > 0);
-        
+
         let ptr = &[1, 2, 3, 4] as *const [i32];
         let is_aligned = SIMDUtils::is_aligned(ptr as *const i32, 4);
         // 对齐检查结果取决于运行时内存分配

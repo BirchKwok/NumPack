@@ -1,5 +1,5 @@
 //! 系统监控器
-//! 
+//!
 //! 从lazy_array_original.rs中提取的系统监控功能
 
 use std::time::{Duration, Instant};
@@ -22,7 +22,7 @@ impl SystemMonitor {
             memory_usage: 0,
         }
     }
-    
+
     /// 获取CPU利用率（0.0-1.0）
     pub fn get_cpu_utilization(&mut self) -> f64 {
         let now = Instant::now();
@@ -34,7 +34,7 @@ impl SystemMonitor {
         }
         self.cpu_utilization
     }
-    
+
     /// 获取内存使用量（字节）
     pub fn get_memory_usage(&mut self) -> usize {
         let now = Instant::now();
@@ -45,7 +45,7 @@ impl SystemMonitor {
         }
         self.memory_usage
     }
-    
+
     /// 估算CPU使用率
     fn estimate_cpu_usage(&self) -> f64 {
         // 简化实现：基于当前线程数估算
@@ -60,7 +60,7 @@ impl SystemMonitor {
             0.3
         }
     }
-    
+
     /// 估算内存使用量
     fn estimate_memory_usage(&self) -> usize {
         // 简化实现：返回固定值
@@ -82,12 +82,12 @@ impl SystemMonitor {
             1024 * 1024 * 100 // 100MB
         }
     }
-    
+
     /// Linux系统内存使用量获取
     #[cfg(target_os = "linux")]
     fn get_linux_memory_usage(&self) -> Option<usize> {
         use std::fs;
-        
+
         let status = fs::read_to_string("/proc/self/status").ok()?;
         for line in status.lines() {
             if line.starts_with("VmRSS:") {
@@ -101,7 +101,7 @@ impl SystemMonitor {
         }
         None
     }
-    
+
     /// Windows系统内存使用量获取
     #[cfg(target_os = "windows")]
     fn get_windows_memory_usage(&self) -> Option<usize> {
@@ -109,14 +109,14 @@ impl SystemMonitor {
         // 例如GetProcessMemoryInfo
         Some(1024 * 1024 * 100) // 占位符
     }
-    
+
     /// macOS系统内存使用量获取
     #[cfg(target_os = "macos")]
     fn get_macos_memory_usage(&self) -> Option<usize> {
         // 在实际实现中，这里应该使用mach API
         Some(1024 * 1024 * 100) // 占位符
     }
-    
+
     /// 重置监控状态
     pub fn reset(&mut self) {
         self.last_cpu_check = Instant::now();
@@ -124,7 +124,7 @@ impl SystemMonitor {
         self.cpu_utilization = 0.0;
         self.memory_usage = 0;
     }
-    
+
     /// 获取系统监控摘要
     pub fn get_summary(&mut self) -> SystemSummary {
         SystemSummary {
@@ -134,20 +134,20 @@ impl SystemMonitor {
             last_updated: Instant::now(),
         }
     }
-    
+
     /// 检查系统是否处于高负载状态
     pub fn is_high_load(&mut self) -> bool {
         let cpu = self.get_cpu_utilization();
         let memory_gb = self.get_memory_usage() as f64 / (1024.0 * 1024.0 * 1024.0);
-        
+
         cpu > 0.8 || memory_gb > 2.0 // CPU超过80%或内存超过2GB
     }
-    
+
     /// 检查系统是否适合执行高性能操作
     pub fn is_suitable_for_high_performance(&mut self) -> bool {
         let cpu = self.get_cpu_utilization();
         let memory_gb = self.get_memory_usage() as f64 / (1024.0 * 1024.0 * 1024.0);
-        
+
         cpu < 0.5 && memory_gb < 1.0 // CPU低于50%且内存低于1GB
     }
 }

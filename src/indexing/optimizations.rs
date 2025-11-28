@@ -1,9 +1,9 @@
 //! 索引优化技术
-//! 
+//!
 //! 包含各种高级索引优化技术，特别针对Windows平台的优化
 
-use crate::indexing::types::*;
 use crate::indexing::algorithms::{IndexAlgorithmExecutor, IndexError};
+use crate::indexing::types::*;
 use crate::memory::simd_processor::SIMDProcessor;
 use rayon::prelude::*;
 use std::time::Instant;
@@ -41,15 +41,13 @@ impl IndexOptimizationManager {
         itemsize: usize,
     ) -> Result<Vec<Vec<u8>>, IndexError> {
         let start_time = Instant::now();
-        
+
         // 根据策略选择优化技术
         let result = match strategy {
             AccessStrategy::DirectMemory => {
                 self.direct_memory_optimized(indices, data, shape, itemsize)
             }
-            AccessStrategy::BlockCopy => {
-                self.block_copy_optimized(indices, data, shape, itemsize)
-            }
+            AccessStrategy::BlockCopy => self.block_copy_optimized(indices, data, shape, itemsize),
             AccessStrategy::VectorizedGather => {
                 self.vectorized_gather_optimized(indices, data, shape, itemsize)
             }
@@ -59,12 +57,8 @@ impl IndexOptimizationManager {
             AccessStrategy::PrefetchOptimized => {
                 self.prefetch_optimized_access(indices, data, shape, itemsize)
             }
-            AccessStrategy::ZeroCopy => {
-                self.zero_copy_optimized(indices, data, shape, itemsize)
-            }
-            AccessStrategy::Adaptive => {
-                self.adaptive_optimized(indices, data, shape, itemsize)
-            }
+            AccessStrategy::ZeroCopy => self.zero_copy_optimized(indices, data, shape, itemsize),
+            AccessStrategy::Adaptive => self.adaptive_optimized(indices, data, shape, itemsize),
         };
 
         let latency_ns = start_time.elapsed().as_nanos() as u64;
@@ -91,12 +85,11 @@ impl IndexOptimizationManager {
 
         let row_size = shape[1..].iter().product::<usize>() * itemsize;
         let first_dim = &indices[0];
-        
+
         // Windows特定优化：使用对齐的内存访问
         if cfg!(target_os = "windows") {
-            self.windows_optimizer.direct_memory_access_windows_safe(
-                first_dim, data, row_size
-            )
+            self.windows_optimizer
+                .direct_memory_access_windows_safe(first_dim, data, row_size)
         } else {
             // 标准直接内存访问
             self.standard_direct_memory_access(first_dim, data, row_size)
@@ -253,7 +246,7 @@ impl IndexOptimizationManager {
         row_size: usize,
     ) -> Result<Vec<Vec<u8>>, IndexError> {
         let mut result = Vec::with_capacity(indices.len());
-        
+
         for &idx in indices {
             let offset = idx * row_size;
             if offset + row_size <= data.len() {
@@ -262,7 +255,7 @@ impl IndexOptimizationManager {
                 return Err(IndexError::IndexOutOfBounds);
             }
         }
-        
+
         Ok(result)
     }
 
@@ -319,7 +312,7 @@ impl IndexOptimizationManager {
                     result.extend(
                         block_data
                             .chunks_exact(row_size)
-                            .map(|chunk| chunk.to_vec())
+                            .map(|chunk| chunk.to_vec()),
                     );
                 }
             }
@@ -380,7 +373,7 @@ impl IndexOptimizationManager {
         row_size: usize,
     ) -> Result<Vec<Vec<u8>>, IndexError> {
         let chunk_size = (indices.len() / self.config.thread_pool_size).max(1);
-        
+
         let result: Result<Vec<_>, _> = indices
             .par_chunks(chunk_size)
             .map(|chunk| {
@@ -444,7 +437,7 @@ impl IndexOptimizationManager {
         for group in prefetch_groups {
             // 预取整个组的数据
             self.prefetch_memory_group(&group, data, row_size);
-            
+
             // 访问预取的数据
             for &idx in &group {
                 let offset = idx * row_size;
@@ -478,9 +471,9 @@ impl IndexOptimizationManager {
         if indices.len() < 2 {
             return true;
         }
-        
+
         for i in 1..indices.len() {
-            if indices[i] != indices[i-1] + 1 {
+            if indices[i] != indices[i - 1] + 1 {
                 return false;
             }
         }
@@ -497,7 +490,7 @@ impl IndexOptimizationManager {
         let mut current_group = vec![indices[0]];
 
         for i in 1..indices.len() {
-            if indices[i] == indices[i-1] + 1 {
+            if indices[i] == indices[i - 1] + 1 {
                 current_group.push(indices[i]);
             } else {
                 groups.push(current_group);
@@ -512,8 +505,9 @@ impl IndexOptimizationManager {
     /// 分析并分组以便预取
     fn analyze_and_group_for_prefetch(&self, indices: &[usize]) -> Vec<Vec<usize>> {
         const PREFETCH_GROUP_SIZE: usize = 8; // 每组预取8个元素
-        
-        indices.chunks(PREFETCH_GROUP_SIZE)
+
+        indices
+            .chunks(PREFETCH_GROUP_SIZE)
             .map(|chunk| chunk.to_vec())
             .collect()
     }
@@ -584,10 +578,10 @@ impl WindowsIndexOptimizer {
         row_size: usize,
     ) -> Result<Vec<Vec<u8>>, IndexError> {
         let mut result = Vec::with_capacity(indices.len());
-        
+
         for &idx in indices {
             let offset = idx * row_size;
-            
+
             // Windows特定：检查页面边界
             if self.check_page_boundary_safe(offset, row_size, data.len()) {
                 if offset + row_size <= data.len() {
@@ -601,7 +595,7 @@ impl WindowsIndexOptimizer {
                 result.push(safe_data);
             }
         }
-        
+
         Ok(result)
     }
 
@@ -609,7 +603,7 @@ impl WindowsIndexOptimizer {
     fn check_page_boundary_safe(&self, offset: usize, size: usize, data_len: usize) -> bool {
         let start_page = offset / self.page_size;
         let end_page = (offset + size - 1) / self.page_size;
-        
+
         // 确保不跨页面且在数据范围内
         start_page == end_page && offset + size <= data_len
     }
@@ -675,7 +669,8 @@ impl OptimizationPerformanceTracker {
         latency_ns: u64,
         success: bool,
     ) {
-        let stats = self.strategy_stats
+        let stats = self
+            .strategy_stats
             .entry(strategy)
             .or_insert_with(|| OptimizationStats {
                 total_operations: 0,
@@ -703,4 +698,4 @@ impl OptimizationPerformanceTracker {
 #[derive(Debug, Clone)]
 pub struct OptimizationReport {
     pub strategy_stats: std::collections::HashMap<AccessStrategy, OptimizationStats>,
-} 
+}

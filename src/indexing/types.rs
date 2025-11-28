@@ -1,19 +1,19 @@
 //! 索引系统类型定义
-//! 
+//!
 //! 从lazy_array_original.rs中提取和重构的索引相关类型
 
-use std::time::Instant;
 use std::collections::HashMap;
+use std::time::Instant;
 
 /// 索引类型枚举 - 支持多种NumPy风格的索引方式
 #[derive(Debug, Clone)]
 pub enum IndexType {
-    Integer(i64),                    // 单个整数索引
-    Slice(SliceInfo),               // 切片索引 [start:stop:step]
-    BooleanMask(Vec<bool>),         // 布尔掩码索引
-    IntegerArray(Vec<i64>),         // 整数数组索引（花式索引）
-    Ellipsis,                       // 省略号 ...
-    NewAxis,                        // 新轴 np.newaxis
+    Integer(i64),           // 单个整数索引
+    Slice(SliceInfo),       // 切片索引 [start:stop:step]
+    BooleanMask(Vec<bool>), // 布尔掩码索引
+    IntegerArray(Vec<i64>), // 整数数组索引（花式索引）
+    Ellipsis,               // 省略号 ...
+    NewAxis,                // 新轴 np.newaxis
 }
 
 /// 切片信息结构
@@ -34,33 +34,33 @@ impl SliceInfo {
 #[derive(Debug, Clone)]
 pub struct IndexResult {
     pub indices: Vec<Vec<usize>>,      // 每个维度的具体索引值
-    pub result_shape: Vec<usize>,       // 结果数组的形状
-    pub needs_broadcasting: bool,       // 是否需要广播
-    pub access_pattern: AccessPattern,  // 访问模式
-    pub estimated_size: usize,          // 预估数据大小
+    pub result_shape: Vec<usize>,      // 结果数组的形状
+    pub needs_broadcasting: bool,      // 是否需要广播
+    pub access_pattern: AccessPattern, // 访问模式
+    pub estimated_size: usize,         // 预估数据大小
 }
 
 /// 访问模式枚举 - 描述数据访问的特征
 #[derive(Debug, Clone, PartialEq)]
 pub enum AccessPattern {
-    Sequential,     // 顺序访问：连续的内存位置
-    Random,         // 随机访问：分散的内存位置
-    Clustered,      // 聚集访问：部分连续的块
-    Mixed,          // 混合访问：顺序和随机的组合
-    Strided,        // 步长访问：等间距访问
-    Sparse,         // 稀疏访问：大部分位置不访问
+    Sequential, // 顺序访问：连续的内存位置
+    Random,     // 随机访问：分散的内存位置
+    Clustered,  // 聚集访问：部分连续的块
+    Mixed,      // 混合访问：顺序和随机的组合
+    Strided,    // 步长访问：等间距访问
+    Sparse,     // 稀疏访问：大部分位置不访问
 }
 
 /// 访问策略枚举 - 决定如何执行索引操作
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AccessStrategy {
-    DirectMemory,           // 直接内存访问
-    BlockCopy,              // 块复制访问
-    ParallelPointAccess,    // 并行点访问
-    PrefetchOptimized,      // 预取优化访问
-    ZeroCopy,              // 零拷贝访问
-    VectorizedGather,      // 向量化聚集
-    Adaptive,              // 自适应访问
+    DirectMemory,        // 直接内存访问
+    BlockCopy,           // 块复制访问
+    ParallelPointAccess, // 并行点访问
+    PrefetchOptimized,   // 预取优化访问
+    ZeroCopy,            // 零拷贝访问
+    VectorizedGather,    // 向量化聚集
+    Adaptive,            // 自适应访问
 }
 
 /// 访问模式分析器
@@ -117,7 +117,8 @@ impl AccessPatternAnalyzer {
             AccessPattern::Strided
         } else if self.is_clustered(first_dim) {
             AccessPattern::Clustered
-        } else if self.is_sparse(first_dim, 1000) { // 假设总大小1000
+        } else if self.is_sparse(first_dim, 1000) {
+            // 假设总大小1000
             AccessPattern::Sparse
         } else {
             AccessPattern::Random
@@ -131,7 +132,7 @@ impl AccessPatternAnalyzer {
             timestamp: Instant::now(),
             latency_ns: 0, // 将在后续填充
         };
-        
+
         self.access_history.push(access_info);
         self.update_statistics();
 
@@ -145,7 +146,7 @@ impl AccessPatternAnalyzer {
         }
 
         for i in 1..indices.len() {
-            if indices[i] != indices[i-1] + 1 {
+            if indices[i] != indices[i - 1] + 1 {
                 return false;
             }
         }
@@ -160,7 +161,7 @@ impl AccessPatternAnalyzer {
 
         let stride = indices[1] as i64 - indices[0] as i64;
         for i in 2..indices.len() {
-            if indices[i] as i64 - indices[i-1] as i64 != stride {
+            if indices[i] as i64 - indices[i - 1] as i64 != stride {
                 return false;
             }
         }
@@ -180,8 +181,9 @@ impl AccessPatternAnalyzer {
         let mut in_cluster = false;
 
         for i in 1..sorted_indices.len() {
-            let gap = sorted_indices[i] - sorted_indices[i-1];
-            if gap <= 10 { // 间隔小于等于10认为是聚集
+            let gap = sorted_indices[i] - sorted_indices[i - 1];
+            if gap <= 10 {
+                // 间隔小于等于10认为是聚集
                 if !in_cluster {
                     clusters += 1;
                     in_cluster = true;
@@ -216,13 +218,16 @@ impl AccessPatternAnalyzer {
         let recent_accesses = &self.access_history[start_idx..];
         let total = recent_accesses.len() as f64;
 
-        let sequential_count = recent_accesses.iter()
+        let sequential_count = recent_accesses
+            .iter()
             .filter(|a| a.pattern == AccessPattern::Sequential)
             .count() as f64;
-        let random_count = recent_accesses.iter()
+        let random_count = recent_accesses
+            .iter()
             .filter(|a| a.pattern == AccessPattern::Random)
             .count() as f64;
-        let cluster_count = recent_accesses.iter()
+        let cluster_count = recent_accesses
+            .iter()
             .filter(|a| a.pattern == AccessPattern::Clustered)
             .count() as f64;
 
@@ -231,9 +236,7 @@ impl AccessPatternAnalyzer {
         self.cluster_ratio = cluster_count / total;
 
         // 计算平均延迟
-        let total_latency: u64 = recent_accesses.iter()
-            .map(|a| a.latency_ns)
-            .sum();
+        let total_latency: u64 = recent_accesses.iter().map(|a| a.latency_ns).sum();
         self.average_latency_ns = if recent_accesses.is_empty() {
             0
         } else {
@@ -373,13 +376,16 @@ impl IndexPerformanceMonitor {
         bytes_processed: u64,
         success: bool,
     ) {
-        let stats = self.strategy_stats.entry(strategy).or_insert(StrategyStats {
-            total_operations: 0,
-            total_latency_ns: 0,
-            total_bytes: 0,
-            error_count: 0,
-            last_used: Instant::now(),
-        });
+        let stats = self
+            .strategy_stats
+            .entry(strategy)
+            .or_insert(StrategyStats {
+                total_operations: 0,
+                total_latency_ns: 0,
+                total_bytes: 0,
+                error_count: 0,
+                last_used: Instant::now(),
+            });
 
         stats.total_operations += 1;
         stats.total_latency_ns += latency_ns;
@@ -399,11 +405,15 @@ impl IndexPerformanceMonitor {
         match pattern {
             AccessPattern::Sequential => {
                 if let Some(block_stats) = self.strategy_stats.get(&AccessStrategy::BlockCopy) {
-                    if let Some(direct_stats) = self.strategy_stats.get(&AccessStrategy::DirectMemory) {
+                    if let Some(direct_stats) =
+                        self.strategy_stats.get(&AccessStrategy::DirectMemory)
+                    {
                         if block_stats.total_operations > 10 && direct_stats.total_operations > 10 {
-                            let block_avg_latency = block_stats.total_latency_ns / block_stats.total_operations;
-                            let direct_avg_latency = direct_stats.total_latency_ns / direct_stats.total_operations;
-                            
+                            let block_avg_latency =
+                                block_stats.total_latency_ns / block_stats.total_operations;
+                            let direct_avg_latency =
+                                direct_stats.total_latency_ns / direct_stats.total_operations;
+
                             if block_avg_latency < direct_avg_latency {
                                 return AccessStrategy::BlockCopy;
                             }
@@ -435,7 +445,9 @@ impl IndexPerformanceMonitor {
             return 0.0;
         }
 
-        let total_errors: u64 = self.strategy_stats.values()
+        let total_errors: u64 = self
+            .strategy_stats
+            .values()
             .map(|stats| stats.error_count)
             .sum();
 
@@ -448,4 +460,4 @@ pub struct IndexPerformanceReport {
     pub strategy_performance: HashMap<AccessStrategy, StrategyStats>,
     pub global_stats: GlobalIndexStats,
     pub recommendation_accuracy: f64,
-} 
+}

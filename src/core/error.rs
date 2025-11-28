@@ -1,28 +1,28 @@
+use pyo3::exceptions::PyRuntimeError;
+use pyo3::PyErr;
 use std::io;
 use thiserror::Error;
-use pyo3::PyErr;
-use pyo3::exceptions::PyRuntimeError;
 
 #[derive(Error, Debug)]
 pub enum NpkError {
     #[error("IO error: {0}")]
     IoError(#[from] io::Error),
-    
+
     #[error("Invalid array name: {0}")]
     InvalidArrayName(String),
-    
+
     #[error("Array not found: {0}")]
     ArrayNotFound(String),
-    
+
     #[error("Invalid shape: {0}")]
     InvalidShape(String),
-    
+
     #[error("Invalid dtype: {0}")]
     InvalidDtype(String),
-    
+
     #[error("Invalid metadata: {0}")]
     InvalidMetadata(String),
-    
+
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),
 
@@ -36,4 +36,4 @@ impl From<NpkError> for PyErr {
     }
 }
 
-pub type NpkResult<T> = Result<T, NpkError>; 
+pub type NpkResult<T> = Result<T, NpkError>;

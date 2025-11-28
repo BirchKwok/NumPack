@@ -8,37 +8,37 @@ pub enum MetricType {
     /// 点积 (Dot Product)
     /// 计算两个向量的内积：sum(a[i] * b[i])
     DotProduct,
-    
+
     /// 余弦相似度 (Cosine Similarity)
     /// 计算：(a · b) / (||a|| * ||b||)
     /// 范围：[-1, 1]，值越大越相似
     Cosine,
-    
+
     /// L2 距离 (Euclidean Distance)
     /// 计算：sqrt(sum((a[i] - b[i])^2))
     L2Distance,
-    
+
     /// L2 距离平方 (Squared Euclidean Distance)
     /// 计算：sum((a[i] - b[i])^2)
     /// 避免开方运算，速度更快
     L2Squared,
-    
+
     /// 汉明距离 (Hamming Distance)
     /// 用于二值向量，计算不同位的数量
     Hamming,
-    
+
     /// Jaccard 距离 (Jaccard Distance)
     /// 计算：1 - |A ∩ B| / |A ∪ B|
     Jaccard,
-    
+
     /// KL 散度 (Kullback-Leibler Divergence)
     /// 衡量两个概率分布的差异
     KL,
-    
+
     /// JS 散度 (Jensen-Shannon Divergence)
     /// KL 散度的对称版本
     JS,
-    
+
     /// 内积 (Inner Product)
     /// 与 DotProduct 相同，但语义不同
     InnerProduct,
@@ -60,7 +60,7 @@ impl MetricType {
             _ => None,
         }
     }
-    
+
     /// 转换为字符串
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -75,9 +75,9 @@ impl MetricType {
             MetricType::InnerProduct => "inner",
         }
     }
-    
+
     /// 是否是相似度度量（值越大越相似）
-    /// 
+    ///
     /// Returns:
     ///     true: 相似度度量（Cosine, DotProduct, InnerProduct）
     ///     false: 距离度量（L2, Hamming, KL, JS）
@@ -87,7 +87,7 @@ impl MetricType {
             MetricType::DotProduct | MetricType::Cosine | MetricType::InnerProduct
         )
     }
-    
+
     /// 是否需要归一化
     pub fn requires_normalization(&self) -> bool {
         matches!(self, MetricType::Cosine)
@@ -103,7 +103,7 @@ impl fmt::Display for MetricType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_from_str() {
         assert_eq!(MetricType::from_str("dot"), Some(MetricType::DotProduct));
@@ -111,7 +111,7 @@ mod tests {
         assert_eq!(MetricType::from_str("l2"), Some(MetricType::L2Distance));
         assert_eq!(MetricType::from_str("invalid"), None);
     }
-    
+
     #[test]
     fn test_is_similarity() {
         assert!(MetricType::DotProduct.is_similarity());
@@ -119,7 +119,7 @@ mod tests {
         assert!(!MetricType::L2Distance.is_similarity());
         assert!(!MetricType::L2Squared.is_similarity());
     }
-    
+
     #[test]
     fn test_requires_normalization() {
         assert!(MetricType::Cosine.requires_normalization());

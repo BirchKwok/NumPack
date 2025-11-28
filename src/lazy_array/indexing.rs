@@ -1,9 +1,9 @@
 //! LazyArray索引处理模块
-//! 
+//!
 //! 从lib.rs中提取的索引解析和处理逻辑
 
 use pyo3::prelude::*;
-use pyo3::types::{PyTuple, PyList, PySlice, PyEllipsis};
+use pyo3::types::{PyEllipsis, PyList, PySlice, PyTuple};
 
 /// 索引类型枚举
 #[derive(Debug, Clone)]
@@ -27,7 +27,7 @@ pub struct SliceInfo {
 /// 索引解析结果
 #[derive(Debug, Clone)]
 pub struct IndexResult {
-    pub indices: Vec<Vec<usize>>,  // 每个维度的索引
+    pub indices: Vec<Vec<usize>>, // 每个维度的索引
     pub result_shape: Vec<usize>,
     pub needs_broadcasting: bool,
     pub access_pattern: AccessPattern,
@@ -71,7 +71,7 @@ impl SliceInfo {
     /// 规范化切片参数
     pub fn normalize(&self, length: usize) -> (usize, usize, usize) {
         let len = length as i64;
-        
+
         let step = self.step.unwrap_or(1);
         if step == 0 {
             panic!("slice step cannot be zero");
@@ -80,36 +80,40 @@ impl SliceInfo {
         let (start, stop) = if step > 0 {
             let start = self.start.unwrap_or(0);
             let stop = self.stop.unwrap_or(len);
-            
+
             let norm_start = if start < 0 {
                 (len + start).max(0) as usize
             } else {
                 (start.min(len)) as usize
             };
-            
+
             let norm_stop = if stop < 0 {
                 (len + stop).max(0) as usize
             } else {
                 (stop.min(len)) as usize
             };
-            
+
             (norm_start, norm_stop)
         } else {
             let start = self.start.unwrap_or(len - 1);
             let stop = self.stop.unwrap_or(-1);
-            
+
             let norm_start = if start < 0 {
                 (len + start).max(-1) as usize
             } else {
                 (start.min(len - 1)) as usize
             };
-            
+
             let norm_stop = if stop < 0 {
-                if stop == -1 { 0 } else { (len + stop).max(-1) as usize }
+                if stop == -1 {
+                    0
+                } else {
+                    (len + stop).max(-1) as usize
+                }
             } else {
                 stop as usize
             };
-            
+
             (norm_start, norm_stop)
         };
 
@@ -119,9 +123,13 @@ impl SliceInfo {
     /// 计算切片结果的长度
     pub fn result_length(&self, length: usize) -> usize {
         let (start, stop, step) = self.normalize(length);
-        
+
         if step == 1 {
-            if stop > start { stop - start } else { 0 }
+            if stop > start {
+                stop - start
+            } else {
+                0
+            }
         } else {
             if stop > start {
                 (stop - start + step - 1) / step
@@ -135,7 +143,7 @@ impl SliceInfo {
     pub fn generate_indices(&self, length: usize) -> Vec<usize> {
         let (start, stop, step) = self.normalize(length);
         let mut indices = Vec::new();
-        
+
         if step == 1 {
             for i in start..stop {
                 indices.push(i);
@@ -147,7 +155,7 @@ impl SliceInfo {
                 i += step;
             }
         }
-        
+
         indices
     }
 }
@@ -250,7 +258,7 @@ impl IndexParser {
                     }
                 }
             }
-            
+
             // 整数数组
             let array = key.call_method0("__array__")?;
             if let Ok(indices) = array.extract::<Vec<i64>>() {
@@ -259,19 +267,19 @@ impl IndexParser {
         }
 
         Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-            "Unsupported index type"
+            "Unsupported index type",
         ))
     }
 
     /// 解析多维索引
     pub fn parse_tuple_index(tuple: &Bound<'_, PyTuple>) -> PyResult<Vec<IndexType>> {
         let mut index_types = Vec::new();
-        
+
         for i in 0..tuple.len() {
             let item = tuple.get_item(i)?;
             index_types.push(Self::parse_single_index(&item)?);
         }
-        
+
         Ok(index_types)
     }
 
@@ -279,7 +287,7 @@ impl IndexParser {
     pub fn expand_ellipsis(index_types: Vec<IndexType>, ndim: usize) -> Vec<IndexType> {
         let mut result = Vec::new();
         let mut ellipsis_found = false;
-        
+
         for index_type in &index_types {
             if matches!(index_type, IndexType::Ellipsis) {
                 if ellipsis_found {
@@ -287,13 +295,14 @@ impl IndexParser {
                     continue;
                 }
                 ellipsis_found = true;
-                
+
                 // 计算需要插入多少个完整切片
-                let explicit_dims = index_types.iter()
+                let explicit_dims = index_types
+                    .iter()
                     .filter(|t| !matches!(t, IndexType::Ellipsis | IndexType::NewAxis))
                     .count();
                 let missing_dims = ndim.saturating_sub(explicit_dims);
-                
+
                 // 插入完整切片
                 for _ in 0..missing_dims {
                     result.push(IndexType::Slice(SliceInfo::new(None, None, None)));
@@ -302,25 +311,28 @@ impl IndexParser {
                 result.push(index_type.clone());
             }
         }
-        
+
         result
     }
 
     /// 规范化索引
-    pub fn normalize_indices(index_types: Vec<IndexType>, shape: &[usize]) -> PyResult<IndexResult> {
+    pub fn normalize_indices(
+        index_types: Vec<IndexType>,
+        shape: &[usize],
+    ) -> PyResult<IndexResult> {
         let mut indices = Vec::new();
         let mut result_shape = Vec::new();
         let mut access_pattern = AccessPattern::Sequential;
-        
+
         for (dim, index_type) in index_types.iter().enumerate() {
             if dim >= shape.len() {
                 return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
-                    "Too many indices for array"
+                    "Too many indices for array",
                 ));
             }
-            
+
             let dim_size = shape[dim];
-            
+
             match index_type {
                 IndexType::Integer(idx) => {
                     let normalized_idx = if *idx < 0 {
@@ -328,91 +340,98 @@ impl IndexParser {
                     } else {
                         *idx as usize
                     };
-                    
+
                     if normalized_idx >= dim_size {
-                        return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
-                            format!("Index {} is out of bounds for axis {} with size {}", 
-                                   idx, dim, dim_size)
-                        ));
+                        return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
+                            "Index {} is out of bounds for axis {} with size {}",
+                            idx, dim, dim_size
+                        )));
                     }
-                    
+
                     indices.push(vec![normalized_idx]);
                     // 整数索引不增加结果维度
                 }
-                
+
                 IndexType::Slice(slice_info) => {
                     let slice_indices = slice_info.generate_indices(dim_size);
                     let slice_len = slice_indices.len();
-                    
+
                     indices.push(slice_indices);
                     result_shape.push(slice_len);
-                    
+
                     // 非连续切片改变访问模式
                     if slice_info.step.unwrap_or(1) != 1 {
                         access_pattern = AccessPattern::Clustered;
                     }
                 }
-                
+
                 IndexType::BooleanMask(mask) => {
                     if mask.len() != dim_size {
-                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                            format!("Boolean mask length {} doesn't match dimension size {}", 
-                                   mask.len(), dim_size)
-                        ));
+                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                            "Boolean mask length {} doesn't match dimension size {}",
+                            mask.len(),
+                            dim_size
+                        )));
                     }
-                    
-                    let selected_indices: Vec<usize> = mask.iter()
+
+                    let selected_indices: Vec<usize> = mask
+                        .iter()
                         .enumerate()
                         .filter_map(|(i, &selected)| if selected { Some(i) } else { None })
                         .collect();
-                    
+
                     let selected_count = selected_indices.len();
                     indices.push(selected_indices);
                     result_shape.push(selected_count);
                     access_pattern = AccessPattern::Random;
                 }
-                
+
                 IndexType::IntegerArray(int_array) => {
                     let mut normalized_indices = Vec::new();
-                    
+
                     for &idx in int_array {
                         let normalized_idx = if idx < 0 {
                             (dim_size as i64 + idx) as usize
                         } else {
                             idx as usize
                         };
-                        
+
                         if normalized_idx >= dim_size {
-                            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
-                                format!("Index {} is out of bounds for axis {} with size {}", 
-                                       idx, dim, dim_size)
-                            ));
+                            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
+                                "Index {} is out of bounds for axis {} with size {}",
+                                idx, dim, dim_size
+                            )));
                         }
-                        
+
                         normalized_indices.push(normalized_idx);
                     }
-                    
+
                     let array_len = normalized_indices.len();
                     indices.push(normalized_indices);
                     result_shape.push(array_len);
                     access_pattern = AccessPattern::Random;
                 }
-                
+
                 IndexType::Ellipsis | IndexType::NewAxis => {
                     // 这些应该在之前的处理中被展开或处理
                     continue;
                 }
             }
         }
-        
+
         // 添加剩余维度
         for dim in index_types.len()..shape.len() {
             let full_range: Vec<usize> = (0..shape[dim]).collect();
             indices.push(full_range);
             result_shape.push(shape[dim]);
         }
-        
-        Ok(IndexResult::new(indices, result_shape, false, access_pattern))
+
+        Ok(IndexResult::new(
+            indices,
+            result_shape,
+            false,
+            access_pattern,
+        ))
     }
 
     /// 检测访问模式
@@ -420,42 +439,44 @@ impl IndexParser {
         if indices.is_empty() {
             return AccessPattern::Sequential;
         }
-        
+
         // 检查第一个维度的模式
         let first_dim = &indices[0];
-        
+
         if first_dim.is_empty() {
             return AccessPattern::Sequential;
         }
-        
+
         if first_dim.len() == 1 {
             return AccessPattern::Sequential;
         }
-        
+
         // 检查是否为连续序列
         let mut is_sequential = true;
         for i in 1..first_dim.len() {
-            if first_dim[i] != first_dim[i-1] + 1 {
+            if first_dim[i] != first_dim[i - 1] + 1 {
                 is_sequential = false;
                 break;
             }
         }
-        
+
         if is_sequential {
             return AccessPattern::Sequential;
         }
-        
+
         // 检查是否为聚簇访问（相对局部的）
         let mut gaps = Vec::new();
         for i in 1..first_dim.len() {
-            gaps.push(first_dim[i].saturating_sub(first_dim[i-1]));
+            gaps.push(first_dim[i].saturating_sub(first_dim[i - 1]));
         }
-        
+
         let avg_gap = gaps.iter().sum::<usize>() as f64 / gaps.len() as f64;
-        let gap_variance = gaps.iter()
+        let gap_variance = gaps
+            .iter()
             .map(|&gap| (gap as f64 - avg_gap).powi(2))
-            .sum::<f64>() / gaps.len() as f64;
-        
+            .sum::<f64>()
+            / gaps.len() as f64;
+
         if gap_variance < avg_gap {
             AccessPattern::Clustered
         } else {
@@ -472,17 +493,17 @@ impl StrategySelector {
     pub fn choose_strategy(index_result: &IndexResult, array_shape: &[usize]) -> AccessStrategy {
         let total_elements = index_result.total_elements();
         let array_size = array_shape.iter().product::<usize>();
-        
+
         // 单个元素直接访问
         if index_result.is_single_element() {
             return AccessStrategy::DirectMemory;
         }
-        
+
         // 小数组使用直接内存访问
         if array_size < 10000 {
             return AccessStrategy::DirectMemory;
         }
-        
+
         // 根据访问模式选择策略
         match index_result.access_pattern {
             AccessPattern::Sequential => {
@@ -492,7 +513,7 @@ impl StrategySelector {
                     AccessStrategy::DirectMemory
                 }
             }
-            
+
             AccessPattern::Clustered => {
                 if total_elements > 100 {
                     AccessStrategy::PrefetchOptimized
@@ -500,7 +521,7 @@ impl StrategySelector {
                     AccessStrategy::ParallelPointAccess
                 }
             }
-            
+
             AccessPattern::Random => {
                 if total_elements > 1000 {
                     AccessStrategy::Adaptive
@@ -508,7 +529,7 @@ impl StrategySelector {
                     AccessStrategy::ParallelPointAccess
                 }
             }
-            
+
             AccessPattern::Mixed => AccessStrategy::Adaptive,
         }
     }

@@ -1,23 +1,23 @@
 //! NumPack核心功能实现
-//! 
+//!
 //! 从lib.rs中提取的NumPack和ArrayMetadata结构体和实现
 
-use std::path::{Path, PathBuf};
+use half::f16;
+use memmap2::Mmap;
+use ndarray::ArrayD;
+use num_complex::{Complex32, Complex64};
+use numpy::{IntoPyArray, PyArrayDyn, PyArrayMethods};
+use pyo3::exceptions::PyKeyError;
+use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyList, PySlice, PyTuple};
+use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyTuple, PySlice};
-use pyo3::exceptions::PyKeyError;
-use numpy::{IntoPyArray, PyArrayDyn, PyArrayMethods};
-use ndarray::ArrayD;
-use memmap2::Mmap;
-use half::f16;
-use num_complex::{Complex32, Complex64};
 
-use crate::io::parallel_io::ParallelIO;
 use crate::core::metadata::DataType;
+use crate::io::parallel_io::ParallelIO;
 use crate::lazy_array::standard::LazyArray;
 
 lazy_static::lazy_static! {
@@ -64,13 +64,13 @@ impl NumPack {
     #[new]
     fn new(dirname: String) -> PyResult<Self> {
         let base_dir = Path::new(&dirname);
-        
+
         if !base_dir.exists() {
             std::fs::create_dir_all(&dirname)?;
-        } 
-        
+        }
+
         let io = ParallelIO::new(base_dir.to_path_buf())?;
-        
+
         Ok(Self {
             io,
             base_dir: base_dir.to_path_buf(),
@@ -99,9 +99,10 @@ impl NumPack {
             } else {
                 key.extract::<String>()?
             };
-            
+
             let dtype = get_array_dtype(&value)?;
-            let _shape: Vec<u64> = value.getattr("shape")?
+            let _shape: Vec<u64> = value
+                .getattr("shape")?
                 .extract::<Vec<usize>>()?
                 .into_iter()
                 .map(|x| x as u64)
@@ -231,31 +232,31 @@ impl NumPack {
     #[pyo3(signature = (array_name, lazy=None))]
     fn load(&self, py: Python, array_name: &str, lazy: Option<bool>) -> PyResult<PyObject> {
         let lazy = lazy.unwrap_or(false);
-        
+
         if !self.io.has_array(array_name) {
             return Err(PyErr::new::<PyKeyError, _>("Array not found"));
         }
-        
+
         if lazy {
             let meta = self.io.get_array_metadata(array_name)?;
             let data_path = self.base_dir.join(format!("data_{}.npkd", array_name));
-            
+
             // Windows平台文件存在性检查，防止路径被误解析为目录
             if !data_path.exists() {
                 return Err(PyErr::new::<pyo3::exceptions::PyFileNotFoundError, _>(
-                    format!("Data file not found: {}", data_path.display())
+                    format!("Data file not found: {}", data_path.display()),
                 ));
             }
-            
+
             // 确保路径是文件而不是目录
             if data_path.is_dir() {
                 return Err(PyErr::new::<pyo3::exceptions::PyIsADirectoryError, _>(
-                    format!("Expected file but found directory: {}", data_path.display())
+                    format!("Expected file but found directory: {}", data_path.display()),
                 ));
             }
-            
+
             let array_path = data_path.to_string_lossy().to_string();
-            
+
             let mut cache = MMAP_CACHE.lock().unwrap();
             let mmap = if let Some((cached_mmap, cached_time)) = cache.get(&array_path) {
                 if *cached_time == meta.last_modified as i64 {
@@ -266,10 +267,10 @@ impl NumPack {
             } else {
                 create_optimized_mmap(&data_path, meta.last_modified as i64, &mut cache)?
             };
-            
+
             let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
             let itemsize = meta.get_dtype().size_bytes() as usize;
-            
+
             let lazy_array = LazyArray::new(
                 mmap,
                 shape,
@@ -278,33 +279,33 @@ impl NumPack {
                 array_path,
                 meta.last_modified as i64,
             );
-            
+
             return Ok(Py::new(py, lazy_array)?.into());
         }
 
         let meta = self.io.get_array_metadata(array_name)?;
         let data_path = self.base_dir.join(format!("data_{}.npkd", array_name));
-        
+
         // Windows平台文件存在性检查，防止路径被误解析为目录
         if !data_path.exists() {
             return Err(PyErr::new::<pyo3::exceptions::PyFileNotFoundError, _>(
-                format!("Data file not found: {}", data_path.display())
+                format!("Data file not found: {}", data_path.display()),
             ));
         }
-        
+
         // 确保路径是文件而不是目录
         if data_path.is_dir() {
             return Err(PyErr::new::<pyo3::exceptions::PyIsADirectoryError, _>(
-                format!("Expected file but found directory: {}", data_path.display())
+                format!("Expected file but found directory: {}", data_path.display()),
             ));
         }
-        
+
         let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
-        
+
         // Use mmap to accelerate data loading
         let file = std::fs::File::open(&data_path)?;
         let mmap = unsafe { memmap2::MmapOptions::new().map(&file)? };
-        
+
         // Create array and copy data
         let array: PyObject = match meta.get_dtype() {
             DataType::Bool => {
@@ -324,21 +325,24 @@ impl NumPack {
             }
             DataType::Uint16 => {
                 let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const u16, mmap.len() / 2);
+                    let slice =
+                        std::slice::from_raw_parts(mmap.as_ptr() as *const u16, mmap.len() / 2);
                     ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
                 };
                 data.into_pyarray(py).into()
             }
             DataType::Uint32 => {
                 let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const u32, mmap.len() / 4);
+                    let slice =
+                        std::slice::from_raw_parts(mmap.as_ptr() as *const u32, mmap.len() / 4);
                     ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
                 };
                 data.into_pyarray(py).into()
             }
             DataType::Uint64 => {
                 let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const u64, mmap.len() / 8);
+                    let slice =
+                        std::slice::from_raw_parts(mmap.as_ptr() as *const u64, mmap.len() / 8);
                     ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
                 };
                 data.into_pyarray(py).into()
@@ -352,65 +356,77 @@ impl NumPack {
             }
             DataType::Int16 => {
                 let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const i16, mmap.len() / 2);
+                    let slice =
+                        std::slice::from_raw_parts(mmap.as_ptr() as *const i16, mmap.len() / 2);
                     ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
                 };
                 data.into_pyarray(py).into()
             }
             DataType::Int32 => {
                 let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const i32, mmap.len() / 4);
+                    let slice =
+                        std::slice::from_raw_parts(mmap.as_ptr() as *const i32, mmap.len() / 4);
                     ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
                 };
                 data.into_pyarray(py).into()
             }
             DataType::Int64 => {
                 let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const i64, mmap.len() / 8);
+                    let slice =
+                        std::slice::from_raw_parts(mmap.as_ptr() as *const i64, mmap.len() / 8);
                     ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
                 };
                 data.into_pyarray(py).into()
             }
             DataType::Float16 => {
                 let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const f16, mmap.len() / 2);
+                    let slice =
+                        std::slice::from_raw_parts(mmap.as_ptr() as *const f16, mmap.len() / 2);
                     ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
                 };
                 data.into_pyarray(py).into()
             }
             DataType::Float32 => {
                 let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const f32, mmap.len() / 4);
+                    let slice =
+                        std::slice::from_raw_parts(mmap.as_ptr() as *const f32, mmap.len() / 4);
                     ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
                 };
                 data.into_pyarray(py).into()
             }
             DataType::Float64 => {
                 let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const f64, mmap.len() / 8);
+                    let slice =
+                        std::slice::from_raw_parts(mmap.as_ptr() as *const f64, mmap.len() / 8);
                     ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
                 };
                 data.into_pyarray(py).into()
             }
             DataType::Complex64 => {
                 let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const Complex32, mmap.len() / 8);
+                    let slice = std::slice::from_raw_parts(
+                        mmap.as_ptr() as *const Complex32,
+                        mmap.len() / 8,
+                    );
                     ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
                 };
                 data.into_pyarray(py).into()
             }
             DataType::Complex128 => {
                 let data = unsafe {
-                    let slice = std::slice::from_raw_parts(mmap.as_ptr() as *const Complex64, mmap.len() / 16);
+                    let slice = std::slice::from_raw_parts(
+                        mmap.as_ptr() as *const Complex64,
+                        mmap.len() / 16,
+                    );
                     ArrayD::from_shape_vec(shape, slice.to_vec()).unwrap()
                 };
                 data.into_pyarray(py).into()
             }
         };
-        
+
         drop(mmap);
         drop(file);
-        
+
         Ok(array)
     }
 
@@ -420,13 +436,16 @@ impl NumPack {
             let shape_tuple = PyTuple::new(py, &shape)?;
             Ok(shape_tuple.unbind())
         } else {
-            Err(PyErr::new::<PyKeyError, _>(format!("Array {} not found", array_name)))
+            Err(PyErr::new::<PyKeyError, _>(format!(
+                "Array {} not found",
+                array_name
+            )))
         }
     }
 
     fn get_metadata(&self, py: Python) -> PyResult<PyObject> {
         let dict = PyDict::new(py);
-        
+
         let arrays = PyDict::new(py);
         for name in self.io.list_arrays() {
             if let Some(meta) = self.io.get_array_meta(&name) {
@@ -439,22 +458,25 @@ impl NumPack {
                 arrays.set_item(name, array_dict)?;
             }
         }
-        
+
         dict.set_item("arrays", arrays)?;
         dict.set_item("base_dir", self.base_dir.to_string_lossy().as_ref())?;
         dict.set_item("total_arrays", self.io.list_arrays().len())?;
-        
+
         Ok(dict.unbind().into())
     }
 
     #[pyo3(signature = (array_name, arrays))]
     fn append(&self, array_name: &str, arrays: &Bound<'_, PyDict>) -> PyResult<()> {
         if !self.io.has_array(array_name) {
-            return Err(PyErr::new::<PyKeyError, _>(format!("Array {} not found", array_name)));
+            return Err(PyErr::new::<PyKeyError, _>(format!(
+                "Array {} not found",
+                array_name
+            )));
         }
 
         let meta = self.io.get_array_metadata(array_name)?;
-        
+
         for (name, array) in arrays.iter() {
             let name = name.extract::<String>()?;
             if name != array_name {
@@ -463,12 +485,15 @@ impl NumPack {
 
             let dtype = get_array_dtype(&array)?;
             if dtype != meta.get_dtype() {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    format!("Array dtype mismatch: expected {:?}, got {:?}", meta.get_dtype(), dtype)
-                ));
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Array dtype mismatch: expected {:?}, got {:?}",
+                    meta.get_dtype(),
+                    dtype
+                )));
             }
 
-            let shape: Vec<u64> = array.getattr("shape")?
+            let shape: Vec<u64> = array
+                .getattr("shape")?
                 .extract::<Vec<usize>>()?
                 .into_iter()
                 .map(|x| x as u64)
@@ -476,14 +501,14 @@ impl NumPack {
 
             if shape.len() != meta.shape.len() {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "Array dimension mismatch"
+                    "Array dimension mismatch",
                 ));
             }
 
             for i in 1..shape.len() {
                 if shape[i] != meta.shape[i] {
                     return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        "Array shape mismatch (except first dimension)"
+                        "Array shape mismatch (except first dimension)",
                     ));
                 }
             }
@@ -576,7 +601,7 @@ impl NumPack {
                     let bytes = unsafe {
                         std::slice::from_raw_parts(
                             data.as_ptr() as *const u8,
-                            data.len() * std::mem::size_of::<Complex32>()
+                            data.len() * std::mem::size_of::<Complex32>(),
                         )
                     };
                     file.write_all(bytes)?;
@@ -588,7 +613,7 @@ impl NumPack {
                     let bytes = unsafe {
                         std::slice::from_raw_parts(
                             data.as_ptr() as *const u8,
-                            data.len() * std::mem::size_of::<Complex64>()
+                            data.len() * std::mem::size_of::<Complex64>(),
                         )
                     };
                     file.write_all(bytes)?;
@@ -598,71 +623,95 @@ impl NumPack {
             // Update metadata
             let mut new_meta = meta.clone();
             new_meta.shape[0] += shape[0] as u64;
-            new_meta.size_bytes = new_meta.total_elements() * new_meta.get_dtype().size_bytes() as u64;
+            new_meta.size_bytes =
+                new_meta.total_elements() * new_meta.get_dtype().size_bytes() as u64;
             new_meta.last_modified = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_micros() as u64;
             self.io.update_array_metadata(&name, new_meta)?;
         }
-        
+
         Ok(())
     }
 
     #[pyo3(signature = (array_names, indexes=None))]
-    fn getbatch(&self, py: Python, array_names: Vec<String>, indexes: Option<Vec<i64>>) -> PyResult<PyObject> {
+    fn getbatch(
+        &self,
+        py: Python,
+        array_names: Vec<String>,
+        indexes: Option<Vec<i64>>,
+    ) -> PyResult<PyObject> {
         let dict = PyDict::new(py);
-        
+
         for array_name in array_names {
             if !self.io.has_array(&array_name) {
-                return Err(PyErr::new::<PyKeyError, _>(format!("Array {} not found", array_name)));
+                return Err(PyErr::new::<PyKeyError, _>(format!(
+                    "Array {} not found",
+                    array_name
+                )));
             }
-            
+
             let result = if let Some(ref indices) = indexes {
                 let py_list = PyList::new(py, indices)?;
                 self.getitem(py, &array_name, py_list.as_any())?
             } else {
                 self.load(py, &array_name, Some(false))?
             };
-            
+
             dict.set_item(array_name, result)?;
         }
-        
+
         Ok(dict.unbind().into())
     }
 
-    fn getitem(&self, py: Python, array_name: &str, indices: &Bound<'_, PyAny>) -> PyResult<PyObject> {
-        let meta = self.io.get_array_meta(array_name)
-            .ok_or_else(|| PyErr::new::<PyKeyError, _>(format!("Array {} not found", array_name)))?;
-        
+    fn getitem(
+        &self,
+        py: Python,
+        array_name: &str,
+        indices: &Bound<'_, PyAny>,
+    ) -> PyResult<PyObject> {
+        let meta = self.io.get_array_meta(array_name).ok_or_else(|| {
+            PyErr::new::<PyKeyError, _>(format!("Array {} not found", array_name))
+        })?;
+
         // Get the indices of the rows to read
         let indices = if let Ok(slice) = indices.downcast::<PySlice>() {
-            let start = slice.getattr("start")?.extract::<Option<i64>>()?.unwrap_or(0);
-            let stop = slice.getattr("stop")?.extract::<Option<i64>>()?.unwrap_or(meta.shape[0] as i64);
-            let step = slice.getattr("step")?.extract::<Option<i64>>()?.unwrap_or(1);
-            
+            let start = slice
+                .getattr("start")?
+                .extract::<Option<i64>>()?
+                .unwrap_or(0);
+            let stop = slice
+                .getattr("stop")?
+                .extract::<Option<i64>>()?
+                .unwrap_or(meta.shape[0] as i64);
+            let step = slice
+                .getattr("step")?
+                .extract::<Option<i64>>()?
+                .unwrap_or(1);
+
             if step != 1 {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "Only step=1 is supported for slices"
+                    "Only step=1 is supported for slices",
                 ));
             }
-            
+
             (start..stop).collect::<Vec<i64>>()
         } else if let Ok(indices) = indices.extract::<Vec<i64>>() {
             indices
         } else {
             return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                "indices must be a list of integers or a slice"
+                "indices must be a list of integers or a slice",
             ));
         };
 
         // Read data
         let data = self.io.read_rows(array_name, &indices)?;
-        
+
         // Calculate the new shape
         let mut new_shape = meta.shape.iter().map(|&x| x as usize).collect::<Vec<_>>();
         new_shape[0] = indices.len();
-        
+
         // 🚀 优化策略：使用 zero-copy 转换，避免 to_vec() 的内存复制
         // 直接从 Vec<u8> 转换为目标类型的 Vec<T>
         let array: PyObject = match meta.get_dtype() {
@@ -676,9 +725,7 @@ impl NumPack {
             }
             DataType::Uint8 => {
                 // 🚀 优化：直接使用 data，无需 to_vec()
-                let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(new_shape, data)
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(new_shape, data) };
                 array.into_pyarray(py).into()
             }
             DataType::Uint16 => {
@@ -823,47 +870,18 @@ impl NumPack {
             Ok(ArrayMetadata {
                 shape: meta.shape.iter().map(|&x| x as i64).collect(),
                 dtype: format!("{:?}", meta.get_dtype()),
-                data_file: self.base_dir.join(&meta.data_file).to_string_lossy().to_string(),
+                data_file: self
+                    .base_dir
+                    .join(&meta.data_file)
+                    .to_string_lossy()
+                    .to_string(),
             })
         } else {
-            Err(PyErr::new::<PyKeyError, _>(format!("Array {} not found", array_name)))
+            Err(PyErr::new::<PyKeyError, _>(format!(
+                "Array {} not found",
+                array_name
+            )))
         }
-    }
-
-    // 创建高性能LazyArray
-    fn create_high_performance_lazy_array(&self, array_name: &str) -> PyResult<crate::lazy_array::HighPerformanceLazyArray> {
-        if !self.io.has_array(array_name) {
-            return Err(PyErr::new::<PyKeyError, _>("Array not found"));
-        }
-
-        let meta = self.io.get_array_metadata(array_name)?;
-        let data_path = self.base_dir.join(format!("data_{}.npkd", array_name));
-        let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
-        
-        let dtype_str = match meta.get_dtype() {
-            DataType::Bool => "bool",
-            DataType::Uint8 => "uint8",
-            DataType::Uint16 => "uint16",
-            DataType::Uint32 => "uint32",
-            DataType::Uint64 => "uint64",
-            DataType::Int8 => "int8",
-            DataType::Int16 => "int16",
-            DataType::Int32 => "int32",
-            DataType::Int64 => "int64",
-            DataType::Float16 => "float16",
-            DataType::Float32 => "float32",
-            DataType::Float64 => "float64",
-
-            DataType::Complex64 => "complex64",
-
-            DataType::Complex128 => "complex128",
-        };
-
-        crate::lazy_array::HighPerformanceLazyArray::new(
-            data_path.to_string_lossy().to_string(),
-            shape,
-            dtype_str.to_string()
-        )
     }
 }
 
@@ -881,7 +899,10 @@ impl NumPack {
 
 /// 获取数组的数据类型
 fn get_array_dtype(array: &Bound<'_, PyAny>) -> PyResult<DataType> {
-    let dtype_str = array.getattr("dtype")?.getattr("name")?.extract::<String>()?;
+    let dtype_str = array
+        .getattr("dtype")?
+        .getattr("name")?
+        .extract::<String>()?;
     match dtype_str.as_str() {
         "bool" => Ok(DataType::Bool),
         "uint8" => Ok(DataType::Uint8),
@@ -895,9 +916,10 @@ fn get_array_dtype(array: &Bound<'_, PyAny>) -> PyResult<DataType> {
         "float16" => Ok(DataType::Float16),
         "float32" => Ok(DataType::Float32),
         "float64" => Ok(DataType::Float64),
-        _ => Err(pyo3::exceptions::PyValueError::new_err(
-            format!("Unsupported dtype: {}", dtype_str)
-        )),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Unsupported dtype: {}",
+            dtype_str
+        ))),
     }
 }
 
@@ -910,15 +932,18 @@ fn create_optimized_mmap(
 ) -> Result<Arc<Mmap>, PyErr> {
     let file = std::fs::File::open(path)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
-    
-    let file_size = file.metadata()
+
+    let file_size = file
+        .metadata()
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?
         .len();
-    
+
     if file_size == 0 {
-        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>("Empty file"));
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "Empty file",
+        ));
     }
-    
+
     // 针对Unix系统的预读优化
     #[cfg(target_os = "macos")]
     unsafe {
@@ -930,7 +955,7 @@ fn create_optimized_mmap(
         libc::fcntl(file.as_raw_fd(), libc::F_RDADVISE, &radv);
         libc::fcntl(file.as_raw_fd(), libc::F_RDAHEAD, 1);
     }
-    
+
     // 针对Linux系统的预读优化
     #[cfg(target_os = "linux")]
     unsafe {
@@ -940,27 +965,30 @@ fn create_optimized_mmap(
             file.as_raw_fd(),
             0,
             file_size as i64,
-            libc::POSIX_FADV_WILLNEED
+            libc::POSIX_FADV_WILLNEED,
         );
         libc::posix_fadvise(
             file.as_raw_fd(),
             0,
             file_size as i64,
-            libc::POSIX_FADV_SEQUENTIAL
+            libc::POSIX_FADV_SEQUENTIAL,
         );
     }
-    
+
     // 创建标准映射
-    let mmap = unsafe { 
+    let mmap = unsafe {
         memmap2::MmapOptions::new()
             .populate()
             .map(&file)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?
     };
-    
+
     let mmap = Arc::new(mmap);
-    cache.insert(path.to_string_lossy().to_string(), (Arc::clone(&mmap), modify_time));
-    
+    cache.insert(
+        path.to_string_lossy().to_string(),
+        (Arc::clone(&mmap), modify_time),
+    );
+
     Ok(mmap)
 }
 
@@ -973,24 +1001,30 @@ fn create_optimized_mmap(
 ) -> Result<Arc<Mmap>, PyErr> {
     let file = std::fs::File::open(path)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
-    
-    let file_size = file.metadata()
+
+    let file_size = file
+        .metadata()
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?
         .len();
-    
+
     if file_size == 0 {
-        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>("Empty file"));
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "Empty file",
+        ));
     }
-    
+
     // Windows平台使用标准映射
-    let mmap = unsafe { 
+    let mmap = unsafe {
         memmap2::MmapOptions::new()
             .map(&file)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?
     };
-    
+
     let mmap = Arc::new(mmap);
-    cache.insert(path.to_string_lossy().to_string(), (Arc::clone(&mmap), modify_time));
-    
+    cache.insert(
+        path.to_string_lossy().to_string(),
+        (Arc::clone(&mmap), modify_time),
+    );
+
     Ok(mmap)
 }

@@ -1,22 +1,22 @@
 //! SIMD向量化优化
-//! 
+//!
 //! 提供4-8x数据拷贝速度提升和2-6x数据转换速度提升
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
 /// SIMD向量化数据拷贝
-/// 
+///
 /// 使用AVX2指令集实现高速数据拷贝，比标准copy快4-8倍
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn vectorized_copy(src: &[u8], dst: &mut [u8]) {
     if src.len() != dst.len() || src.len() == 0 {
         return;
     }
-    
+
     let len = src.len();
     let mut offset = 0;
-    
+
     // 检测AVX2支持
     #[cfg(target_feature = "avx2")]
     {
@@ -27,7 +27,7 @@ pub unsafe fn vectorized_copy(src: &[u8], dst: &mut [u8]) {
             offset += 32;
         }
     }
-    
+
     #[cfg(not(target_feature = "avx2"))]
     {
         // SSE2: 每次处理16字节
@@ -39,7 +39,7 @@ pub unsafe fn vectorized_copy(src: &[u8], dst: &mut [u8]) {
             }
         }
     }
-    
+
     // 处理剩余字节
     while offset < len {
         dst[offset] = src[offset];
@@ -53,10 +53,10 @@ pub unsafe fn vectorized_convert_f32_to_f64(src: &[f32], dst: &mut [f64]) {
     if src.len() != dst.len() || src.len() == 0 {
         return;
     }
-    
+
     let len = src.len();
     let mut offset = 0;
-    
+
     #[cfg(target_feature = "avx")]
     {
         // AVX: 每次处理4个f32转换为4个f64
@@ -67,7 +67,7 @@ pub unsafe fn vectorized_convert_f32_to_f64(src: &[f32], dst: &mut [f64]) {
             offset += 4;
         }
     }
-    
+
     // 处理剩余元素
     while offset < len {
         dst[offset] = src[offset] as f64;
@@ -81,34 +81,34 @@ pub unsafe fn vectorized_sum_f32(data: &[f32]) -> f32 {
     if data.is_empty() {
         return 0.0;
     }
-    
+
     let mut sum = 0.0f32;
     let len = data.len();
     let mut offset = 0;
-    
+
     #[cfg(target_feature = "avx")]
     {
         // AVX: 每次处理8个f32
         let mut sum_vec = _mm256_setzero_ps();
-        
+
         while offset + 8 <= len {
             let data_vec = _mm256_loadu_ps(data.as_ptr().add(offset));
             sum_vec = _mm256_add_ps(sum_vec, data_vec);
             offset += 8;
         }
-        
+
         // 水平求和
         let mut temp = [0.0f32; 8];
         _mm256_storeu_ps(temp.as_mut_ptr(), sum_vec);
         sum = temp.iter().sum();
     }
-    
+
     // 处理剩余元素
     while offset < len {
         sum += data[offset];
         offset += 1;
     }
-    
+
     sum
 }
 
@@ -118,20 +118,20 @@ pub unsafe fn vectorized_find_f32(data: &[f32], target: f32) -> Option<usize> {
     if data.is_empty() {
         return None;
     }
-    
+
     let len = data.len();
     let mut offset = 0;
-    
+
     #[cfg(target_feature = "avx")]
     {
         // AVX: 每次比较8个f32
         let target_vec = _mm256_set1_ps(target);
-        
+
         while offset + 8 <= len {
             let data_vec = _mm256_loadu_ps(data.as_ptr().add(offset));
             let cmp = _mm256_cmp_ps(data_vec, target_vec, _CMP_EQ_OQ);
             let mask = _mm256_movemask_ps(cmp);
-            
+
             if mask != 0 {
                 // 找到了，确定具体位置
                 for i in 0..8 {
@@ -140,11 +140,11 @@ pub unsafe fn vectorized_find_f32(data: &[f32], target: f32) -> Option<usize> {
                     }
                 }
             }
-            
+
             offset += 8;
         }
     }
-    
+
     // 处理剩余元素
     while offset < len {
         if data[offset] == target {
@@ -152,7 +152,7 @@ pub unsafe fn vectorized_find_f32(data: &[f32], target: f32) -> Option<usize> {
         }
         offset += 1;
     }
-    
+
     None
 }
 
@@ -161,14 +161,14 @@ pub unsafe fn vectorized_find_f32(data: &[f32], target: f32) -> Option<usize> {
 pub unsafe fn vectorized_copy_neon(src: &[u8], dst: &mut [u8]) {
     #[cfg(target_feature = "neon")]
     use std::arch::aarch64::*;
-    
+
     if src.len() != dst.len() || src.len() == 0 {
         return;
     }
-    
+
     let len = src.len();
     let mut offset = 0;
-    
+
     #[cfg(target_feature = "neon")]
     {
         // NEON: 每次处理16字节
@@ -178,7 +178,7 @@ pub unsafe fn vectorized_copy_neon(src: &[u8], dst: &mut [u8]) {
             offset += 16;
         }
     }
-    
+
     // 处理剩余字节
     while offset < len {
         dst[offset] = src[offset];
@@ -191,13 +191,13 @@ pub fn fast_copy(src: &[u8], dst: &mut [u8]) {
     if src.len() != dst.len() {
         return;
     }
-    
+
     // 对于大数据使用SIMD，小数据直接拷贝
     if src.len() < 64 {
         dst.copy_from_slice(src);
         return;
     }
-    
+
     #[cfg(target_arch = "x86_64")]
     {
         unsafe {
@@ -205,7 +205,7 @@ pub fn fast_copy(src: &[u8], dst: &mut [u8]) {
         }
         return;
     }
-    
+
     #[cfg(target_arch = "aarch64")]
     {
         #[cfg(target_feature = "neon")]
@@ -215,7 +215,7 @@ pub fn fast_copy(src: &[u8], dst: &mut [u8]) {
             }
             return;
         }
-        
+
         #[cfg(not(target_feature = "neon"))]
         {
             // ARM但没有NEON，使用优化的块拷贝
@@ -223,7 +223,7 @@ pub fn fast_copy(src: &[u8], dst: &mut [u8]) {
             return;
         }
     }
-    
+
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
         dst.copy_from_slice(src);
@@ -236,7 +236,7 @@ fn fast_copy_generic(src: &[u8], dst: &mut [u8]) {
     // 使用64字节块拷贝，对齐缓存行
     let len = src.len();
     let mut offset = 0;
-    
+
     // 每次拷贝64字节（一个缓存行）
     while offset + 64 <= len {
         let src_block = &src[offset..offset + 64];
@@ -244,7 +244,7 @@ fn fast_copy_generic(src: &[u8], dst: &mut [u8]) {
         dst_block.copy_from_slice(src_block);
         offset += 64;
     }
-    
+
     // 处理剩余字节
     if offset < len {
         dst[offset..].copy_from_slice(&src[offset..]);
@@ -256,7 +256,7 @@ fn fast_copy_generic(src: &[u8], dst: &mut [u8]) {
 pub unsafe fn fast_zero(dst: &mut [u8]) {
     let len = dst.len();
     let mut offset = 0;
-    
+
     #[cfg(target_feature = "avx2")]
     {
         let zero = _mm256_setzero_si256();
@@ -265,7 +265,7 @@ pub unsafe fn fast_zero(dst: &mut [u8]) {
             offset += 32;
         }
     }
-    
+
     // 处理剩余字节
     while offset < len {
         dst[offset] = 0;
@@ -278,7 +278,7 @@ pub unsafe fn fast_zero(dst: &mut [u8]) {
 pub unsafe fn fast_fill(dst: &mut [u8], value: u8) {
     let len = dst.len();
     let mut offset = 0;
-    
+
     #[cfg(target_feature = "avx2")]
     {
         let fill_value = _mm256_set1_epi8(value as i8);
@@ -287,7 +287,7 @@ pub unsafe fn fast_fill(dst: &mut [u8], value: u8) {
             offset += 32;
         }
     }
-    
+
     // 处理剩余字节
     while offset < len {
         dst[offset] = value;
@@ -298,37 +298,38 @@ pub unsafe fn fast_fill(dst: &mut [u8], value: u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_vectorized_copy() {
-        let src = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+        let src = vec![
+            1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+        ];
         let mut dst = vec![0u8; src.len()];
-        
+
         fast_copy(&src, &mut dst);
-        
+
         assert_eq!(src, dst);
     }
-    
+
     #[test]
     fn test_vectorized_sum() {
         #[cfg(target_arch = "x86_64")]
         {
             let data = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
             let sum = unsafe { vectorized_sum_f32(&data) };
-            
+
             assert!((sum - 55.0).abs() < 0.001);
         }
     }
-    
+
     #[test]
     fn test_vectorized_find() {
         #[cfg(target_arch = "x86_64")]
         {
             let data = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
             let result = unsafe { vectorized_find_f32(&data, 5.0) };
-            
+
             assert_eq!(result, Some(4));
         }
     }
 }
-

@@ -1,13 +1,13 @@
 //! Handle Manager - 统一资源生命周期管理
-//! 
+//!
 //! 提供集中式的文件句柄和内存映射追踪与清理，
 //! 针对Windows平台进行特殊优化。
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
-use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 use memmap2::Mmap;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
 lazy_static::lazy_static! {
     /// 全局句柄管理器实例
@@ -53,7 +53,7 @@ impl Default for CleanupConfig {
         let is_test = std::env::var("PYTEST_CURRENT_TEST").is_ok()
             || std::env::var("CARGO_TEST").is_ok()
             || std::env::var("RUST_TEST_THREADS").is_ok();
-        
+
         if is_test {
             // 测试环境：更快的清理
             Self {
@@ -96,7 +96,7 @@ impl HandleManager {
             config: RwLock::new(CleanupConfig::default()),
         }
     }
-    
+
     /// 注册一个内存映射文件
     pub fn register_memmap(
         &self,
@@ -112,43 +112,54 @@ impl HandleManager {
             last_accessed: Instant::now(),
             owner_name,
         };
-        
+
         // 在handles映射中注册
         {
-            let mut handles = self.handles.write()
+            let mut handles = self
+                .handles
+                .write()
                 .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
             handles.insert(handle_id.clone(), info);
         }
-        
+
         // 如果提供了路径，在path-to-handles映射中注册
         if let Some(ref path) = path {
-            let mut path_map = self.path_to_handles.write()
+            let mut path_map = self
+                .path_to_handles
+                .write()
                 .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
-            path_map.entry(path.clone())
+            path_map
+                .entry(path.clone())
                 .or_insert_with(Vec::new)
                 .push(handle_id);
         }
-        
+
         Ok(())
     }
-    
+
     /// 通过ID清理特定句柄
     pub fn cleanup_handle(&self, handle_id: &str) -> Result<bool, String> {
-        let config = self.config.read()
+        let config = self
+            .config
+            .read()
             .map_err(|e| format!("Failed to read config: {}", e))?
             .clone();
-        
+
         // 从handles映射中移除
         let handle_info = {
-            let mut handles = self.handles.write()
+            let mut handles = self
+                .handles
+                .write()
                 .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
             handles.remove(handle_id)
         };
-        
+
         if let Some(info) = handle_info {
             // 从path-to-handles映射中移除
             if let Some(ref path) = info.path {
-                let mut path_map = self.path_to_handles.write()
+                let mut path_map = self
+                    .path_to_handles
+                    .write()
                     .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
                 if let Some(handles) = path_map.get_mut(path) {
                     handles.retain(|id| id != handle_id);
@@ -157,7 +168,7 @@ impl HandleManager {
                     }
                 }
             }
-            
+
             // 根据句柄类型执行清理
             match info.handle {
                 ManagedHandle::Memmap(mmap) => {
@@ -167,13 +178,13 @@ impl HandleManager {
                     drop(file);
                 }
             }
-            
+
             Ok(true)
         } else {
             Ok(false) // 句柄未找到
         }
     }
-    
+
     /// 使用重试逻辑清理内存映射
     fn cleanup_memmap(&self, mmap: Arc<Mmap>, config: &CleanupConfig) -> Result<(), String> {
         // 尝试获取独占所有权
@@ -181,13 +192,13 @@ impl HandleManager {
             Ok(mmap) => {
                 // 成功获取独占所有权，释放它
                 drop(mmap);
-                
+
                 // Windows特定：等待操作系统释放句柄
                 #[cfg(target_family = "windows")]
                 {
                     std::thread::sleep(Duration::from_millis(config.cleanup_delay_ms));
                 }
-                
+
                 Ok(())
             }
             Err(mmap) => {
@@ -198,105 +209,124 @@ impl HandleManager {
                     std::thread::sleep(Duration::from_millis(config.cleanup_delay_ms));
                     Ok(())
                 } else {
-                    Err(format!("Cannot cleanup: mmap still has {} references", 
-                        Arc::strong_count(&mmap)))
+                    Err(format!(
+                        "Cannot cleanup: mmap still has {} references",
+                        Arc::strong_count(&mmap)
+                    ))
                 }
             }
         }
     }
-    
+
     /// 清理与特定路径关联的所有句柄
     pub fn cleanup_by_path(&self, path: &Path) -> Result<usize, String> {
         let handle_ids: Vec<String> = {
-            let path_map = self.path_to_handles.read()
+            let path_map = self
+                .path_to_handles
+                .read()
                 .map_err(|e| format!("Failed to read path mapping: {}", e))?;
-            path_map.get(path)
+            path_map
+                .get(path)
                 .map(|handles| handles.clone())
                 .unwrap_or_default()
         };
-        
+
         let mut cleaned = 0;
         for handle_id in handle_ids {
             if self.cleanup_handle(&handle_id).unwrap_or(false) {
                 cleaned += 1;
             }
         }
-        
+
         Ok(cleaned)
     }
-    
+
     /// 清理所有句柄
     pub fn cleanup_all(&self) -> Result<usize, String> {
         let handle_ids: Vec<String> = {
-            let handles = self.handles.read()
+            let handles = self
+                .handles
+                .read()
                 .map_err(|e| format!("Failed to read handles: {}", e))?;
             handles.keys().cloned().collect()
         };
-        
+
         let mut cleaned = 0;
         for handle_id in handle_ids {
             if self.cleanup_handle(&handle_id).unwrap_or(false) {
                 cleaned += 1;
             }
         }
-        
+
         Ok(cleaned)
     }
-    
+
     /// 强制清理并等待（Windows特定辅助函数）
     pub fn force_cleanup_and_wait(&self, wait_ms: Option<u64>) -> Result<usize, String> {
         let cleaned = self.cleanup_all()?;
-        
-        let config = self.config.read()
+
+        let config = self
+            .config
+            .read()
             .map_err(|e| format!("Failed to read config: {}", e))?;
-        
+
         #[cfg(target_family = "windows")]
         {
             let wait_time = wait_ms.unwrap_or(config.cleanup_delay_ms);
             std::thread::sleep(Duration::from_millis(wait_time));
-            
+
             // 强制垃圾回收提示
             // 注意：Rust没有GC，但这有助于Arc清理
             for _ in 0..3 {
                 std::thread::sleep(Duration::from_millis(10));
             }
         }
-        
+
         #[cfg(not(target_family = "windows"))]
         {
             // 在非Windows平台上，简短等待即可
             let _ = wait_ms; // 避免未使用警告
             std::thread::sleep(Duration::from_millis(10));
         }
-        
+
         Ok(cleaned)
     }
-    
+
     /// 获取当前管理句柄的统计信息
     pub fn get_stats(&self) -> Result<HandleStats, String> {
-        let handles = self.handles.read()
+        let handles = self
+            .handles
+            .read()
             .map_err(|e| format!("Failed to read handles: {}", e))?;
-        let path_map = self.path_to_handles.read()
+        let path_map = self
+            .path_to_handles
+            .read()
             .map_err(|e| format!("Failed to read path mapping: {}", e))?;
-        let cleanup_queue = self.cleanup_queue.lock()
+        let cleanup_queue = self
+            .cleanup_queue
+            .lock()
             .map_err(|e| format!("Failed to lock cleanup queue: {}", e))?;
-        
+
         Ok(HandleStats {
             total_handles: handles.len(),
-            memmap_count: handles.values()
+            memmap_count: handles
+                .values()
                 .filter(|h| matches!(h.handle, ManagedHandle::Memmap(_)))
                 .count(),
-            file_handle_count: handles.values()
+            file_handle_count: handles
+                .values()
                 .filter(|h| matches!(h.handle, ManagedHandle::FileHandle(_)))
                 .count(),
             paths_tracked: path_map.len(),
             cleanup_queue_size: cleanup_queue.len(),
         })
     }
-    
+
     /// 更新清理配置
     pub fn update_config(&self, config: CleanupConfig) -> Result<(), String> {
-        let mut current_config = self.config.write()
+        let mut current_config = self
+            .config
+            .write()
             .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
         *current_config = config;
         Ok(())
@@ -318,21 +348,21 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
-    
+
     #[test]
     fn test_handle_registration() {
         let manager = HandleManager::new();
-        
+
         // 创建临时文件
         let mut temp_file = NamedTempFile::new().unwrap();
         temp_file.write_all(b"test data").unwrap();
         let path = temp_file.path().to_path_buf();
-        
+
         // 创建内存映射
         let file = std::fs::File::open(&path).unwrap();
         let mmap = unsafe { Mmap::map(&file).unwrap() };
         let mmap = Arc::new(mmap);
-        
+
         // 注册内存映射
         let result = manager.register_memmap(
             "test_handle_1".to_string(),
@@ -340,78 +370,81 @@ mod tests {
             Some(path.clone()),
             "test".to_string(),
         );
-        
+
         assert!(result.is_ok());
-        
+
         // 检查统计信息
         let stats = manager.get_stats().unwrap();
         assert_eq!(stats.total_handles, 1);
         assert_eq!(stats.memmap_count, 1);
         assert_eq!(stats.paths_tracked, 1);
     }
-    
+
     #[test]
     fn test_handle_cleanup() {
         let manager = HandleManager::new();
-        
+
         let mut temp_file = NamedTempFile::new().unwrap();
         temp_file.write_all(b"test data").unwrap();
         let path = temp_file.path().to_path_buf();
-        
+
         let file = std::fs::File::open(&path).unwrap();
         let mmap = unsafe { Mmap::map(&file).unwrap() };
         let mmap = Arc::new(mmap);
-        
-        manager.register_memmap(
-            "test_handle_2".to_string(),
-            mmap.clone(),
-            Some(path.clone()),
-            "test".to_string(),
-        ).unwrap();
-        
+
+        manager
+            .register_memmap(
+                "test_handle_2".to_string(),
+                mmap.clone(),
+                Some(path.clone()),
+                "test".to_string(),
+            )
+            .unwrap();
+
         // 释放我们的引用
         drop(mmap);
-        
+
         // 清理应该成功
         let result = manager.cleanup_handle("test_handle_2");
         assert!(result.is_ok());
-        
+
         // 检查统计信息 - 现在应该为空
         let stats = manager.get_stats().unwrap();
         assert_eq!(stats.total_handles, 0);
     }
-    
+
     #[test]
     fn test_cleanup_by_path() {
         let manager = HandleManager::new();
-        
+
         let mut temp_file = NamedTempFile::new().unwrap();
         temp_file.write_all(b"test data").unwrap();
         let path = temp_file.path().to_path_buf();
-        
+
         // 为同一路径注册多个句柄
         for i in 0..3 {
             let file = std::fs::File::open(&path).unwrap();
             let mmap = unsafe { Mmap::map(&file).unwrap() };
             let mmap = Arc::new(mmap);
-            
-            manager.register_memmap(
-                format!("test_handle_{}", i),
-                mmap,
-                Some(path.clone()),
-                "test".to_string(),
-            ).unwrap();
+
+            manager
+                .register_memmap(
+                    format!("test_handle_{}", i),
+                    mmap,
+                    Some(path.clone()),
+                    "test".to_string(),
+                )
+                .unwrap();
         }
-        
+
         let stats = manager.get_stats().unwrap();
         assert_eq!(stats.total_handles, 3);
-        
+
         // 清理此路径的所有句柄
         let cleaned = manager.cleanup_by_path(&path).unwrap();
         assert_eq!(cleaned, 3);
-        
+
         let stats = manager.get_stats().unwrap();
         assert_eq!(stats.total_handles, 0);
     }
 }
-

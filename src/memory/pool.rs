@@ -1,14 +1,14 @@
 //! 内存池管理
-//! 
+//!
 //! 从lazy_array_original.rs中提取的内存池实现
 
 use std::sync::Mutex;
 
 /// 分级内存池，减少内存分配/释放的开销
 pub struct MemoryPool {
-    small_blocks: Mutex<Vec<Vec<u8>>>,    // <1KB
-    medium_blocks: Mutex<Vec<Vec<u8>>>,   // 1KB-1MB
-    large_blocks: Mutex<Vec<Vec<u8>>>,    // >1MB
+    small_blocks: Mutex<Vec<Vec<u8>>>,  // <1KB
+    medium_blocks: Mutex<Vec<Vec<u8>>>, // 1KB-1MB
+    large_blocks: Mutex<Vec<Vec<u8>>>,  // >1MB
 }
 
 impl MemoryPool {
@@ -19,7 +19,7 @@ impl MemoryPool {
             large_blocks: Mutex::new(Vec::new()),
         }
     }
-    
+
     pub fn get_block(&self, size: usize) -> Vec<u8> {
         if size < 1024 {
             let mut blocks = self.small_blocks.lock().unwrap();
@@ -32,14 +32,15 @@ impl MemoryPool {
             blocks.pop().unwrap_or_else(|| vec![0u8; size])
         }
     }
-    
+
     pub fn return_block(&self, mut block: Vec<u8>) {
         let size = block.len();
         block.clear();
-        
+
         if size < 1024 {
             let mut blocks = self.small_blocks.lock().unwrap();
-            if blocks.len() < 100 { // 限制缓存大小
+            if blocks.len() < 100 {
+                // 限制缓存大小
                 blocks.push(block);
             }
         } else if size < 1024 * 1024 {

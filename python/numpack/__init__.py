@@ -775,22 +775,54 @@ class BatchModeContext:
         
         # 🚀 优化：只刷新修改过的数组，并强制同步元数据
         if dirty_arrays:
-            self.npk._npk.save(dirty_arrays, None)
-            # 🚀 批量操作结束，强制同步元数据
-            if hasattr(self.npk._npk, 'sync_metadata'):
+            # 过滤掉无效的数组对象
+            valid_arrays = {}
+            for name, arr in dirty_arrays.items():
+                if hasattr(arr, 'shape') and hasattr(arr, 'dtype'):
+                    valid_arrays[name] = arr
+                else:
+                    # 调试：记录无效对象
+                    print(f"Warning: Skipping invalid array {name}: {type(arr)} - {arr}")
+
+            if valid_arrays:
                 try:
-                    self.npk._npk.sync_metadata()
-                except:
-                    pass  # 兼容性
+                    self.npk._npk.save(valid_arrays, None)
+                except Exception as e:
+                    print(f"Error saving valid_arrays: {e}")
+                    print(f"valid_arrays keys: {list(valid_arrays.keys())}")
+                    print(f"valid_arrays types: {[(k, type(v)) for k, v in valid_arrays.items()]}")
+                    # 如果保存失败，尝试逐个保存
+                    for name, arr in valid_arrays.items():
+                        try:
+                            self.npk._npk.save({name: arr}, None)
+                            print(f"Successfully saved {name}")
+                        except Exception as e2:
+                            print(f"Failed to save {name}: {e2}")
+                    # 无论如何都要清理缓存
+                    self.npk._memory_cache.clear()
+                    return
+                # 🚀 批量操作结束，强制同步元数据
+                if hasattr(self.npk._npk, 'sync_metadata'):
+                    try:
+                        self.npk._npk.sync_metadata()
+                    except:
+                        pass  # 兼容性
             self.npk._memory_cache.clear()
         elif self.npk._memory_cache:
             # 保守策略：如果无法确定，刷新所有
-            self.npk._npk.save(self.npk._memory_cache, None)
-            if hasattr(self.npk._npk, 'sync_metadata'):
-                try:
-                    self.npk._npk.sync_metadata()
-                except:
-                    pass
+            # 过滤掉无效的数组对象
+            valid_cache = {}
+            for name, arr in self.npk._memory_cache.items():
+                if hasattr(arr, 'shape') and hasattr(arr, 'dtype'):
+                    valid_cache[name] = arr
+
+            if valid_cache:
+                self.npk._npk.save(valid_cache, None)
+                if hasattr(self.npk._npk, 'sync_metadata'):
+                    try:
+                        self.npk._npk.sync_metadata()
+                    except:
+                        pass
             self.npk._memory_cache.clear()
 
 

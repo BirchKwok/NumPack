@@ -1,5 +1,5 @@
 //! 零拷贝内存管理
-//! 
+//!
 //! 从lazy_array_original.rs中提取的零拷贝处理器实现
 
 use std::sync::{Arc, Mutex};
@@ -38,59 +38,59 @@ impl ZeroCopyAnalyzer {
             last_optimization_check: Instant::now(),
         }
     }
-    
+
     pub fn record_access(&mut self, offset: usize, size: usize) {
         let now = Instant::now();
         self.recent_accesses.push((offset, size, now));
-        
+
         // 保持历史记录在合理范围内
         if self.recent_accesses.len() > 1000 {
             self.recent_accesses.drain(0..500);
         }
-        
+
         // 更新统计信息
         self.update_statistics();
     }
-    
+
     fn update_statistics(&mut self) {
         if self.recent_accesses.len() < 2 {
             return;
         }
-        
+
         let mut continuous_count = 0;
         let mut fragmented_count = 0;
         let total_size: usize = self.recent_accesses.iter().map(|(_, size, _)| *size).sum();
-        
+
         // 分析连续性
         for window in self.recent_accesses.windows(2) {
             let (offset1, size1, _) = window[0];
             let (offset2, _, _) = window[1];
-            
+
             if offset2 == offset1 + size1 {
                 continuous_count += 1;
             } else {
                 fragmented_count += 1;
             }
         }
-        
+
         self.continuous_access_count = continuous_count;
         self.fragmented_access_count = fragmented_count;
         self.average_access_size = total_size as f64 / self.recent_accesses.len() as f64;
     }
-    
+
     pub fn should_prefer_zero_copy(&self) -> bool {
         // 基于访问模式判断是否应优先使用零拷贝
         let continuity_ratio = if self.continuous_access_count + self.fragmented_access_count > 0 {
-            self.continuous_access_count as f64 / 
-            (self.continuous_access_count + self.fragmented_access_count) as f64
+            self.continuous_access_count as f64
+                / (self.continuous_access_count + self.fragmented_access_count) as f64
         } else {
             0.0
         };
-        
+
         // 连续访问比例高且平均访问大小大于阈值
         continuity_ratio > 0.7 && self.average_access_size > 2048.0
     }
-    
+
     pub fn get_optimal_chunk_size(&self) -> usize {
         // 基于历史访问模式推荐最优分块大小
         if self.average_access_size > (64 * 1024) as f64 {
@@ -98,9 +98,9 @@ impl ZeroCopyAnalyzer {
         } else if self.average_access_size > (16 * 1024) as f64 {
             16 * 1024 // 16KB
         } else if self.average_access_size > (4 * 1024) as f64 {
-            4 * 1024  // 4KB
+            4 * 1024 // 4KB
         } else {
-            1024      // 1KB
+            1024 // 1KB
         }
     }
 }
@@ -135,7 +135,7 @@ impl<'a> ZeroCopyView<'a> {
             },
         }
     }
-    
+
     pub fn data(&self) -> &[u8] {
         // 增加访问计数
         if let Ok(mut count) = self.metadata.access_count.lock() {
@@ -143,19 +143,19 @@ impl<'a> ZeroCopyView<'a> {
         }
         self.data
     }
-    
+
     pub fn len(&self) -> usize {
         self.data.len()
     }
-    
+
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
-    
+
     pub fn metadata(&self) -> &ZeroCopyMetadata {
         &self.metadata
     }
-    
+
     // 分割视图 - 创建子视图
     pub fn slice(&self, start: usize, end: usize) -> Option<ZeroCopyView<'a>> {
         if start < end && end <= self.data.len() {
@@ -174,7 +174,7 @@ impl<'a> ZeroCopyView<'a> {
             None
         }
     }
-    
+
     // 安全转换为 Vec<u8>（如果需要拥有所有权）
     pub fn to_owned(&self) -> Vec<u8> {
         self.data.to_vec()
@@ -184,7 +184,7 @@ impl<'a> ZeroCopyView<'a> {
 impl ZeroCopyHandler {
     pub fn new() -> Self {
         Self {
-            min_size_threshold: 4096, // 4KB最小阈值
+            min_size_threshold: 4096,  // 4KB最小阈值
             alignment_requirement: 64, // 64字节对齐
             zero_copy_hits: Arc::new(Mutex::new(0)),
             fallback_to_copy: Arc::new(Mutex::new(0)),
@@ -192,7 +192,7 @@ impl ZeroCopyHandler {
             access_analyzer: Arc::new(Mutex::new(ZeroCopyAnalyzer::new())),
         }
     }
-    
+
     /// 判断是否可以使用零拷贝
     pub fn can_zero_copy(&self, indices: &[usize], item_size: usize) -> bool {
         // 检查数据大小是否达到阈值
@@ -200,16 +200,16 @@ impl ZeroCopyHandler {
         if total_size < self.min_size_threshold {
             return false;
         }
-        
+
         // 检查访问是否连续
         self.is_continuous_access(indices)
     }
-    
+
     fn is_continuous_access(&self, indices: &[usize]) -> bool {
         if indices.len() < 2 {
             return true;
         }
-        
+
         for window in indices.windows(2) {
             if window[1] != window[0] + 1 {
                 return false;
@@ -217,7 +217,6 @@ impl ZeroCopyHandler {
         }
         true
     }
-    
 }
 
 /// 零拷贝性能统计

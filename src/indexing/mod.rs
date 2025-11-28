@@ -1,34 +1,30 @@
 //! 索引系统模块
-//! 
+//!
 //! 提供高性能的数组索引操作，包括多种索引算法、访问策略选择和优化技术
 
-pub mod types;
 pub mod algorithms;
-pub mod strategy_selector;
-pub mod optimizations;
-pub mod fancy_index;
 pub mod boolean_index;
+pub mod fancy_index;
+pub mod optimizations;
 pub mod smart_router;
+pub mod strategy_selector;
+pub mod types;
 
 // 重新导出核心类型
 pub use types::{
-    IndexType, SliceInfo, IndexResult, AccessPattern, AccessStrategy,
-    AccessPatternAnalyzer, AccessInfo, AccessStatistics,
-    IndexOptimizationConfig, IndexPerformanceMonitor, IndexPerformanceReport,
+    AccessInfo, AccessPattern, AccessPatternAnalyzer, AccessStatistics, AccessStrategy,
+    IndexOptimizationConfig, IndexPerformanceMonitor, IndexPerformanceReport, IndexResult,
+    IndexType, SliceInfo,
 };
 
-pub use algorithms::{
-    IndexAlgorithmExecutor, IndexError,
-};
+pub use algorithms::{IndexAlgorithmExecutor, IndexError};
 
 pub use strategy_selector::{
-    AccessStrategySelector, StrategySelection, EstimatedPerformance,
-    StrategySelectionReport, AdaptationStats,
+    AccessStrategySelector, AdaptationStats, EstimatedPerformance, StrategySelection,
+    StrategySelectionReport,
 };
 
-pub use optimizations::{
-    IndexOptimizationManager, OptimizationReport,
-};
+pub use optimizations::{IndexOptimizationManager, OptimizationReport};
 
 /// 索引系统主控制器
 pub struct IndexingSystem {
@@ -66,7 +62,8 @@ impl IndexingSystem {
         memory_pressure: f64,
     ) -> Result<(Vec<Vec<u8>>, IndexingPerformanceReport), IndexError> {
         // 1. 构建索引向量
-        let indices = vec![mask.iter()
+        let indices = vec![mask
+            .iter()
             .enumerate()
             .filter_map(|(i, &b)| if b { Some(i) } else { None })
             .collect()];
@@ -80,7 +77,9 @@ impl IndexingSystem {
         );
 
         // 3. 执行索引操作
-        let result = if self.config.enable_parallel || selection.strategy == AccessStrategy::ParallelPointAccess {
+        let result = if self.config.enable_parallel
+            || selection.strategy == AccessStrategy::ParallelPointAccess
+        {
             // 使用优化管理器执行
             self.optimization_manager.execute_optimized_index(
                 selection.strategy,
@@ -129,14 +128,11 @@ impl IndexingSystem {
         memory_pressure: f64,
     ) -> Result<(Vec<Vec<u8>>, IndexingPerformanceReport), IndexError> {
         // 标准化索引
-        let normalized_indices: Result<Vec<_>, _> = indices.iter()
+        let normalized_indices: Result<Vec<_>, _> = indices
+            .iter()
             .map(|&idx| {
-                let normalized = if idx < 0 {
-                    shape[0] as i64 + idx
-                } else {
-                    idx
-                };
-                
+                let normalized = if idx < 0 { shape[0] as i64 + idx } else { idx };
+
                 if normalized >= 0 && (normalized as usize) < shape[0] {
                     Ok(normalized as usize)
                 } else {
@@ -157,7 +153,9 @@ impl IndexingSystem {
         );
 
         // 执行索引操作
-        let result = if self.config.enable_parallel || selection.strategy == AccessStrategy::ParallelPointAccess {
+        let result = if self.config.enable_parallel
+            || selection.strategy == AccessStrategy::ParallelPointAccess
+        {
             self.optimization_manager.execute_optimized_index(
                 selection.strategy,
                 &index_vectors,
@@ -166,12 +164,8 @@ impl IndexingSystem {
                 itemsize,
             )
         } else {
-            self.algorithm_executor.execute_fancy_index(
-                indices,
-                data,
-                shape,
-                itemsize,
-            )
+            self.algorithm_executor
+                .execute_fancy_index(indices, data, shape, itemsize)
         };
 
         match result {
@@ -320,4 +314,4 @@ pub struct ComprehensivePerformanceReport {
     pub strategy_selection: StrategySelectionReport,
     pub optimization_report: OptimizationReport,
     pub system_config: IndexOptimizationConfig,
-} 
+}

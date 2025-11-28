@@ -1,9 +1,9 @@
 //! 访问模式感知的SIMD调度器
-//! 
+//!
 //! 本模块根据NumPack的实际访问模式智能选择最优的SIMD策略
 //! 包括随机访问、批量访问、流式访问等不同场景的专门优化
 
-use super::{NumPackSIMD, SIMDStrategy, SIMDError, DataType};
+use super::{DataType, NumPackSIMD, SIMDError, SIMDStrategy};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -69,13 +69,14 @@ impl AccessPatternSIMD {
     }
 
     /// 智能选择SIMD策略 - 基于访问模式和历史性能
-    pub fn select_optimal_strategy(&mut self, 
-        pattern: AccessPattern, 
-        dtype: DataType, 
-        data_size: usize
+    pub fn select_optimal_strategy(
+        &mut self,
+        pattern: AccessPattern,
+        dtype: DataType,
+        data_size: usize,
     ) -> SIMDStrategy {
         let key = (pattern, dtype, Self::size_bucket(data_size));
-        
+
         // 检查历史性能记录
         if let Some(records) = self.performance_history.get(&key) {
             if !records.is_empty() {
@@ -83,30 +84,31 @@ impl AccessPatternSIMD {
                 return self.select_from_history(records, pattern, dtype, data_size);
             }
         }
-        
+
         // 没有历史记录时，使用启发式规则
         self.heuristic_strategy_selection(pattern, dtype, data_size)
     }
 
     /// 基于历史性能选择策略
-    fn select_from_history(&self, 
-        records: &[PerformanceRecord], 
-        _pattern: AccessPattern, 
-        dtype: DataType, 
-        data_size: usize
+    fn select_from_history(
+        &self,
+        records: &[PerformanceRecord],
+        _pattern: AccessPattern,
+        dtype: DataType,
+        data_size: usize,
     ) -> SIMDStrategy {
         // 计算每种策略的加权效率分数
         let mut strategy_scores: HashMap<SIMDStrategy, f64> = HashMap::new();
-        
+
         for record in records.iter().rev().take(self.history_window) {
             let age_weight = self.calculate_age_weight(record.timestamp);
             let size_weight = self.calculate_size_weight(data_size, record);
             let total_weight = age_weight * size_weight;
-            
-            *strategy_scores.entry(record.strategy).or_insert(0.0) += 
+
+            *strategy_scores.entry(record.strategy).or_insert(0.0) +=
                 record.efficiency_score * total_weight;
         }
-        
+
         // 选择得分最高的策略
         strategy_scores
             .into_iter()
@@ -116,10 +118,11 @@ impl AccessPatternSIMD {
     }
 
     /// 启发式策略选择 - 基于访问模式特征
-    fn heuristic_strategy_selection(&self, 
-        pattern: AccessPattern, 
-        dtype: DataType, 
-        data_size: usize
+    fn heuristic_strategy_selection(
+        &self,
+        pattern: AccessPattern,
+        dtype: DataType,
+        data_size: usize,
     ) -> SIMDStrategy {
         match pattern {
             AccessPattern::SingleRandom => {
@@ -129,8 +132,8 @@ impl AccessPatternSIMD {
                 } else {
                     self.simd.get_optimal_strategy(dtype, data_size)
                 }
-            },
-            
+            }
+
             AccessPattern::BatchRandom => {
                 // 批量随机访问：中等SIMD优化
                 if data_size >= 256 {
@@ -138,34 +141,34 @@ impl AccessPatternSIMD {
                 } else {
                     SIMDStrategy::Scalar
                 }
-            },
-            
+            }
+
             AccessPattern::Sequential => {
                 // 顺序访问：最积极的SIMD优化
                 self.select_aggressive_simd_strategy(dtype, data_size)
-            },
-            
+            }
+
             AccessPattern::Strided => {
                 // 步长访问：需要特殊优化
                 self.select_strided_strategy(dtype, data_size)
-            },
-            
+            }
+
             AccessPattern::Clustered => {
                 // 聚集访问：平衡的SIMD策略
                 self.select_clustered_strategy(dtype, data_size)
-            },
-            
+            }
+
             AccessPattern::Streaming => {
                 // 流式访问：最高性能SIMD策略
                 self.select_streaming_strategy(dtype, data_size)
-            },
+            }
         }
     }
 
     /// 选择批量访问策略
     fn select_batch_strategy(&self, dtype: DataType, data_size: usize) -> SIMDStrategy {
         let base_strategy = self.simd.get_optimal_strategy(dtype, data_size);
-        
+
         // 根据数据类型调整策略
         match dtype {
             DataType::Int64 | DataType::Uint64 | DataType::Float64 => {
@@ -180,8 +183,8 @@ impl AccessPatternSIMD {
                 } else {
                     SIMDStrategy::SSE2QWord
                 }
-            },
-            
+            }
+
             DataType::Int32 | DataType::Uint32 | DataType::Float32 => {
                 // 32位数据类型：积极使用SIMD
                 if self.simd.capabilities.avx512f && data_size >= 1024 {
@@ -191,8 +194,8 @@ impl AccessPatternSIMD {
                 } else {
                     SIMDStrategy::SSE2DWord
                 }
-            },
-            
+            }
+
             _ => base_strategy,
         }
     }
@@ -278,17 +281,18 @@ impl AccessPatternSIMD {
     }
 
     /// 记录性能数据用于学习
-    pub fn record_performance(&mut self, 
-        pattern: AccessPattern, 
-        dtype: DataType, 
+    pub fn record_performance(
+        &mut self,
+        pattern: AccessPattern,
+        dtype: DataType,
         data_size: usize,
         strategy: SIMDStrategy,
         latency: Duration,
-        throughput_mb_s: f64
+        throughput_mb_s: f64,
     ) {
         let key = (pattern, dtype, Self::size_bucket(data_size));
         let efficiency_score = self.calculate_efficiency_score(latency, throughput_mb_s, data_size);
-        
+
         let record = PerformanceRecord {
             strategy,
             latency_ns: latency.as_nanos() as u64,
@@ -296,12 +300,12 @@ impl AccessPatternSIMD {
             efficiency_score,
             timestamp: Instant::now(),
         };
-        
+
         self.performance_history
             .entry(key)
             .or_insert_with(Vec::new)
             .push(record);
-        
+
         // 限制历史记录数量
         let history = self.performance_history.get_mut(&key).unwrap();
         if history.len() > self.history_window * 2 {
@@ -314,16 +318,16 @@ impl AccessPatternSIMD {
         if indices.len() == 1 {
             return AccessPattern::SingleRandom;
         }
-        
+
         if indices.is_empty() {
             return AccessPattern::Sequential;
         }
-        
+
         // 分析索引的分布特征
         let is_sequential = self.is_sequential_access(indices);
         let is_strided = self.is_strided_access(indices);
         let clustering_factor = self.calculate_clustering_factor(indices);
-        
+
         match (is_sequential, is_strided, clustering_factor) {
             (true, _, _) => AccessPattern::Sequential,
             (false, true, _) => AccessPattern::Strided,
@@ -338,9 +342,9 @@ impl AccessPatternSIMD {
         if indices.len() < 2 {
             return false;
         }
-        
+
         for i in 1..indices.len() {
-            if indices[i] != indices[i-1] + 1 {
+            if indices[i] != indices[i - 1] + 1 {
                 return false;
             }
         }
@@ -352,14 +356,14 @@ impl AccessPatternSIMD {
         if indices.len() < 3 {
             return false;
         }
-        
+
         let stride = indices[1] - indices[0];
         if stride <= 1 {
             return false;
         }
-        
+
         for i in 2..indices.len() {
-            if indices[i] - indices[i-1] != stride {
+            if indices[i] - indices[i - 1] != stride {
                 return false;
             }
         }
@@ -371,16 +375,17 @@ impl AccessPatternSIMD {
         if indices.len() < 2 {
             return 0.0;
         }
-        
+
         let mut sorted_indices = indices.to_vec();
         sorted_indices.sort_unstable();
-        
+
         let mut cluster_count = 0;
         let mut current_cluster_size = 1;
-        
+
         for i in 1..sorted_indices.len() {
-            let gap = sorted_indices[i] - sorted_indices[i-1];
-            if gap <= 16 { // 认为间隔16以内为聚集
+            let gap = sorted_indices[i] - sorted_indices[i - 1];
+            if gap <= 16 {
+                // 认为间隔16以内为聚集
                 current_cluster_size += 1;
             } else {
                 if current_cluster_size >= 3 {
@@ -389,20 +394,25 @@ impl AccessPatternSIMD {
                 current_cluster_size = 1;
             }
         }
-        
+
         if current_cluster_size >= 3 {
             cluster_count += 1;
         }
-        
+
         cluster_count as f64 / (indices.len() as f64 / 3.0).max(1.0)
     }
 
     /// 计算效率分数
-    fn calculate_efficiency_score(&self, latency: Duration, throughput_mb_s: f64, data_size: usize) -> f64 {
+    fn calculate_efficiency_score(
+        &self,
+        latency: Duration,
+        throughput_mb_s: f64,
+        data_size: usize,
+    ) -> f64 {
         let latency_score = 1.0 / (latency.as_secs_f64() * 1000.0 + 1.0); // 延迟越低分数越高
         let throughput_score = throughput_mb_s / 1000.0; // 吞吐量分数
         let size_factor = (data_size as f64 / 1024.0).ln().max(1.0); // 数据大小因子
-        
+
         (latency_score + throughput_score) * size_factor
     }
 
@@ -434,12 +444,13 @@ impl AccessPatternSIMD {
     /// 清理过期的性能记录
     pub fn cleanup_expired_records(&mut self, max_age: Duration) {
         let cutoff = Instant::now() - max_age;
-        
+
         for records in self.performance_history.values_mut() {
             records.retain(|record| record.timestamp > cutoff);
         }
-        
+
         // 移除空的记录
-        self.performance_history.retain(|_, records| !records.is_empty());
+        self.performance_history
+            .retain(|_, records| !records.is_empty());
     }
-} 
+}

@@ -1,10 +1,10 @@
 //! 高性能二进制元数据格式
-//! 
+//!
 //! 提供比MessagePack更快的序列化/反序列化性能，专为NumPack优化
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Read, Write, Seek, SeekFrom, BufReader, BufWriter};
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::SystemTime;
@@ -207,7 +207,7 @@ impl BinaryArrayMetadata {
     pub fn new(name: String, shape: Vec<u64>, data_file: String, dtype: BinaryDataType) -> Self {
         let total_elements: u64 = shape.iter().product();
         let size_bytes = total_elements * dtype.size_bytes() as u64;
-        
+
         Self {
             name,
             shape,
@@ -262,7 +262,7 @@ impl BinaryArrayMetadata {
             writer.write_all(&block_info.block_size.to_le_bytes())?;
             writer.write_all(&block_info.num_blocks.to_le_bytes())?;
             writer.write_all(&(block_info.blocks.len() as u32).to_le_bytes())?;
-            
+
             for block in &block_info.blocks {
                 writer.write_all(&block.offset.to_le_bytes())?;
                 writer.write_all(&block.original_size.to_le_bytes())?;
@@ -308,10 +308,10 @@ impl BinaryArrayMetadata {
         let mut u64_buf = [0u8; 8];
         reader.read_exact(&mut u64_buf)?;
         let last_modified = u64::from_le_bytes(u64_buf);
-        
+
         reader.read_exact(&mut u64_buf)?;
         let size_bytes = u64::from_le_bytes(u64_buf);
-        
+
         let mut dtype_buf = [0u8; 1];
         reader.read_exact(&mut dtype_buf)?;
         let dtype = BinaryDataType::from_u8(dtype_buf[0]);
@@ -319,52 +319,52 @@ impl BinaryArrayMetadata {
         // 读取压缩信息
         reader.read_exact(&mut dtype_buf)?;
         let algorithm = CompressionAlgorithm::from_u8(dtype_buf[0]);
-        
+
         let mut u32_buf = [0u8; 4];
         reader.read_exact(&mut u32_buf)?;
         let level = u32::from_le_bytes(u32_buf);
-        
+
         reader.read_exact(&mut u64_buf)?;
         let original_size = u64::from_le_bytes(u64_buf);
-        
+
         reader.read_exact(&mut u64_buf)?;
         let compressed_size = u64::from_le_bytes(u64_buf);
 
         // 读取块压缩信息
         reader.read_exact(&mut dtype_buf)?;
         let has_block_info = dtype_buf[0] != 0;
-        
+
         let block_compression = if has_block_info {
             reader.read_exact(&mut dtype_buf)?;
             let enabled = dtype_buf[0] != 0;
-            
+
             reader.read_exact(&mut u64_buf)?;
             let block_size = u64::from_le_bytes(u64_buf);
-            
+
             reader.read_exact(&mut u64_buf)?;
             let num_blocks = u64::from_le_bytes(u64_buf);
-            
+
             reader.read_exact(&mut u32_buf)?;
             let blocks_len = u32::from_le_bytes(u32_buf) as usize;
-            
+
             let mut blocks = Vec::with_capacity(blocks_len);
             for _ in 0..blocks_len {
                 reader.read_exact(&mut u64_buf)?;
                 let offset = u64::from_le_bytes(u64_buf);
-                
+
                 reader.read_exact(&mut u64_buf)?;
                 let original_size = u64::from_le_bytes(u64_buf);
-                
+
                 reader.read_exact(&mut u64_buf)?;
                 let compressed_size = u64::from_le_bytes(u64_buf);
-                
+
                 blocks.push(BinaryBlockInfo {
                     offset,
                     original_size,
                     compressed_size,
                 });
             }
-            
+
             Some(BinaryBlockCompressionInfo {
                 enabled,
                 block_size,
@@ -424,9 +424,11 @@ impl BinaryMetadataStore {
         let mut magic_buf = [0u8; 4];
         reader.read_exact(&mut magic_buf)?;
         let magic = u32::from_le_bytes(magic_buf);
-        
+
         if magic != BINARY_MAGIC {
-            return Err(NpkError::InvalidMetadata("Invalid magic number".to_string()));
+            return Err(NpkError::InvalidMetadata(
+                "Invalid magic number".to_string(),
+            ));
         }
 
         // 读取版本
@@ -462,24 +464,26 @@ impl BinaryMetadataStore {
         // 生成唯一的临时文件名，避免多线程冲突
         // 格式：metadata.npkm.tmp.{pid}_{tid}_{timestamp}
         use std::time::{SystemTime, UNIX_EPOCH};
-        
+
         let pid = std::process::id();
         let tid = std::thread::current().id();
-        let tid_str = format!("{:?}", tid).replace("ThreadId(", "").replace(")", "");
+        let tid_str = format!("{:?}", tid)
+            .replace("ThreadId(", "")
+            .replace(")", "");
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        
+
         let temp_filename = format!(
-            "{}.tmp.{}_{}_{}", 
+            "{}.tmp.{}_{}_{}",
             path.file_name().unwrap().to_string_lossy(),
-            pid, 
+            pid,
             tid_str,
             timestamp
         );
         let temp_path = path.with_file_name(temp_filename);
-        
+
         // 写入临时文件
         {
             let file = File::create(&temp_path)?;
@@ -520,7 +524,10 @@ impl BinaryMetadataStore {
 
     pub fn add_array(&mut self, meta: BinaryArrayMetadata) {
         self.total_size = self.total_size.saturating_sub(
-            self.arrays.get(&meta.name).map(|m| m.size_bytes).unwrap_or(0)
+            self.arrays
+                .get(&meta.name)
+                .map(|m| m.size_bytes)
+                .unwrap_or(0),
         );
         self.total_size += meta.size_bytes;
         self.arrays.insert(meta.name.clone(), meta);
@@ -559,20 +566,24 @@ pub struct BinaryCachedStore {
 impl BinaryCachedStore {
     pub fn new(path: &Path, _wal_path: Option<PathBuf>) -> NpkResult<Self> {
         let store = BinaryMetadataStore::load(path).unwrap_or_else(|_| BinaryMetadataStore::new());
-        
+
         let cached_store = Self {
             store: Arc::new(RwLock::new(store)),
             path: Arc::from(path),
             last_sync: Arc::new(Mutex::new(SystemTime::now())),
             sync_interval: std::time::Duration::from_secs(1),
         };
-        
+
         // 保存初始存储
         cached_store.sync_to_disk()?;
         Ok(cached_store)
     }
 
-    pub fn from_store(store: BinaryMetadataStore, path: &Path, _wal_path: Option<PathBuf>) -> NpkResult<Self> {
+    pub fn from_store(
+        store: BinaryMetadataStore,
+        path: &Path,
+        _wal_path: Option<PathBuf>,
+    ) -> NpkResult<Self> {
         Ok(Self {
             store: Arc::new(RwLock::new(store)),
             path: Arc::from(path),
@@ -585,21 +596,21 @@ impl BinaryCachedStore {
         // 多线程环境下可能出现临时的文件访问冲突，添加重试机制
         const MAX_RETRIES: usize = 3;
         const RETRY_DELAY_MS: u64 = 10;
-        
+
         let mut last_error = None;
         for attempt in 0..MAX_RETRIES {
-        let store = self.store.read().unwrap();
+            let store = self.store.read().unwrap();
             match store.save(&self.path) {
                 Ok(_) => {
                     drop(store);
-        let mut last_sync = self.last_sync.lock().unwrap();
-        *last_sync = SystemTime::now();
+                    let mut last_sync = self.last_sync.lock().unwrap();
+                    *last_sync = SystemTime::now();
                     return Ok(());
                 }
                 Err(e) => {
                     last_error = Some(e);
                     drop(store);
-                    
+
                     // 最后一次尝试不需要等待
                     if attempt < MAX_RETRIES - 1 {
                         std::thread::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS));
@@ -607,7 +618,7 @@ impl BinaryCachedStore {
                 }
             }
         }
-        
+
         // 所有重试都失败，返回最后一个错误
         Err(last_error.unwrap())
     }
@@ -617,10 +628,10 @@ impl BinaryCachedStore {
         store.add_array(meta);
         drop(store);
         // 🚀 性能关键优化：延迟同步，不立即写入磁盘
-        // 
+        //
         // 问题：每次add_array都调用sync_to_disk导致性能下降2-3x
         // NumPy不会每次都fsync，所以更快
-        // 
+        //
         // 解决方案：
         // - add_array只更新内存中的元数据
         // - 元数据会定期自动同步（sync_interval控制）
@@ -630,7 +641,7 @@ impl BinaryCachedStore {
         // self.sync_to_disk()?;
         Ok(())
     }
-    
+
     /// 强制同步到磁盘
     pub fn force_sync(&self) -> NpkResult<()> {
         self.sync_to_disk()
@@ -693,28 +704,33 @@ mod tests {
         let metadata_path = temp_dir.path().join("metadata.npkm");
 
         let mut store = BinaryMetadataStore::new();
-        
+
         // 添加测试数组
         let shape = vec![100, 200];
         let data_file = "data_test.npkd".to_string();
         let dtype = BinaryDataType::Float32;
-        
-        let meta = BinaryArrayMetadata::new("test_array".to_string(), shape.clone(), data_file.clone(), dtype);
+
+        let meta = BinaryArrayMetadata::new(
+            "test_array".to_string(),
+            shape.clone(),
+            data_file.clone(),
+            dtype,
+        );
         store.add_array(meta);
-        
+
         // 验证数组存在
         assert!(store.has_array("test_array"));
-        
+
         let retrieved_meta = store.get_array("test_array").unwrap();
         assert_eq!(retrieved_meta.name, "test_array");
         assert_eq!(retrieved_meta.shape, shape);
-        
+
         // 保存并重新加载
         store.save(&metadata_path).unwrap();
-        
+
         let loaded_store = BinaryMetadataStore::load(&metadata_path).unwrap();
         assert!(loaded_store.has_array("test_array"));
-        
+
         let loaded_meta = loaded_store.get_array("test_array").unwrap();
         assert_eq!(loaded_meta.name, "test_array");
         assert_eq!(loaded_meta.shape, shape);
@@ -725,7 +741,7 @@ mod tests {
         let original = DataType::Float64;
         let binary: BinaryDataType = original.into();
         let converted_back: DataType = binary.into();
-        
+
         assert_eq!(original, converted_back);
     }
 
@@ -738,8 +754,8 @@ mod tests {
             compressed_size: 500,
             block_compression: None,
         };
-        
+
         assert_eq!(compression.algorithm, CompressionAlgorithm::Zstd);
         assert_eq!(compression.level, 3);
     }
-} 
+}

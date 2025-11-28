@@ -19,6 +19,7 @@ import sys
 import platform
 import subprocess
 import argparse
+import shutil
 from pathlib import Path
 
 
@@ -69,6 +70,10 @@ def run_maturin_build_wheel(features_str, python_interpreter):
     """
     # 使用项目根目录的 dist/ 文件夹作为输出目录
     output_dir = Path(__file__).parent / 'dist'
+    # 先清空文件夹
+    if output_dir.exists():
+        for file in output_dir.glob('*'):
+            file.unlink()
     output_dir.mkdir(exist_ok=True)  # 确保目录存在
 
     # 构建命令 - 使用 -i 参数指定 Python 版本，同时生成 wheel 和 tar.gz
@@ -146,6 +151,44 @@ def install_wheel(wheel_paths, python_interpreter):
     except subprocess.CalledProcessError as e:
         print(f"❌ 安装失败: {e}")
         return False
+
+
+def sync_extension_module(python_interpreter):
+    """同步已安装的扩展模块到源码目录，避免测试加载旧版本"""
+    project_root = Path(__file__).parent
+    source_dir = project_root / 'python' / 'numpack'
+    if not source_dir.exists():
+        return
+
+    try:
+        result = subprocess.run(
+            [
+                python_interpreter,
+                '-c',
+                (
+                    'import numpack, pathlib; '
+                    'print(pathlib.Path(numpack._lib_numpack.__file__).resolve())'
+                ),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        print(f"⚠️  无法定位已安装的扩展模块: {exc}")
+        return
+
+    extension_path = Path(result.stdout.strip())
+    if not extension_path.exists():
+        print(f"⚠️  未找到扩展文件: {extension_path}")
+        return
+
+    destination = source_dir / extension_path.name
+    try:
+        shutil.copy2(extension_path, destination)
+        print(f"✓ 已同步扩展模块到源码目录: {destination.name}")
+    except Exception as exc:
+        print(f"⚠️  同步扩展模块失败: {exc}")
 
 
 def verify_installation(python_interpreter):
@@ -240,6 +283,9 @@ def main():
         print("❌ 安装失败")
         print("=" * 70)
         sys.exit(1)
+
+    # 步骤 2.5: 同步扩展模块到源码目录，确保测试环境一致
+    sync_extension_module(sys.executable)
     
     # 步骤 3: 验证安装
     verify_installation(sys.executable)

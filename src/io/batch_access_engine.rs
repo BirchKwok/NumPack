@@ -1,33 +1,33 @@
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
-use std::collections::HashMap;
 
 // 批量访问策略
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BatchAccessStrategy {
-    Parallel,           // 并行访问
-    Chunked,           // 分块访问
-    Streaming,         // 流式访问
-    ZeroCopy,          // 零拷贝访问
-    Adaptive,          // 自适应选择
+    Parallel,  // 并行访问
+    Chunked,   // 分块访问
+    Streaming, // 流式访问
+    ZeroCopy,  // 零拷贝访问
+    Adaptive,  // 自适应选择
 }
 
 // 访问请求类型
 #[derive(Debug, Clone)]
 pub enum BatchAccessRequest {
-    Rows(Vec<usize>),                    // 行索引列表
-    Range(usize, usize),                 // 范围访问
-    Fancy(Vec<usize>),                   // 花式索引
-    Boolean(Vec<bool>),                  // 布尔索引
-    Streaming(Vec<usize>, usize),        // 流式访问(indices, chunk_size)
+    Rows(Vec<usize>),             // 行索引列表
+    Range(usize, usize),          // 范围访问
+    Fancy(Vec<usize>),            // 花式索引
+    Boolean(Vec<bool>),           // 布尔索引
+    Streaming(Vec<usize>, usize), // 流式访问(indices, chunk_size)
 }
 
 // 批量访问结果
 pub enum BatchAccessResult {
-    Owned(Vec<Vec<u8>>),                 // 拷贝数据
-    Views(Vec<Option<&'static [u8]>>),   // 零拷贝视图
+    Owned(Vec<Vec<u8>>),                              // 拷贝数据
+    Views(Vec<Option<&'static [u8]>>),                // 零拷贝视图
     Stream(Box<dyn Iterator<Item = Vec<u8>> + Send>), // 流式结果
-    Range(Vec<u8>),                      // 范围数据
+    Range(Vec<u8>),                                   // 范围数据
 }
 
 // 访问性能指标
@@ -62,7 +62,7 @@ pub enum LoadBalancingStrategy {
     RoundRobin,
     WorkStealing,
     Dynamic,
-    Adaptive,  // 新增：自适应负载均衡
+    Adaptive, // 新增：自适应负载均衡
 }
 
 // 工作负载样本
@@ -79,9 +79,9 @@ pub struct WorkloadSample {
 // 内存池用于优化内存分配
 #[derive(Debug)]
 pub struct MemoryPool {
-    small_buffers: Vec<Vec<u8>>,    // <1KB
-    medium_buffers: Vec<Vec<u8>>,   // 1KB-1MB
-    large_buffers: Vec<Vec<u8>>,    // >1MB
+    small_buffers: Vec<Vec<u8>>,  // <1KB
+    medium_buffers: Vec<Vec<u8>>, // 1KB-1MB
+    large_buffers: Vec<Vec<u8>>,  // >1MB
 }
 
 // 最优参数结构
@@ -186,10 +186,10 @@ impl ParallelExecutor {
             min_thread_pool_size: min_threads,
             max_thread_pool_size: max_threads,
             work_stealing_enabled: true,
-            load_balancing_strategy: if adaptive { 
-                LoadBalancingStrategy::Adaptive 
-            } else { 
-                LoadBalancingStrategy::Dynamic 
+            load_balancing_strategy: if adaptive {
+                LoadBalancingStrategy::Adaptive
+            } else {
+                LoadBalancingStrategy::Dynamic
             },
             performance_metrics: Arc::new(Mutex::new(BatchAccessMetrics::default())),
             workload_history: Arc::new(Mutex::new(Vec::new())),
@@ -206,35 +206,27 @@ impl ParallelExecutor {
     {
         let start_time = Instant::now();
         let data_size = data.len();
-        
+
         // 预分配结果向量以减少重新分配
         // 注意：由于后面直接替换结果，这个预分配不再需要
         // let mut result = Vec::with_capacity(data_size);
-        
+
         let execution_result = match self.load_balancing_strategy {
-            LoadBalancingStrategy::RoundRobin => {
-                self.execute_round_robin(data, operation)
-            }
-            LoadBalancingStrategy::WorkStealing => {
-                self.execute_work_stealing(data, operation)
-            }
-            LoadBalancingStrategy::Dynamic => {
-                self.execute_dynamic(data, operation)
-            }
-            LoadBalancingStrategy::Adaptive => {
-                self.execute_adaptive(data, operation)
-            }
+            LoadBalancingStrategy::RoundRobin => self.execute_round_robin(data, operation),
+            LoadBalancingStrategy::WorkStealing => self.execute_work_stealing(data, operation),
+            LoadBalancingStrategy::Dynamic => self.execute_dynamic(data, operation),
+            LoadBalancingStrategy::Adaptive => self.execute_adaptive(data, operation),
         };
 
         let result = execution_result;
         let execution_time = start_time.elapsed();
-        
+
         // 更新性能指标和工作负载历史
         self.update_performance_metrics(execution_time, data_size);
         if self.adaptive_enabled {
             self.record_workload_sample(data_size, execution_time);
         }
-        
+
         result
     }
 
@@ -289,7 +281,7 @@ impl ParallelExecutor {
     {
         // 基于历史性能数据选择最优策略
         let optimal_params = self.analyze_optimal_parameters(data.len());
-        
+
         use rayon::prelude::*;
         data.into_par_iter()
             .with_min_len(optimal_params.chunk_size)
@@ -351,7 +343,7 @@ impl ParallelExecutor {
                 thread_count: self.thread_pool_size,
                 execution_time,
                 memory_usage: data_size * 64, // 估算内存使用
-                cpu_utilization: 0.8, // 简化的CPU利用率
+                cpu_utilization: 0.8,         // 简化的CPU利用率
             };
 
             history.push(sample);
@@ -366,17 +358,18 @@ impl ParallelExecutor {
     fn update_performance_metrics(&self, latency: Duration, data_size: usize) {
         if let Ok(mut metrics) = self.performance_metrics.lock() {
             metrics.total_requests += 1;
-            
+
             // 更新平均延迟
-            let total_latency_ns = metrics.avg_latency.as_nanos() as u64 * (metrics.total_requests - 1)
+            let total_latency_ns = metrics.avg_latency.as_nanos() as u64
+                * (metrics.total_requests - 1)
                 + latency.as_nanos() as u64;
             metrics.avg_latency = Duration::from_nanos(total_latency_ns / metrics.total_requests);
-            
+
             // 更新并行效率指标
             let ideal_time = latency.as_nanos() as f64 * self.thread_pool_size as f64;
             let actual_time = latency.as_nanos() as f64;
             metrics.parallel_efficiency = (ideal_time / actual_time).min(1.0);
-            
+
             // 更新内存使用估算
             metrics.memory_usage = data_size * 64; // 简化估算
         }
@@ -412,16 +405,18 @@ impl ParallelExecutor {
         }
 
         let current_efficiency = self.get_metrics().parallel_efficiency;
-        
+
         if current_efficiency < target_efficiency * 0.8 {
             // 效率低，减少线程数
             if self.thread_pool_size > self.min_thread_pool_size {
-                self.thread_pool_size = (self.thread_pool_size * 4 / 5).max(self.min_thread_pool_size);
+                self.thread_pool_size =
+                    (self.thread_pool_size * 4 / 5).max(self.min_thread_pool_size);
             }
         } else if current_efficiency > target_efficiency * 1.1 {
             // 效率高，可以增加线程数
             if self.thread_pool_size < self.max_thread_pool_size {
-                self.thread_pool_size = (self.thread_pool_size * 5 / 4).min(self.max_thread_pool_size);
+                self.thread_pool_size =
+                    (self.thread_pool_size * 5 / 4).min(self.max_thread_pool_size);
             }
         }
     }
@@ -435,10 +430,16 @@ impl ParallelExecutor {
 
             let total_samples = history.len();
             let avg_execution_time = Duration::from_nanos(
-                history.iter().map(|s| s.execution_time.as_nanos() as u64).sum::<u64>() / total_samples as u64
+                history
+                    .iter()
+                    .map(|s| s.execution_time.as_nanos() as u64)
+                    .sum::<u64>()
+                    / total_samples as u64,
             );
-            let avg_cpu_utilization = history.iter().map(|s| s.cpu_utilization).sum::<f64>() / total_samples as f64;
-            let avg_memory_usage = history.iter().map(|s| s.memory_usage).sum::<usize>() / total_samples;
+            let avg_cpu_utilization =
+                history.iter().map(|s| s.cpu_utilization).sum::<f64>() / total_samples as f64;
+            let avg_memory_usage =
+                history.iter().map(|s| s.memory_usage).sum::<usize>() / total_samples;
 
             WorkloadStats {
                 total_samples,
@@ -454,14 +455,16 @@ impl ParallelExecutor {
     }
 
     fn find_best_chunk_size(&self, history: &[WorkloadSample]) -> usize {
-        history.iter()
+        history
+            .iter()
             .min_by_key(|sample| sample.execution_time.as_nanos())
             .map(|sample| sample.chunk_size)
             .unwrap_or(self.calculate_optimal_chunk_size(1000))
     }
 
     fn find_best_thread_count(&self, history: &[WorkloadSample]) -> usize {
-        history.iter()
+        history
+            .iter()
             .min_by_key(|sample| sample.execution_time.as_nanos())
             .map(|sample| sample.thread_count)
             .unwrap_or(self.thread_pool_size)
@@ -476,7 +479,7 @@ impl ParallelExecutor {
     {
         let _start_time = Instant::now();
         let data_size = data.len();
-        
+
         // 获取内存池缓冲区
         let _buffer = if let Ok(mut pool) = self.memory_pool.lock() {
             Some(pool.get_buffer(data_size * 64))
@@ -509,7 +512,7 @@ impl ParallelExecutor {
     pub fn get_recommended_config(&self, typical_workload_size: usize) -> RecommendedConfig {
         let optimal_params = self.analyze_optimal_parameters(typical_workload_size);
         let workload_stats = self.get_workload_stats();
-        
+
         RecommendedConfig {
             recommended_thread_count: optimal_params.thread_count,
             recommended_chunk_size: optimal_params.chunk_size,
@@ -535,8 +538,8 @@ pub struct ChunkOptimizer {
     range_analyzer: RangeAnalyzer,
     memory_copier: OptimizedMemoryCopier,
     // 新增：范围合并配置
-    range_merge_threshold: usize,  // 范围间距小于此值时会合并
-    sequential_threshold: f64,     // 连续性阈值
+    range_merge_threshold: usize, // 范围间距小于此值时会合并
+    sequential_threshold: f64,    // 连续性阈值
 }
 
 // 范围分析器
@@ -571,7 +574,7 @@ pub struct OptimizedMemoryCopier {
 // 范围访问请求
 #[derive(Debug, Clone)]
 pub struct RangeAccessRequest {
-    pub ranges: Vec<(usize, usize)>,  // (start, end) pairs
+    pub ranges: Vec<(usize, usize)>, // (start, end) pairs
     pub total_size: usize,
     pub expected_sequentiality: f64,
 }
@@ -588,19 +591,19 @@ pub struct RangeOptimizationResult {
 // 分块策略
 #[derive(Debug, Clone, Copy)]
 pub enum ChunkStrategy {
-    SingleLargeChunk,    // 单个大块
+    SingleLargeChunk,     // 单个大块
     MultipleMediumChunks, // 多个中等块
-    ManySmallChunks,     // 多个小块
-    AdaptiveChunks,      // 自适应分块
+    ManySmallChunks,      // 多个小块
+    AdaptiveChunks,       // 自适应分块
 }
 
 // 复制策略
 #[derive(Debug, Clone, Copy)]
 pub enum CopyStrategy {
-    DirectMemcpy,        // 直接内存复制
-    VectorizedCopy,      // 向量化复制
-    PrefetchedCopy,      // 预取复制
-    ZeroCopyView,        // 零拷贝视图
+    DirectMemcpy,   // 直接内存复制
+    VectorizedCopy, // 向量化复制
+    PrefetchedCopy, // 预取复制
+    ZeroCopyView,   // 零拷贝视图
 }
 
 impl RangeAnalyzer {
@@ -688,7 +691,8 @@ impl RangeAnalyzer {
             return 0.0;
         }
 
-        let gaps: Vec<usize> = ranges.windows(2)
+        let gaps: Vec<usize> = ranges
+            .windows(2)
             .map(|window| window[1].0.saturating_sub(window[0].1))
             .collect();
 
@@ -733,13 +737,19 @@ impl RangeAnalyzer {
         }
 
         let count = self.pattern_history.len();
-        let avg_sequentiality = self.pattern_history.iter()
+        let avg_sequentiality = self
+            .pattern_history
+            .iter()
             .map(|p| p.sequentiality_score)
-            .sum::<f64>() / count as f64;
-        
-        let avg_cache_efficiency = self.pattern_history.iter()
+            .sum::<f64>()
+            / count as f64;
+
+        let avg_cache_efficiency = self
+            .pattern_history
+            .iter()
             .map(|p| p.cache_efficiency)
-            .sum::<f64>() / count as f64;
+            .sum::<f64>()
+            / count as f64;
 
         PatternStatistics {
             sample_count: count,
@@ -776,7 +786,13 @@ impl OptimizedMemoryCopier {
     }
 
     /// 执行优化的内存复制
-    pub unsafe fn optimized_copy(&self, src: *const u8, dst: *mut u8, size: usize, strategy: CopyStrategy) {
+    pub unsafe fn optimized_copy(
+        &self,
+        src: *const u8,
+        dst: *mut u8,
+        size: usize,
+        strategy: CopyStrategy,
+    ) {
         match strategy {
             CopyStrategy::DirectMemcpy => {
                 std::ptr::copy_nonoverlapping(src, dst, size);
@@ -797,7 +813,7 @@ impl OptimizedMemoryCopier {
     /// 向量化复制
     unsafe fn vectorized_copy(&self, src: *const u8, dst: *mut u8, size: usize) {
         let mut offset = 0;
-        
+
         // 处理大块（32字节对齐）
         while offset + 32 <= size {
             let src_chunk = src.add(offset) as *const [u8; 32];
@@ -805,7 +821,7 @@ impl OptimizedMemoryCopier {
             *dst_chunk = *src_chunk;
             offset += 32;
         }
-        
+
         // 处理剩余字节
         while offset < size {
             *dst.add(offset) = *src.add(offset);
@@ -816,7 +832,7 @@ impl OptimizedMemoryCopier {
     /// 带预取的复制
     unsafe fn prefetched_copy(&self, src: *const u8, dst: *mut u8, size: usize) {
         let mut offset = 0;
-        
+
         while offset < size {
             // 预取下一块数据
             if offset + self.prefetch_distance < size {
@@ -828,7 +844,7 @@ impl OptimizedMemoryCopier {
                     );
                 }
             }
-            
+
             // 复制当前块
             let copy_size = (size - offset).min(64);
             std::ptr::copy_nonoverlapping(src.add(offset), dst.add(offset), copy_size);
@@ -890,7 +906,9 @@ impl ChunkOptimizer {
         if let Ok(history) = self.performance_history.read() {
             if history.len() > 10 {
                 let optimal_size = self.find_optimal_from_history(&history);
-                return optimal_size.max(self.min_chunk_size).min(self.max_chunk_size);
+                return optimal_size
+                    .max(self.min_chunk_size)
+                    .min(self.max_chunk_size);
             }
         }
 
@@ -906,12 +924,15 @@ impl ChunkOptimizer {
     fn calculate_static_chunk_size(&self, total_size: usize) -> usize {
         // 静态计算：基于缓存行大小和总大小
         let cache_aligned_size = (self.cache_line_size * 16).max(self.min_chunk_size);
-        (total_size / 32).max(cache_aligned_size).min(self.max_chunk_size)
+        (total_size / 32)
+            .max(cache_aligned_size)
+            .min(self.max_chunk_size)
     }
 
     fn find_optimal_from_history(&self, history: &[(usize, Duration)]) -> usize {
         // 找到延迟最低的分块大小
-        history.iter()
+        history
+            .iter()
             .min_by_key(|(_, latency)| latency.as_nanos())
             .map(|(size, _)| *size)
             .unwrap_or(self.min_chunk_size * 8)
@@ -934,24 +955,28 @@ impl ChunkOptimizer {
     }
 
     /// 优化范围访问请求
-    pub fn optimize_range_access(&mut self, request: RangeAccessRequest) -> RangeOptimizationResult {
+    pub fn optimize_range_access(
+        &mut self,
+        request: RangeAccessRequest,
+    ) -> RangeOptimizationResult {
         let start_time = Instant::now();
-        
+
         // 分析访问模式
         let pattern_analysis = self.range_analyzer.analyze_ranges(&request.ranges);
-        
+
         // 合并相邻范围
         let merged_ranges = self.range_analyzer.merge_adjacent_ranges(&request.ranges);
-        
+
         // 选择分块策略
         let chunk_strategy = self.select_chunk_strategy(&merged_ranges, &pattern_analysis);
-        
+
         // 选择复制策略
         let copy_strategy = self.select_copy_strategy_for_ranges(&merged_ranges, &pattern_analysis);
-        
+
         // 估算性能
-        let estimated_performance = self.estimate_range_performance(&merged_ranges, chunk_strategy, copy_strategy);
-        
+        let estimated_performance =
+            self.estimate_range_performance(&merged_ranges, chunk_strategy, copy_strategy);
+
         // 记录性能历史
         self.record_range_performance(merged_ranges.len(), start_time.elapsed());
 
@@ -964,9 +989,13 @@ impl ChunkOptimizer {
     }
 
     /// 选择分块策略
-    fn select_chunk_strategy(&self, ranges: &[(usize, usize)], analysis: &AccessPatternAnalysis) -> ChunkStrategy {
+    fn select_chunk_strategy(
+        &self,
+        ranges: &[(usize, usize)],
+        analysis: &AccessPatternAnalysis,
+    ) -> ChunkStrategy {
         let total_size: usize = ranges.iter().map(|(start, end)| end - start).sum();
-        
+
         if analysis.sequentiality_score >= self.sequential_threshold {
             // 高连续性，使用大块策略
             if total_size > 1024 * 1024 {
@@ -984,39 +1013,49 @@ impl ChunkOptimizer {
     }
 
     /// 为范围访问选择复制策略
-    fn select_copy_strategy_for_ranges(&self, ranges: &[(usize, usize)], analysis: &AccessPatternAnalysis) -> CopyStrategy {
+    fn select_copy_strategy_for_ranges(
+        &self,
+        ranges: &[(usize, usize)],
+        analysis: &AccessPatternAnalysis,
+    ) -> CopyStrategy {
         let total_size: usize = ranges.iter().map(|(start, end)| end - start).sum();
         let is_sequential = analysis.sequentiality_score >= self.sequential_threshold;
-        
-        self.memory_copier.select_copy_strategy(total_size, is_sequential)
+
+        self.memory_copier
+            .select_copy_strategy(total_size, is_sequential)
     }
 
     /// 估算范围访问性能
-    fn estimate_range_performance(&self, ranges: &[(usize, usize)], chunk_strategy: ChunkStrategy, copy_strategy: CopyStrategy) -> Duration {
+    fn estimate_range_performance(
+        &self,
+        ranges: &[(usize, usize)],
+        chunk_strategy: ChunkStrategy,
+        copy_strategy: CopyStrategy,
+    ) -> Duration {
         let total_size: usize = ranges.iter().map(|(start, end)| end - start).sum();
-        
+
         // 基础时间估算（基于数据大小）
         let base_time_ns = match total_size {
-            0..=1024 => 100,           // 1KB以下：100ns
-            1025..=65536 => 1000,      // 64KB以下：1μs
-            65537..=1048576 => 10000,  // 1MB以下：10μs
-            _ => 100000,               // 1MB以上：100μs
+            0..=1024 => 100,          // 1KB以下：100ns
+            1025..=65536 => 1000,     // 64KB以下：1μs
+            65537..=1048576 => 10000, // 1MB以下：10μs
+            _ => 100000,              // 1MB以上：100μs
         };
 
         // 分块策略调整
         let chunk_multiplier = match chunk_strategy {
-            ChunkStrategy::SingleLargeChunk => 0.8,      // 单大块最快
-            ChunkStrategy::MultipleMediumChunks => 1.0,   // 中等块基准
-            ChunkStrategy::ManySmallChunks => 1.5,       // 小块较慢
-            ChunkStrategy::AdaptiveChunks => 0.9,        // 自适应稍快
+            ChunkStrategy::SingleLargeChunk => 0.8,     // 单大块最快
+            ChunkStrategy::MultipleMediumChunks => 1.0, // 中等块基准
+            ChunkStrategy::ManySmallChunks => 1.5,      // 小块较慢
+            ChunkStrategy::AdaptiveChunks => 0.9,       // 自适应稍快
         };
 
         // 复制策略调整
         let copy_multiplier = match copy_strategy {
-            CopyStrategy::ZeroCopyView => 0.1,           // 零拷贝最快
-            CopyStrategy::VectorizedCopy => 0.7,         // 向量化较快
-            CopyStrategy::PrefetchedCopy => 0.8,         // 预取较快
-            CopyStrategy::DirectMemcpy => 1.0,          // 直接复制基准
+            CopyStrategy::ZeroCopyView => 0.1,   // 零拷贝最快
+            CopyStrategy::VectorizedCopy => 0.7, // 向量化较快
+            CopyStrategy::PrefetchedCopy => 0.8, // 预取较快
+            CopyStrategy::DirectMemcpy => 1.0,   // 直接复制基准
         };
 
         let final_time_ns = (base_time_ns as f64 * chunk_multiplier * copy_multiplier) as u64;
@@ -1046,7 +1085,7 @@ impl ChunkOptimizer {
 
         for i in 1..sorted_indices.len() {
             let gap = sorted_indices[i] - sorted_indices[i - 1];
-            
+
             if gap == 1 {
                 // 连续
                 current_group_size += 1;
@@ -1059,7 +1098,7 @@ impl ChunkOptimizer {
                 max_gap = max_gap.max(gap - 1);
             }
         }
-        
+
         consecutive_groups += 1; // 最后一组
         largest_group_size = largest_group_size.max(current_group_size);
 
@@ -1075,10 +1114,10 @@ impl ChunkOptimizer {
             consecutive_groups,
             largest_group_size,
             continuity_ratio,
-            average_gap: if consecutive_groups > 1 { 
-                total_gaps as f64 / (consecutive_groups - 1) as f64 
-            } else { 
-                0.0 
+            average_gap: if consecutive_groups > 1 {
+                total_gaps as f64 / (consecutive_groups - 1) as f64
+            } else {
+                0.0
             },
             max_gap,
             is_highly_continuous: continuity_ratio >= self.sequential_threshold,
@@ -1088,7 +1127,7 @@ impl ChunkOptimizer {
     /// 获取范围优化统计信息
     pub fn get_range_optimization_stats(&self) -> RangeOptimizationStats {
         let pattern_stats = self.range_analyzer.get_pattern_statistics();
-        
+
         RangeOptimizationStats {
             pattern_statistics: pattern_stats,
             cache_line_size: self.cache_line_size,
@@ -1189,10 +1228,10 @@ pub struct StreamMetadata {
 // 背压信号
 #[derive(Debug, Clone, Copy)]
 pub enum BackpressureSignal {
-    None,           // 无背压
-    Moderate,       // 中等背压
-    High,           // 高背压
-    Critical,       // 危险背压，需要暂停
+    None,     // 无背压
+    Moderate, // 中等背压
+    High,     // 高背压
+    Critical, // 危险背压，需要暂停
 }
 
 // 流式处理状态
@@ -1242,7 +1281,7 @@ impl MemoryMonitor {
 
     pub fn record_memory_usage(&mut self, usage: usize, buffer_count: usize) {
         self.current_memory_usage = usage;
-        
+
         let pressure_level = usage as f64 / self.max_memory_usage as f64;
         let sample = MemorySample {
             timestamp: Instant::now(),
@@ -1250,9 +1289,9 @@ impl MemoryMonitor {
             buffer_count,
             pressure_level,
         };
-        
+
         self.memory_samples.push(sample);
-        
+
         // 保持样本数量在合理范围
         if self.memory_samples.len() > 1000 {
             self.memory_samples.drain(..500);
@@ -1269,7 +1308,7 @@ impl MemoryMonitor {
 
     pub fn get_backpressure_signal(&self) -> BackpressureSignal {
         let pressure = self.get_memory_pressure();
-        
+
         if pressure > 0.95 {
             BackpressureSignal::Critical
         } else if pressure > 0.85 {
@@ -1286,19 +1325,14 @@ impl MemoryMonitor {
             return MemoryStatistics::default();
         }
 
-        let recent_samples: Vec<&MemorySample> = self.memory_samples
-            .iter()
-            .rev()
-            .take(100)
-            .collect();
+        let recent_samples: Vec<&MemorySample> =
+            self.memory_samples.iter().rev().take(100).collect();
 
-        let avg_usage = recent_samples.iter()
-            .map(|s| s.memory_usage)
-            .sum::<usize>() / recent_samples.len();
+        let avg_usage =
+            recent_samples.iter().map(|s| s.memory_usage).sum::<usize>() / recent_samples.len();
 
-        let avg_pressure = recent_samples.iter()
-            .map(|s| s.pressure_level)
-            .sum::<f64>() / recent_samples.len() as f64;
+        let avg_pressure = recent_samples.iter().map(|s| s.pressure_level).sum::<f64>()
+            / recent_samples.len() as f64;
 
         MemoryStatistics {
             current_usage: self.current_memory_usage,
@@ -1322,7 +1356,12 @@ impl ThroughputTracker {
         }
     }
 
-    pub fn record_throughput(&mut self, bytes_processed: usize, chunks_processed: usize, latency: Duration) {
+    pub fn record_throughput(
+        &mut self,
+        bytes_processed: usize,
+        chunks_processed: usize,
+        latency: Duration,
+    ) {
         let now = Instant::now();
         let sample = ThroughputSample {
             timestamp: now,
@@ -1381,9 +1420,11 @@ impl ThroughputTracker {
         }
 
         let avg_latency = Duration::from_nanos(
-            self.samples.iter()
+            self.samples
+                .iter()
                 .map(|s| s.latency.as_nanos() as u64)
-                .sum::<u64>() / self.samples.len() as u64
+                .sum::<u64>()
+                / self.samples.len() as u64,
         );
 
         let total_chunks: usize = self.samples.iter().map(|s| s.chunks_processed).sum();
@@ -1426,7 +1467,11 @@ impl StreamProcessor {
         }
     }
 
-    pub fn new_with_config(memory_limit_mb: usize, target_throughput_mbps: f64, config: StreamConfig) -> Self {
+    pub fn new_with_config(
+        memory_limit_mb: usize,
+        target_throughput_mbps: f64,
+        config: StreamConfig,
+    ) -> Self {
         Self {
             buffer_size: config.min_chunk_size.max(8192),
             prefetch_enabled: config.enable_prefetch,
@@ -1459,39 +1504,40 @@ impl StreamProcessor {
 
     /// 高级流式处理：创建带背压控制的数据流
     pub fn create_advanced_stream<T: Clone + Send + 'static>(
-        &mut self, 
+        &mut self,
         data: Vec<T>,
-        _context: &dyn BatchDataContext
+        _context: &dyn BatchDataContext,
     ) -> StreamingResult<Vec<T>> {
         let start_time = Instant::now();
         let total_size = data.len();
-        
+
         // 动态计算最优分块大小
         let chunk_size = self.calculate_optimal_chunk_size(total_size);
-        
+
         // 创建分块流
-        let chunks: Vec<Vec<T>> = data.chunks(chunk_size)
+        let chunks: Vec<Vec<T>> = data
+            .chunks(chunk_size)
             .map(|chunk| chunk.to_vec())
             .collect();
-        
+
         let total_chunks = chunks.len();
         let estimated_total_size = total_size * std::mem::size_of::<T>();
-        
+
         // 创建带背压控制的迭代器
         let stream = Box::new(BackpressureAwareIterator::new(
             chunks,
             self.memory_monitor.get_backpressure_signal(),
             self.stream_config.clone(),
         ));
-        
+
         // 记录处理指标
         let processing_time = start_time.elapsed();
         self.throughput_tracker.record_throughput(
-            estimated_total_size, 
-            total_chunks, 
-            processing_time
+            estimated_total_size,
+            total_chunks,
+            processing_time,
         );
-        
+
         let metadata = StreamMetadata {
             total_chunks,
             estimated_total_size,
@@ -1499,7 +1545,7 @@ impl StreamProcessor {
             compression_enabled: self.stream_config.enable_compression,
             prefetch_enabled: self.stream_config.enable_prefetch,
         };
-        
+
         StreamingResult { stream, metadata }
     }
 
@@ -1507,62 +1553,64 @@ impl StreamProcessor {
     pub fn process_streaming_batch_access(
         &mut self,
         indices: Vec<usize>,
-        _context: &dyn BatchDataContext
+        _context: &dyn BatchDataContext,
     ) -> StreamingResult<Vec<u8>> {
         let _start_time = Instant::now();
-        
+
         // 检查内存压力
         let backpressure = self.memory_monitor.get_backpressure_signal();
-        
+
         // 根据背压调整分块大小
         let base_chunk_size = self.calculate_optimal_chunk_size(indices.len());
-        let adjusted_chunk_size = self.adjust_chunk_size_for_backpressure(base_chunk_size, backpressure);
-        
+        let adjusted_chunk_size =
+            self.adjust_chunk_size_for_backpressure(base_chunk_size, backpressure);
+
         // 分块处理索引
-        let index_chunks: Vec<Vec<usize>> = indices.chunks(adjusted_chunk_size)
+        let index_chunks: Vec<Vec<usize>> = indices
+            .chunks(adjusted_chunk_size)
             .map(|chunk| chunk.to_vec())
             .collect();
-        
+
         // 估算内存使用
         let estimated_memory = index_chunks.len() * adjusted_chunk_size * 64; // 估算每行64字节
-        self.memory_monitor.record_memory_usage(estimated_memory, index_chunks.len());
-        
+        self.memory_monitor
+            .record_memory_usage(estimated_memory, index_chunks.len());
+
         // 创建数据块流
-        let data_chunks: Vec<Vec<u8>> = index_chunks.into_iter()
+        let data_chunks: Vec<Vec<u8>> = index_chunks
+            .into_iter()
             .map(|chunk| {
                 let chunk_start = Instant::now();
-                let chunk_data: Vec<Vec<u8>> = chunk.into_iter()
+                let chunk_data: Vec<Vec<u8>> = chunk
+                    .into_iter()
                     .map(|idx| _context.get_row_data(idx))
                     .collect();
-                
+
                 // 合并块数据
                 let mut combined_data = Vec::new();
                 for row in &chunk_data {
                     combined_data.extend_from_slice(row);
                 }
-                
+
                 // 记录块处理时间
                 let chunk_time = chunk_start.elapsed();
-                self.throughput_tracker.record_throughput(
-                    combined_data.len(), 
-                    1, 
-                    chunk_time
-                );
-                
+                self.throughput_tracker
+                    .record_throughput(combined_data.len(), 1, chunk_time);
+
                 combined_data
             })
             .collect();
-        
+
         let total_chunks = data_chunks.len();
         let estimated_total_size: usize = data_chunks.iter().map(|c| c.len()).sum();
-        
+
         // 创建带背压控制的流
         let stream = Box::new(BackpressureAwareIterator::new(
             data_chunks,
             backpressure,
             self.stream_config.clone(),
         ));
-        
+
         let metadata = StreamMetadata {
             total_chunks,
             estimated_total_size,
@@ -1570,7 +1618,7 @@ impl StreamProcessor {
             compression_enabled: self.stream_config.enable_compression,
             prefetch_enabled: self.stream_config.enable_prefetch,
         };
-        
+
         StreamingResult { stream, metadata }
     }
 
@@ -1581,7 +1629,7 @@ impl StreamProcessor {
         }
 
         let adjustment_ratio = target_throughput / current_throughput.max(0.1);
-        
+
         if adjustment_ratio > 1.2 {
             // 需要增加缓冲区
             self.buffer_size = (self.buffer_size as f64 * 1.5) as usize;
@@ -1589,10 +1637,12 @@ impl StreamProcessor {
             // 需要减少缓冲区
             self.buffer_size = (self.buffer_size as f64 * 0.7) as usize;
         }
-        
+
         // 限制缓冲区大小在合理范围内
-        self.buffer_size = self.buffer_size.max(self.stream_config.min_chunk_size)
-                                         .min(self.stream_config.max_chunk_size);
+        self.buffer_size = self
+            .buffer_size
+            .max(self.stream_config.min_chunk_size)
+            .min(self.stream_config.max_chunk_size);
     }
 
     /// 计算最优分块大小
@@ -1624,13 +1674,18 @@ impl StreamProcessor {
 
         // 综合考虑
         let optimal_size = (base_size + item_based_size) / 2;
-        
-        optimal_size.max(self.stream_config.min_chunk_size)
-                   .min(self.stream_config.max_chunk_size)
+
+        optimal_size
+            .max(self.stream_config.min_chunk_size)
+            .min(self.stream_config.max_chunk_size)
     }
 
     /// 根据背压调整分块大小
-    pub fn adjust_chunk_size_for_backpressure(&self, base_size: usize, backpressure: BackpressureSignal) -> usize {
+    pub fn adjust_chunk_size_for_backpressure(
+        &self,
+        base_size: usize,
+        backpressure: BackpressureSignal,
+    ) -> usize {
         match backpressure {
             BackpressureSignal::None => base_size,
             BackpressureSignal::Moderate => (base_size as f64 * 0.8) as usize,
@@ -1643,7 +1698,7 @@ impl StreamProcessor {
     pub fn get_processing_state(&self) -> StreamProcessingState {
         let throughput_stats = self.throughput_tracker.get_throughput_statistics();
         let memory_stats = self.memory_monitor.get_memory_statistics();
-        
+
         StreamProcessingState {
             chunks_processed: throughput_stats.total_chunks_processed,
             bytes_processed: (throughput_stats.current_throughput_mbps * 1024.0 * 1024.0) as usize,
@@ -1669,10 +1724,8 @@ impl StreamProcessor {
     pub fn trigger_gc_if_needed(&mut self) -> bool {
         if self.memory_monitor.should_trigger_gc() {
             // 简化的GC触发 - 在实际应用中应该调用真正的GC
-            self.memory_monitor.record_memory_usage(
-                self.memory_monitor.current_memory_usage / 2, 
-                0
-            );
+            self.memory_monitor
+                .record_memory_usage(self.memory_monitor.current_memory_usage / 2, 0);
             true
         } else {
             false
@@ -1686,7 +1739,8 @@ impl StreamProcessor {
 
     /// 访问吞吐量追踪器（用于测试）
     pub fn record_throughput(&mut self, bytes: usize, chunks: usize, latency: Duration) {
-        self.throughput_tracker.record_throughput(bytes, chunks, latency);
+        self.throughput_tracker
+            .record_throughput(bytes, chunks, latency);
     }
 
     /// 获取缓冲区大小
@@ -1718,7 +1772,10 @@ impl StrategySelector {
         let mut strategy_rules = HashMap::new();
         strategy_rules.insert("small_batch".to_string(), BatchAccessStrategy::Parallel);
         strategy_rules.insert("large_batch".to_string(), BatchAccessStrategy::Chunked);
-        strategy_rules.insert("continuous_range".to_string(), BatchAccessStrategy::ZeroCopy);
+        strategy_rules.insert(
+            "continuous_range".to_string(),
+            BatchAccessStrategy::ZeroCopy,
+        );
         strategy_rules.insert("sparse_access".to_string(), BatchAccessStrategy::Streaming);
 
         let mut performance_weights = HashMap::new();
@@ -1735,7 +1792,11 @@ impl StrategySelector {
         }
     }
 
-    pub fn select_strategy(&self, request: &BatchAccessRequest, _data_size: usize) -> BatchAccessStrategy {
+    pub fn select_strategy(
+        &self,
+        request: &BatchAccessRequest,
+        _data_size: usize,
+    ) -> BatchAccessStrategy {
         match request {
             BatchAccessRequest::Rows(indices) => {
                 if indices.len() < 100 {
@@ -1767,7 +1828,9 @@ impl StrategySelector {
 impl BatchAccessEngine {
     pub fn new() -> Self {
         Self {
-            parallel_executor: Arc::new(Mutex::new(ParallelExecutor::new(rayon::current_num_threads()))),
+            parallel_executor: Arc::new(Mutex::new(ParallelExecutor::new(
+                rayon::current_num_threads(),
+            ))),
             chunk_optimizer: Arc::new(RwLock::new(ChunkOptimizer::new())),
             stream_processor: Arc::new(Mutex::new(StreamProcessor::new())),
             strategy_selector: Arc::new(RwLock::new(StrategySelector::new())),
@@ -1775,15 +1838,19 @@ impl BatchAccessEngine {
         }
     }
 
-    pub fn process_request(&self, request: BatchAccessRequest, data_context: &dyn BatchDataContext) -> BatchAccessResult {
+    pub fn process_request(
+        &self,
+        request: BatchAccessRequest,
+        data_context: &dyn BatchDataContext,
+    ) -> BatchAccessResult {
         let start_time = Instant::now();
-        
+
         // 选择最优策略（只读访问，使用RwLock的read）
         let strategy = {
             let selector = self.strategy_selector.read().unwrap();
             selector.select_strategy(&request, data_context.total_size())
         };
-        
+
         // 根据策略执行请求
         let result = match strategy {
             BatchAccessStrategy::Parallel => self.process_parallel(request.clone(), data_context),
@@ -1795,15 +1862,20 @@ impl BatchAccessEngine {
 
         // 更新性能指标
         self.update_performance_metrics(start_time.elapsed(), &request);
-        
+
         result
     }
 
-    fn process_parallel(&self, request: BatchAccessRequest, context: &dyn BatchDataContext) -> BatchAccessResult {
+    fn process_parallel(
+        &self,
+        request: BatchAccessRequest,
+        context: &dyn BatchDataContext,
+    ) -> BatchAccessResult {
         match request {
             BatchAccessRequest::Rows(indices) => {
                 // 简化：先不使用并行处理，避免线程安全问题
-                let results: Vec<Vec<u8>> = indices.into_iter()
+                let results: Vec<Vec<u8>> = indices
+                    .into_iter()
                     .map(|idx| context.get_row_data(idx))
                     .collect();
                 BatchAccessResult::Owned(results)
@@ -1819,13 +1891,17 @@ impl BatchAccessEngine {
         }
     }
 
-    fn process_chunked(&self, request: BatchAccessRequest, context: &dyn BatchDataContext) -> BatchAccessResult {
+    fn process_chunked(
+        &self,
+        request: BatchAccessRequest,
+        context: &dyn BatchDataContext,
+    ) -> BatchAccessResult {
         match request {
             BatchAccessRequest::Rows(indices) => {
                 // 分析访问连续性（只读访问）
                 let chunk_optimizer = self.chunk_optimizer.read().unwrap();
                 let continuity_report = chunk_optimizer.detect_access_continuity(&indices);
-                
+
                 let chunk_size = if continuity_report.is_highly_continuous {
                     // 高连续性使用大块
                     chunk_optimizer.optimize_chunk_size(indices.len(), "sequential")
@@ -1833,17 +1909,16 @@ impl BatchAccessEngine {
                     // 低连续性使用小块
                     chunk_optimizer.optimize_chunk_size(indices.len(), "random")
                 };
-                
+
                 let chunks = chunk_optimizer.split_into_chunks(indices, chunk_size);
                 drop(chunk_optimizer); // 尽早释放读锁
-                
-                // 简化：使用顺序处理避免线程安全问题  
-                let results: Vec<Vec<u8>> = chunks.into_iter()
-                    .flat_map(|chunk| {
-                        chunk.into_iter().map(|idx| context.get_row_data(idx))
-                    })
+
+                // 简化：使用顺序处理避免线程安全问题
+                let results: Vec<Vec<u8>> = chunks
+                    .into_iter()
+                    .flat_map(|chunk| chunk.into_iter().map(|idx| context.get_row_data(idx)))
                     .collect();
-                
+
                 BatchAccessResult::Owned(results)
             }
             BatchAccessRequest::Range(start, end) => {
@@ -1855,17 +1930,23 @@ impl BatchAccessEngine {
         }
     }
 
-    fn process_streaming(&self, request: BatchAccessRequest, context: &dyn BatchDataContext) -> BatchAccessResult {
+    fn process_streaming(
+        &self,
+        request: BatchAccessRequest,
+        context: &dyn BatchDataContext,
+    ) -> BatchAccessResult {
         match request {
             BatchAccessRequest::Streaming(indices, _chunk_size) => {
                 // 简化：直接返回所有数据，避免复杂的流式处理
-                let results: Vec<Vec<u8>> = indices.into_iter()
+                let results: Vec<Vec<u8>> = indices
+                    .into_iter()
                     .map(|idx| context.get_row_data(idx))
                     .collect();
                 BatchAccessResult::Owned(results)
             }
             BatchAccessRequest::Rows(indices) => {
-                let results: Vec<Vec<u8>> = indices.into_iter()
+                let results: Vec<Vec<u8>> = indices
+                    .into_iter()
                     .map(|idx| context.get_row_data(idx))
                     .collect();
                 BatchAccessResult::Owned(results)
@@ -1874,7 +1955,11 @@ impl BatchAccessEngine {
         }
     }
 
-    fn process_zero_copy(&self, request: BatchAccessRequest, context: &dyn BatchDataContext) -> BatchAccessResult {
+    fn process_zero_copy(
+        &self,
+        request: BatchAccessRequest,
+        context: &dyn BatchDataContext,
+    ) -> BatchAccessResult {
         match request {
             BatchAccessRequest::Range(start, end) => {
                 let data = context.get_range_data(start, end);
@@ -1887,12 +1972,22 @@ impl BatchAccessEngine {
         }
     }
 
-    fn process_adaptive(&self, request: BatchAccessRequest, context: &dyn BatchDataContext) -> BatchAccessResult {
+    fn process_adaptive(
+        &self,
+        request: BatchAccessRequest,
+        context: &dyn BatchDataContext,
+    ) -> BatchAccessResult {
         // 自适应策略：基于请求特征选择最佳处理方式
         let strategy = match &request {
-            BatchAccessRequest::Rows(indices) if indices.len() < 50 => BatchAccessStrategy::Parallel,
-            BatchAccessRequest::Rows(indices) if indices.len() > 5000 => BatchAccessStrategy::Chunked,
-            BatchAccessRequest::Range(start, end) if end - start > 10000 => BatchAccessStrategy::ZeroCopy,
+            BatchAccessRequest::Rows(indices) if indices.len() < 50 => {
+                BatchAccessStrategy::Parallel
+            }
+            BatchAccessRequest::Rows(indices) if indices.len() > 5000 => {
+                BatchAccessStrategy::Chunked
+            }
+            BatchAccessRequest::Range(start, end) if end - start > 10000 => {
+                BatchAccessStrategy::ZeroCopy
+            }
             _ => BatchAccessStrategy::Parallel,
         };
 
@@ -1907,12 +2002,13 @@ impl BatchAccessEngine {
     fn update_performance_metrics(&self, latency: Duration, request: &BatchAccessRequest) {
         if let Ok(mut metrics) = self.performance_monitor.lock() {
             metrics.total_requests += 1;
-            
+
             // 更新平均延迟
-            let total_latency_ns = metrics.avg_latency.as_nanos() as u64 * (metrics.total_requests - 1)
+            let total_latency_ns = metrics.avg_latency.as_nanos() as u64
+                * (metrics.total_requests - 1)
                 + latency.as_nanos() as u64;
             metrics.avg_latency = Duration::from_nanos(total_latency_ns / metrics.total_requests);
-            
+
             // 更新字节数统计
             match request {
                 BatchAccessRequest::Rows(indices) => {
@@ -1948,7 +2044,10 @@ pub struct SimpleBatchDataContext {
 
 impl SimpleBatchDataContext {
     pub fn new(total_size: usize, row_size: usize) -> Self {
-        Self { total_size, row_size }
+        Self {
+            total_size,
+            row_size,
+        }
     }
 }
 
@@ -1956,16 +2055,16 @@ impl BatchDataContext for SimpleBatchDataContext {
     fn get_row_data(&self, _index: usize) -> Vec<u8> {
         vec![0u8; self.row_size] // 简单实现
     }
-    
+
     fn get_range_data(&self, start: usize, end: usize) -> Vec<u8> {
         let range_size = end.saturating_sub(start) * self.row_size;
         vec![0u8; range_size]
     }
-    
+
     fn get_row_view(&self, _index: usize) -> Option<&[u8]> {
         None // 简单实现不提供视图
     }
-    
+
     fn total_size(&self) -> usize {
         self.total_size
     }
@@ -1996,7 +2095,7 @@ impl<T> BackpressureAwareIterator<T> {
     pub fn should_pause(&mut self) -> bool {
         let now = Instant::now();
         let since_last_yield = now - self.last_yield_time;
-        
+
         // 根据背压信号决定是否需要暂停
         let required_pause = match self.backpressure_signal {
             BackpressureSignal::None => Duration::from_millis(0),
@@ -2034,7 +2133,7 @@ impl<T> Iterator for BackpressureAwareIterator<T> {
             // 简化实现：通过索引获取元素（需要T: Clone）
             // 在实际实现中应该使用更高效的方法，比如移动所有权
             let result = None; // 这里简化处理，避免所有权问题
-            
+
             self.current_index += 1;
             self.last_yield_time = Instant::now();
             result
@@ -2042,4 +2141,4 @@ impl<T> Iterator for BackpressureAwareIterator<T> {
             None
         }
     }
-} 
+}
