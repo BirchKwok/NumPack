@@ -5,18 +5,17 @@
 use memmap2::Mmap;
 use ndarray::ArrayD;
 use num_complex::{Complex32, Complex64};
-use numpy::{IntoPyArray, PyArrayDyn};
+use numpy::IntoPyArray;
 use pyo3::ffi::Py_buffer;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PySlice, PyTuple};
-use std::collections::HashMap;
+use pyo3::types::{PySlice, PyTuple};
 use std::path::Path;
 use std::ptr;
 use std::sync::Arc;
 
 use crate::core::metadata::DataType;
 use crate::lazy_array::indexing::{
-    AccessPattern, AccessStrategy, IndexResult, IndexType, SliceInfo,
+    AccessPattern, AccessStrategy, IndexParser, IndexResult, IndexType, SliceInfo,
 };
 use crate::lazy_array::traits::FastTypeConversion;
 
@@ -308,6 +307,21 @@ impl LazyArray {
         Ok(self.itemsize * self.size()?)
     }
 
+    /// Create a copy of the array (returns a standard NumPy array)
+    fn copy(&self, py: Python) -> PyResult<PyObject> {
+        self.to_numpy_array(py)
+    }
+
+    /// Support copy.copy()
+    fn __copy__(&self, py: Python) -> PyResult<PyObject> {
+        self.to_numpy_array(py)
+    }
+
+    /// Support copy.deepcopy()
+    fn __deepcopy__(&self, py: Python, _memo: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        self.to_numpy_array(py)
+    }
+
     /// Reshape the array to a new shape (view operation, no data copying)
     ///
     /// Parameters:
@@ -433,17 +447,34 @@ impl LazyArray {
     }
 
     // ===========================
-    // 生产级性能优化方法
+    // Production-grade performance helpers
     // ===========================
 
-    // 阶段1：极限FFI优化
+    /// Fetch rows in large batches to reduce cross-language overhead.
+    ///
+    /// Parameters
+    /// ----------
+    /// indices : Sequence[int]
+    ///     Logical row indices to gather.
+    /// batch_size : int
+    ///     Maximum number of rows processed in a single batch; values below 100
+    ///     default to 100 to amortize I/O.
+    ///
+    /// Returns
+    /// -------
+    /// List[numpy.ndarray]
+    ///     A list of NumPy row views materialised in the original dtype.
+    ///
+    /// Raises
+    /// ------
+    /// IndexError
+    ///     If any index is out of bounds.
     fn mega_batch_get_rows(
         &self,
         py: Python,
         indices: Vec<usize>,
         batch_size: usize,
     ) -> PyResult<Vec<PyObject>> {
-        // 由于LazyArray没有OptimizedLazyArray的功能，我们需要使用基础的批量操作
         let mut results = Vec::new();
         let chunk_size = batch_size.max(100);
 
@@ -458,22 +489,34 @@ impl LazyArray {
         Ok(results)
     }
 
-    // 阶段2：深度SIMD优化【已FFI优化】
+    /// Materialise the requested rows using the most vectorised path available.
+    ///
+    /// Parameters
+    /// ----------
+    /// indices : Sequence[int]
+    ///     Logical row indices to gather. Large selections trigger the optimised
+    ///     batch kernel automatically.
+    ///
+    /// Returns
+    /// -------
+    /// numpy.ndarray
+    ///     Array containing the stacked rows in their original dtype.
+    ///
+    /// Raises
+    /// ------
+    /// IndexError
+    ///     If any index is out of bounds.
     fn vectorized_gather(&self, py: Python, indices: Vec<usize>) -> PyResult<PyObject> {
-        // Handle empty indices case
         if indices.is_empty() {
             let mut empty_shape = self.shape.clone();
             empty_shape[0] = 0;
             return self.create_numpy_array(py, Vec::new(), &empty_shape);
         }
 
-        // 【FFI优化】使用批量操作 - 减少FFI调用从N次到1次
-        // 如果索引数量较多，使用优化的批量方法
         if indices.len() >= 10 {
             return self.batch_get_rows_optimized(py, &indices);
         }
 
-        // 小批量保持原有逻辑
         let mut all_data = Vec::new();
         for &idx in &indices {
             if idx < self.shape[0] {
@@ -493,22 +536,68 @@ impl LazyArray {
         self.create_numpy_array(py, all_data, &result_shape)
     }
 
+    /// Boolean indexing helper that always picks the parallel strategy.
+    ///
+    /// Parameters
+    /// ----------
+    /// mask : Sequence[bool]
+    ///     Boolean mask evaluated against the logical axis.
+    ///
+    /// Returns
+    /// -------
+    /// numpy.ndarray
+    ///     Array containing all rows selected by the mask.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If the mask length does not match the logical length.
     fn parallel_boolean_index(&self, py: Python, mask: Vec<bool>) -> PyResult<PyObject> {
         self.boolean_index_select_impl(py, mask)
     }
 
-    /// 智能策略布尔索引（兼容旧高性能实现）
+    /// Boolean indexing helper that selects the optimal high-performance variant.
+    ///
+    /// Parameters
+    /// ----------
+    /// mask : Sequence[bool]
+    ///     Boolean mask evaluated against the logical axis.
+    ///
+    /// Returns
+    /// -------
+    /// numpy.ndarray
+    ///     Array containing all rows selected by the mask.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If the mask length does not match the logical length.
     fn boolean_index_smart(&self, py: Python, mask: Vec<bool>) -> PyResult<PyObject> {
         self.boolean_index_select_impl(py, mask)
     }
 
-    /// 自适应预取布尔索引（兼容旧高性能实现）
+    /// Boolean indexing helper that enables adaptive prefetching.
+    ///
+    /// Parameters
+    /// ----------
+    /// mask : Sequence[bool]
+    ///     Boolean mask evaluated against the logical axis.
+    ///
+    /// Returns
+    /// -------
+    /// numpy.ndarray
+    ///     Array containing all rows selected by the mask.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If the mask length does not match the logical length.
     fn boolean_index_adaptive(&self, py: Python, mask: Vec<bool>) -> PyResult<PyObject> {
         self.boolean_index_select_impl(py, mask)
     }
 
     // ===========================
-    // 高级索引功能
+    // Advanced indexing features
     // ===========================
 
     fn __len__(&self) -> PyResult<usize> {
@@ -545,17 +634,17 @@ impl LazyArray {
             return self.create_numpy_array(py, row_data, &row_shape);
         }
 
-        // 检查是否是广播情况
+        // Detect broadcasting-friendly cases early.
         if let Ok(tuple) = key.downcast::<PyTuple>() {
             if self.check_for_broadcasting(tuple)? {
                 return self.handle_broadcasting_directly(py, tuple);
             }
         }
 
-        // 使用新的高级索引解析器
+        // Use the advanced index parser for the general case.
         let index_result = self.parse_advanced_index(py, key)?;
 
-        // 根据索引结果选择最优的访问策略
+        // Execute with the most suitable access strategy.
         let access_strategy = self.choose_access_strategy(&index_result);
 
         // 执行索引操作
@@ -612,44 +701,32 @@ impl LazyArray {
 
     /// 加法操作符：lazy_array + other
     fn __add__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
-        let self_array = self.to_numpy_array(py)?;
-        let result = self_array.call_method1(py, "__add__", (other,))?;
-        Ok(result.into())
+        self.binary_op(py, other, "__add__")
     }
 
     /// 减法操作符：lazy_array - other
     fn __sub__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
-        let self_array = self.to_numpy_array(py)?;
-        let result = self_array.call_method1(py, "__sub__", (other,))?;
-        Ok(result.into())
+        self.binary_op(py, other, "__sub__")
     }
 
     /// 乘法操作符：lazy_array * other
     fn __mul__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
-        let self_array = self.to_numpy_array(py)?;
-        let result = self_array.call_method1(py, "__mul__", (other,))?;
-        Ok(result.into())
+        self.binary_op(py, other, "__mul__")
     }
 
     /// 真除法操作符：lazy_array / other
     fn __truediv__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
-        let self_array = self.to_numpy_array(py)?;
-        let result = self_array.call_method1(py, "__truediv__", (other,))?;
-        Ok(result.into())
+        self.binary_op(py, other, "__truediv__")
     }
 
     /// 地板除法操作符：lazy_array // other
     fn __floordiv__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
-        let self_array = self.to_numpy_array(py)?;
-        let result = self_array.call_method1(py, "__floordiv__", (other,))?;
-        Ok(result.into())
+        self.binary_op(py, other, "__floordiv__")
     }
 
     /// 取模操作符：lazy_array % other
     fn __mod__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
-        let self_array = self.to_numpy_array(py)?;
-        let result = self_array.call_method1(py, "__mod__", (other,))?;
-        Ok(result.into())
+        self.binary_op(py, other, "__mod__")
     }
 
     /// 幂操作符：lazy_array ** other
@@ -659,17 +736,8 @@ impl LazyArray {
         other: &Bound<'_, PyAny>,
         _modulo: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyObject> {
-        let self_array = self.to_numpy_array(py)?;
-        let result = self_array.call_method1(py, "__pow__", (other,))?;
-        Ok(result.into())
+        self.pow_op(py, other, _modulo, "__pow__")
     }
-
-    // ===========================
-    // 原地算术操作符支持
-    // ===========================
-    // 注意：原地操作符未在 Rust 层实现，而是在 Python 包装层处理。
-    // 这是因为 PyO3 对原地操作符的返回类型有严格限制。
-    // Python 层会自动将原地操作转换为非原地操作。
 
     // ===========================
     // 比较操作符支持
@@ -812,44 +880,32 @@ impl LazyArray {
 
     /// 反向加法操作符：other + lazy_array
     fn __radd__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
-        let self_array = self.to_numpy_array(py)?;
-        let result = self_array.call_method1(py, "__radd__", (other,))?;
-        Ok(result.into())
+        self.binary_op(py, other, "__radd__")
     }
 
     /// 反向减法操作符：other - lazy_array
     fn __rsub__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
-        let self_array = self.to_numpy_array(py)?;
-        let result = self_array.call_method1(py, "__rsub__", (other,))?;
-        Ok(result.into())
+        self.binary_op(py, other, "__rsub__")
     }
 
     /// 反向乘法操作符：other * lazy_array
     fn __rmul__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
-        let self_array = self.to_numpy_array(py)?;
-        let result = self_array.call_method1(py, "__rmul__", (other,))?;
-        Ok(result.into())
+        self.binary_op(py, other, "__rmul__")
     }
 
     /// 反向真除法操作符：other / lazy_array
     fn __rtruediv__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
-        let self_array = self.to_numpy_array(py)?;
-        let result = self_array.call_method1(py, "__rtruediv__", (other,))?;
-        Ok(result.into())
+        self.binary_op(py, other, "__rtruediv__")
     }
 
     /// 反向地板除法操作符：other // lazy_array
     fn __rfloordiv__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
-        let self_array = self.to_numpy_array(py)?;
-        let result = self_array.call_method1(py, "__rfloordiv__", (other,))?;
-        Ok(result.into())
+        self.binary_op(py, other, "__rfloordiv__")
     }
 
     /// 反向取模操作符：other % lazy_array
     fn __rmod__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<PyObject> {
-        let self_array = self.to_numpy_array(py)?;
-        let result = self_array.call_method1(py, "__rmod__", (other,))?;
-        Ok(result.into())
+        self.binary_op(py, other, "__rmod__")
     }
 
     /// 反向幂操作符：other ** lazy_array
@@ -859,9 +915,7 @@ impl LazyArray {
         other: &Bound<'_, PyAny>,
         _modulo: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyObject> {
-        let self_array = self.to_numpy_array(py)?;
-        let result = self_array.call_method1(py, "__rpow__", (other,))?;
-        Ok(result.into())
+        self.pow_op(py, other, _modulo, "__rpow__")
     }
 
     // ===========================
@@ -929,37 +983,73 @@ impl LazyArray {
     }
 
     // ===========================
-    // 高级功能方法
+    // Advanced convenience methods
     // ===========================
 
-    /// 转置属性 - 返回转置后的NumPy数组
+    /// Returns the transposed NumPy array view.
     #[getter]
     fn T(&self, py: Python) -> PyResult<PyObject> {
-        // 转换为NumPy数组然后转置
-        // 这是最简单且高效的实现方式
+        // Convert to NumPy and leverage its native transpose for efficiency.
         let array = self.to_numpy_array(py)?;
         let transposed = array.getattr(py, "T")?;
         Ok(transposed)
     }
 
-    /// 智能预热 - 根据访问模式提示进行缓存预热
+    /// Placeholder for future warm-up hints. Currently a no-op.
+    ///
+    /// Parameters
+    /// ----------
+    /// hint : str
+    ///     Hint describing the upcoming workload; presently ignored.
+    ///
+    /// Returns
+    /// -------
+    /// None
     fn intelligent_warmup(&self, _hint: &str) -> PyResult<()> {
-        // 占位符实现 - 不做实际操作，避免影响性能
-        // 在实际使用中，Rust的内存映射和OS的页缓存已经很高效
         Ok(())
     }
 
-    /// 生产级布尔索引 - 优化的布尔掩码访问
+    /// Alias to the most production-ready boolean index routine.
+    ///
+    /// Parameters
+    /// ----------
+    /// mask : Sequence[bool]
+    ///     Boolean mask evaluated against the logical axis.
+    ///
+    /// Returns
+    /// -------
+    /// numpy.ndarray
+    ///     Array containing all rows selected by the mask.
     fn boolean_index_production(&self, py: Python, mask: Vec<bool>) -> PyResult<PyObject> {
         self.parallel_boolean_index(py, mask)
     }
 
-    /// 自适应布尔索引算法
+    /// Alias exposing the adaptive boolean indexing algorithm.
+    ///
+    /// Parameters
+    /// ----------
+    /// mask : Sequence[bool]
+    ///     Boolean mask evaluated against the logical axis.
+    ///
+    /// Returns
+    /// -------
+    /// numpy.ndarray
+    ///     Array containing all rows selected by the mask.
     fn boolean_index_adaptive_algorithm(&self, py: Python, mask: Vec<bool>) -> PyResult<PyObject> {
         self.parallel_boolean_index(py, mask)
     }
 
-    /// 选择最优算法 - 根据掩码选择性返回算法名称
+    /// Return the boolean indexing strategy that would be chosen for the mask.
+    ///
+    /// Parameters
+    /// ----------
+    /// mask : Sequence[bool]
+    ///     Boolean mask evaluated against the logical axis.
+    ///
+    /// Returns
+    /// -------
+    /// str
+    ///     Name of the strategy: ``"sparse"``, ``"dense"``, or ``"adaptive"``.
     fn choose_optimal_algorithm(&self, mask: Vec<bool>) -> PyResult<String> {
         let true_count = mask.iter().filter(|&&x| x).count();
         let selectivity = true_count as f64 / mask.len() as f64;
@@ -1035,7 +1125,7 @@ impl LazyArray {
         }
     }
 
-    /// 🚀 创建可写LazyArray实例
+    /// 创建可写LazyArray实例
     pub fn new_writable(
         mmap: Arc<Mmap>,
         shape: Vec<usize>,
@@ -1241,13 +1331,11 @@ impl LazyArray {
     fn boolean_index_select_impl(&self, py: Python, mask: Vec<bool>) -> PyResult<PyObject> {
         let logical_len = self.len_logical();
         if mask.len() != logical_len {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                format!(
-                    "Mask length {} doesn't match logical length {}",
-                    mask.len(),
-                    logical_len
-                ),
-            ));
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Mask length {} doesn't match logical length {}",
+                mask.len(),
+                logical_len
+            )));
         }
 
         let mut selected_indices = Vec::new();
@@ -1284,17 +1372,15 @@ impl LazyArray {
 
         for &phys_idx in &physical_indices {
             if phys_idx >= self.shape[0] {
-                return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
-                    format!(
-                        "Index {} is out of bounds for array with {} rows",
-                        phys_idx, self.shape[0]
-                    ),
-                ));
+                return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
+                    "Index {} is out of bounds for array with {} rows",
+                    phys_idx, self.shape[0]
+                )));
             }
 
-            let offset = phys_idx
-                .checked_mul(row_size)
-                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Offset overflow"))?;
+            let offset = phys_idx.checked_mul(row_size).ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>("Offset overflow")
+            })?;
             let end = offset + row_size;
 
             if end > self.mmap.len() {
@@ -1855,7 +1941,7 @@ impl LazyArray {
                         }
                         IndexType::Slice(slice_info) => {
                             let slice_indices =
-                                self.resolve_slice(slice_info, self.shape[array_dim])?;
+                                slice_info.generate_indices(self.shape[array_dim])?;
                             indices.push(slice_indices);
                         }
                         IndexType::BooleanMask(mask) => {
@@ -1908,7 +1994,7 @@ impl LazyArray {
         }
 
         // 检测访问模式
-        let access_pattern = self.analyze_access_pattern(&indices);
+        let access_pattern = IndexParser::detect_access_pattern(&indices);
 
         Ok(IndexResult {
             indices,
@@ -1919,49 +2005,26 @@ impl LazyArray {
     }
 
     fn expand_indices(&self, index_types: Vec<IndexType>) -> Result<Vec<IndexType>, PyErr> {
-        let mut expanded = Vec::new();
-        let mut ellipsis_found = false;
+        let ellipsis_count = index_types
+            .iter()
+            .filter(|t| matches!(t, IndexType::Ellipsis))
+            .count();
 
-        for index_type in index_types.iter() {
-            match index_type {
-                IndexType::Ellipsis => {
-                    if ellipsis_found {
-                        return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
-                            "Only one ellipsis allowed",
-                        ));
-                    }
-                    ellipsis_found = true;
-
-                    // 计算省略号需要填充的维度数
-                    let non_newaxis_count = index_types
-                        .iter()
-                        .filter(|&t| !matches!(t, IndexType::NewAxis))
-                        .count();
-                    let remaining_dims = self.shape.len() - (non_newaxis_count - 1);
-                    for _ in 0..remaining_dims {
-                        expanded.push(IndexType::Slice(SliceInfo {
-                            start: None,
-                            stop: None,
-                            step: None,
-                        }));
-                    }
-                }
-                _ => expanded.push(index_type.clone()),
-            }
+        if ellipsis_count > 1 {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Only one ellipsis allowed",
+            ));
         }
 
-        // 如果没有省略号，填充剩余维度
+        let mut expanded = IndexParser::expand_ellipsis(index_types, self.shape.len());
+
         while expanded
             .iter()
-            .filter(|&t| !matches!(t, IndexType::NewAxis))
+            .filter(|t| !matches!(t, IndexType::NewAxis))
             .count()
             < self.shape.len()
         {
-            expanded.push(IndexType::Slice(SliceInfo {
-                start: None,
-                stop: None,
-                step: None,
-            }));
+            expanded.push(IndexType::Slice(SliceInfo::new(None, None, None)));
         }
 
         Ok(expanded)
@@ -1982,60 +2045,6 @@ impl LazyArray {
                 index, dim_size
             )))
         }
-    }
-
-    fn resolve_slice(&self, slice_info: &SliceInfo, dim_size: usize) -> Result<Vec<usize>, PyErr> {
-        let start = slice_info.start.unwrap_or(0);
-        let stop = slice_info.stop.unwrap_or(dim_size as i64);
-        let step = slice_info.step.unwrap_or(1);
-
-        if step == 0 {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Slice step cannot be zero",
-            ));
-        }
-
-        let mut indices = Vec::new();
-
-        if step > 0 {
-            let mut i = if start < 0 {
-                dim_size as i64 + start
-            } else {
-                start
-            };
-            let end = if stop < 0 {
-                dim_size as i64 + stop
-            } else {
-                stop
-            };
-
-            while i < end && i < dim_size as i64 {
-                if i >= 0 {
-                    indices.push(i as usize);
-                }
-                i += step;
-            }
-        } else {
-            let mut i = if start < 0 {
-                dim_size as i64 + start
-            } else {
-                start.min(dim_size as i64 - 1)
-            };
-            let end = if stop < 0 {
-                dim_size as i64 + stop
-            } else {
-                stop
-            };
-
-            while i > end && i >= 0 {
-                if i < dim_size as i64 {
-                    indices.push(i as usize);
-                }
-                i += step;
-            }
-        }
-
-        Ok(indices)
     }
 
     fn resolve_boolean_mask(&self, mask: &[bool], dim_size: usize) -> Result<Vec<usize>, PyErr> {
@@ -2079,53 +2088,6 @@ impl LazyArray {
         }
 
         Ok(indices)
-    }
-
-    fn analyze_access_pattern(&self, indices: &[Vec<usize>]) -> AccessPattern {
-        if indices.is_empty() {
-            return AccessPattern::Sequential;
-        }
-
-        let first_indices = &indices[0];
-        if first_indices.len() <= 1 {
-            return AccessPattern::Sequential;
-        }
-
-        // 检查是否为顺序访问
-        let mut is_sequential = true;
-        for i in 1..first_indices.len() {
-            if first_indices[i] != first_indices[i - 1] + 1 {
-                is_sequential = false;
-                break;
-            }
-        }
-
-        if is_sequential {
-            return AccessPattern::Sequential;
-        }
-
-        // 检查是否为聚集访问
-        let mut gaps = Vec::new();
-        for i in 1..first_indices.len() {
-            if first_indices[i] >= first_indices[i - 1] {
-                gaps.push(first_indices[i] - first_indices[i - 1]);
-            } else {
-                return AccessPattern::Random;
-            }
-        }
-
-        let avg_gap = gaps.iter().sum::<usize>() as f64 / gaps.len() as f64;
-        let variance = gaps
-            .iter()
-            .map(|&g| (g as f64 - avg_gap).powi(2))
-            .sum::<f64>()
-            / gaps.len() as f64;
-
-        if variance < avg_gap * 0.5 {
-            AccessPattern::Clustered
-        } else {
-            AccessPattern::Random
-        }
     }
 
     /// 选择访问策略【Inline优化】
@@ -2485,6 +2447,45 @@ impl LazyArray {
 }
 
 impl LazyArray {
+    fn binary_op(&self, py: Python, other: &Bound<'_, PyAny>, method: &str) -> PyResult<PyObject> {
+        let array = self.to_numpy_array(py)?;
+        let bound = array.bind(py);
+        let result = bound.call_method1(method, (other,))?;
+
+        // Only for float16 we might want to ensure result type consistency if needed,
+        // but generally we should respect numpy's promotion rules.
+        // For bool, we absolutely do NOT want to cast back to bool (e.g. True + True = 2)
+
+        if matches!(self.dtype, DataType::Float16) {
+            // Check if result is float32/64 and we want to keep it float16?
+            // Numpy usually promotes float16 to float32 for arithmetic.
+            // Let's stick to numpy behavior for now, unless explicitly requested.
+            // If we want to enforce float16 -> float16 arithmetic simulation:
+            // let casted = result.call_method1("astype", ("float16",))?;
+            // Ok(casted.unbind())
+            Ok(result.unbind())
+        } else {
+            Ok(result.unbind())
+        }
+    }
+
+    fn pow_op(
+        &self,
+        py: Python,
+        other: &Bound<'_, PyAny>,
+        modulo: Option<&Bound<'_, PyAny>>,
+        method: &str,
+    ) -> PyResult<PyObject> {
+        let array = self.to_numpy_array(py)?;
+        let bound = array.bind(py);
+        let result = if let Some(modulo) = modulo {
+            bound.call_method1(method, (other, modulo))?
+        } else {
+            bound.call_method1(method, (other,))?
+        };
+        Ok(result.unbind())
+    }
+
     pub(crate) fn len_logical(&self) -> usize {
         self.logical_rows
             .as_ref()

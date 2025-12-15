@@ -8,7 +8,7 @@
 
 #[cfg(test)]
 mod benchmarks {
-    use super::super::lazy_array::*;
+    use crate::lazy_array::*;
     use std::fs::File;
     use std::io::Write;
     use std::time::{Duration, Instant};

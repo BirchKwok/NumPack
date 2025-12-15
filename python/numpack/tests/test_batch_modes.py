@@ -12,6 +12,12 @@ import tempfile
 import shutil
 from pathlib import Path
 from numpack import NumPack
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent))
+import conftest
+ALL_DTYPES = conftest.ALL_DTYPES
+create_test_array = conftest.create_test_array
 
 
 @pytest.fixture
@@ -208,48 +214,79 @@ class TestBatchModeBoundaries:
         
         npk.close()
     
-    def test_different_dtypes(self, sample_npk):
-        """测试不同数据类型"""
-        with sample_npk.batch_mode():
-            # int32
-            int_arr = sample_npk.load('int_array')
-            int_arr *= 2
-            
-            # float64
-            float_arr = sample_npk.load('float_array')
-            float_arr += 0.5
-            
-            # bool
-            bool_arr = sample_npk.load('bool_array')
-            bool_arr = ~bool_arr  # 逻辑非
-            
-            sample_npk.save({
-                'int_array': int_arr,
-                'float_array': float_arr,
-                'bool_array': bool_arr
-            })
+    @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+    def test_different_dtypes(self, temp_dir, dtype, test_values):
+        """测试所有支持的数据类型"""
+        npk = NumPack(temp_dir / f"dtype_{dtype.__name__}.npk", drop_if_exists=True)
+        npk.open()
         
-        # 验证
-        assert np.array_equal(sample_npk.load('int_array'), np.array([[2, 4, 6, 8, 10]], dtype=np.int32))
-        assert np.allclose(sample_npk.load('float_array'), np.array([[1.6, 2.7, 3.8]]))
-        assert np.array_equal(sample_npk.load('bool_array'), np.array([[False, True, False]]))
+        # 创建测试数组
+        test_data = create_test_array(dtype, (10, 5))
+        npk.save({'test_array': test_data})
+        
+        with npk.batch_mode():
+            arr = npk.load('test_array')
+            original = arr.copy()
+            
+            # 根据类型进行修改
+            if dtype == np.bool_:
+                arr = ~arr
+            elif np.issubdtype(dtype, np.integer):
+                arr = arr * 2
+            elif np.issubdtype(dtype, np.complexfloating):
+                arr = arr * 2 + 1j
+            else:  # floating point
+                arr = arr * 1.5
+            
+            npk.save({'test_array': arr})
+        
+        # 验证修改持久化
+        result = npk.load('test_array')
+        if dtype == np.bool_:
+            assert np.array_equal(result, ~original)
+        elif np.issubdtype(dtype, np.integer):
+            assert np.array_equal(result, original * 2)
+        elif np.issubdtype(dtype, np.complexfloating):
+            assert np.allclose(result, original * 2 + 1j)
+        else:
+            assert np.allclose(result, original * 1.5)
+        
+        npk.close()
     
-    def test_multidimensional_arrays(self, temp_dir):
-        """测试多维数组"""
-        npk = NumPack(temp_dir / "multi.npk", drop_if_exists=True)
+    @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+    def test_multidimensional_arrays(self, temp_dir, dtype, test_values):
+        """测试多维数组（所有数据类型）"""
+        npk = NumPack(temp_dir / f"multi_{dtype.__name__}.npk", drop_if_exists=True)
         npk.open()
         
         # 3D数组
-        arr_3d = np.random.rand(10, 20, 30)
+        arr_3d = create_test_array(dtype, (10, 20, 30))
         npk.save({'3d': arr_3d})
         
         with npk.batch_mode():
             arr = npk.load('3d')
-            arr *= 2
+            original = arr.copy()
+            
+            # 根据类型进行修改
+            if dtype == np.bool_:
+                arr = ~arr
+            elif np.issubdtype(dtype, np.integer):
+                arr = arr * 2
+            elif np.issubdtype(dtype, np.complexfloating):
+                arr = arr * 2
+            else:
+                arr = arr * 2.0
+            
             npk.save({'3d': arr})
         
         result = npk.load('3d')
-        assert np.allclose(result, arr_3d * 2)
+        if dtype == np.bool_:
+            assert np.array_equal(result, ~original)
+        elif np.issubdtype(dtype, np.integer):
+            assert np.array_equal(result, original * 2)
+        else:
+            assert np.allclose(result, original * 2.0)
+        
         npk.close()
 
 
@@ -421,41 +458,43 @@ class TestWritableBatchModeBasics:
 class TestWritableBatchModeBoundaries:
     """writable_batch_mode边界情况测试"""
     
-    def test_all_supported_dtypes(self, temp_dir):
-        """测试所有支持的数据类型"""
-        npk = NumPack(temp_dir / "dtypes.npk", drop_if_exists=True)
+    @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+    def test_all_supported_dtypes(self, temp_dir, dtype, test_values):
+        """测试所有支持的数据类型（writable_batch_mode）"""
+        npk = NumPack(temp_dir / f"writable_dtype_{dtype.__name__}.npk", drop_if_exists=True)
         npk.open()
         
-        # 准备所有支持的类型
-        test_arrays = {
-            'bool': np.array([[True, False]], dtype=np.bool_),
-            'uint8': np.array([[1, 2]], dtype=np.uint8),
-            'uint16': np.array([[10, 20]], dtype=np.uint16),
-            'uint32': np.array([[100, 200]], dtype=np.uint32),
-            'uint64': np.array([[1000, 2000]], dtype=np.uint64),
-            'int8': np.array([[-1, 2]], dtype=np.int8),
-            'int16': np.array([[-10, 20]], dtype=np.int16),
-            'int32': np.array([[-100, 200]], dtype=np.int32),
-            'int64': np.array([[-1000, 2000]], dtype=np.int64),
-            'float32': np.array([[1.1, 2.2]], dtype=np.float32),
-            'float64': np.array([[1.11, 2.22]], dtype=np.float64),
-        }
-        
-        npk.save(test_arrays)
+        # 创建测试数组
+        test_data = create_test_array(dtype, (10, 5))
+        npk.save({'test_array': test_data})
         
         with npk.writable_batch_mode() as wb:
-            for name in test_arrays.keys():
-                arr = wb.load(name)
-                # 验证能够加载
-                assert arr.shape == (1, 2)
-                
-                # 尝试修改（根据类型）
-                if 'int' in name or 'uint' in name:
-                    arr += 1
-                elif 'float' in name:
-                    arr *= 1.5
-                elif name == 'bool':
-                    arr[:] = ~arr
+            arr = wb.load('test_array')
+            original = arr.copy()
+            
+            # 验证能够加载
+            assert arr.shape == (10, 5)
+            
+            # 根据类型进行修改
+            if dtype == np.bool_:
+                arr[:] = ~arr
+            elif np.issubdtype(dtype, np.integer):
+                arr += 1
+            elif np.issubdtype(dtype, np.complexfloating):
+                arr *= 2
+            else:  # floating point
+                arr *= 1.5
+        
+        # 验证修改持久化
+        result = npk.load('test_array')
+        if dtype == np.bool_:
+            assert np.array_equal(result, ~original)
+        elif np.issubdtype(dtype, np.integer):
+            assert np.array_equal(result, original + 1)
+        elif np.issubdtype(dtype, np.complexfloating):
+            assert np.allclose(result, original * 2)
+        else:
+            assert np.allclose(result, original * 1.5)
         
         npk.close()
     

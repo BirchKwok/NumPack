@@ -6,5 +6,6 @@ pub mod binary_metadata;
 pub mod deletion_bitmap;
 
 // 重新导出常用类型
-pub use binary_metadata::*;
+// pub use binary_metadata::*; // 未使用，暂时注释
+#[allow(unused_imports)]
 pub use deletion_bitmap::*;

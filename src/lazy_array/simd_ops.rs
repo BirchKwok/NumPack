@@ -2,8 +2,6 @@
 //!
 //! 从lazy_array_original.rs中提取的SIMD数学运算和向量化操作
 
-use crate::lazy_array::traits::FastTypeConversion;
-
 /// SIMD优化的数据处理模块
 #[cfg(target_arch = "x86_64")]
 pub mod simd_ops {
@@ -392,7 +390,8 @@ pub mod simd_ops {
     }
 }
 
-// 重新导出SIMD操作
+// 重新导出SIMD操作（对外API，内部未直接使用时忽略未用警告）
+#[allow(unused_imports)]
 pub use simd_ops::*;
 
 /// SIMD工具函数

@@ -5,6 +5,12 @@ import os
 import shutil
 from pathlib import Path
 from numpack import NumPack, force_cleanup_windows_handles
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent))
+import conftest
+ALL_DTYPES = conftest.ALL_DTYPES
+create_test_array = conftest.create_test_array
 
 
 @pytest.fixture
@@ -51,15 +57,6 @@ def numpack(temp_dir):
             gc.collect()
 
 
-def create_test_array(dtype, shape):
-    """创建测试数组的辅助函数"""
-    if dtype == np.bool_:
-        return np.random.choice([True, False], size=shape).astype(dtype)
-    elif np.issubdtype(dtype, np.integer):
-        info = np.iinfo(dtype)
-        return np.random.randint(info.min // 2, info.max // 2, size=shape, dtype=dtype)
-    else:  # floating point
-        return np.random.rand(*shape).astype(dtype)
 
 
 class TestNumPackAdvancedAPI:
@@ -122,20 +119,28 @@ class TestNumPackAdvancedAPI:
         numpack.save(new_data)
         assert numpack.get_member_list() == ['new_array']
 
-    def test_replace_single_row(self, numpack):
-        """测试 replace 方法 - 单行替换"""
+    @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+    def test_replace_single_row(self, numpack, dtype, test_values):
+        """测试 replace 方法 - 单行替换（所有数据类型）"""
         # 创建初始数据
-        original = np.array([[1, 2], [3, 4], [5, 6], [7, 8]], dtype=np.float32)
+        original = create_test_array(dtype, (4, 2))
         numpack.save({'array': original})
         
         # 替换第二行
-        replacement = np.array([[99, 100]], dtype=np.float32)
+        replacement = create_test_array(dtype, (1, 2))
         numpack.replace({'array': replacement}, 1)
         
         # 验证替换结果
         result = numpack.load('array')
-        expected = np.array([[1, 2], [99, 100], [5, 6], [7, 8]], dtype=np.float32)
-        assert np.array_equal(result, expected)
+        expected = original.copy()
+        expected[1] = replacement[0]
+        
+        if dtype == np.bool_:
+            assert np.array_equal(result, expected)
+        elif np.issubdtype(dtype, np.complexfloating):
+            assert np.allclose(result, expected)
+        else:
+            assert np.allclose(result, expected)
 
     def test_replace_multiple_rows_list(self, numpack):
         """测试 replace 方法 - 单行替换（逐个替换）"""

@@ -5,14 +5,21 @@ import tempfile
 import shutil
 import os
 from numpack import NumPack
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent))
+import conftest
+ALL_DTYPES = conftest.ALL_DTYPES
+create_test_array = conftest.create_test_array
 
 
 class TestDropScenarios:
     """测试drop API在各种场景下的正确性"""
     
-    def test_drop_single_row_int_index(self):
-        """测试删除单行（整数索引）"""
-        test_data = np.arange(100).reshape(10, 10).astype(np.float32)
+    @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+    def test_drop_single_row_int_index(self, dtype, test_values):
+        """测试删除单行（整数索引）- 所有数据类型"""
+        test_data = create_test_array(dtype, (10, 10))
         numpack_dir = tempfile.mkdtemp()
         
         try:
@@ -30,14 +37,21 @@ class TestDropScenarios:
                 # 验证数据正确性
                 loaded = npk.load('data')
                 expected = np.delete(test_data, 5, axis=0)
-                assert np.allclose(loaded, expected)
+                
+                if dtype == np.bool_:
+                    assert np.array_equal(loaded, expected)
+                elif np.issubdtype(dtype, np.complexfloating):
+                    assert np.allclose(loaded, expected)
+                else:
+                    assert np.allclose(loaded, expected)
         finally:
             if os.path.exists(numpack_dir):
                 shutil.rmtree(numpack_dir)
     
-    def test_drop_multiple_rows_list_index(self):
-        """测试删除多行（列表索引）"""
-        test_data = np.arange(200).reshape(20, 10).astype(np.float32)
+    @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+    def test_drop_multiple_rows_list_index(self, dtype, test_values):
+        """测试删除多行（列表索引）- 所有数据类型"""
+        test_data = create_test_array(dtype, (20, 10))
         numpack_dir = tempfile.mkdtemp()
         
         try:
@@ -54,14 +68,21 @@ class TestDropScenarios:
                 # 验证数据正确性
                 loaded = npk.load('data')
                 expected = np.delete(test_data, indices_to_drop, axis=0)
-                assert np.allclose(loaded, expected)
+                
+                if dtype == np.bool_:
+                    assert np.array_equal(loaded, expected)
+                elif np.issubdtype(dtype, np.complexfloating):
+                    assert np.allclose(loaded, expected)
+                else:
+                    assert np.allclose(loaded, expected)
         finally:
             if os.path.exists(numpack_dir):
                 shutil.rmtree(numpack_dir)
     
-    def test_drop_multiple_rows_numpy_array_index(self):
-        """测试删除多行（numpy数组索引）"""
-        test_data = np.arange(300).reshape(30, 10).astype(np.float32)
+    @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+    def test_drop_multiple_rows_numpy_array_index(self, dtype, test_values):
+        """测试删除多行（numpy数组索引）- 所有数据类型"""
+        test_data = create_test_array(dtype, (30, 10))
         numpack_dir = tempfile.mkdtemp()
         
         try:
@@ -78,7 +99,13 @@ class TestDropScenarios:
                 # 验证数据正确性
                 loaded = npk.load('data')
                 expected = np.delete(test_data, indices_to_drop, axis=0)
-                assert np.allclose(loaded, expected)
+                
+                if dtype == np.bool_:
+                    assert np.array_equal(loaded, expected)
+                elif np.issubdtype(dtype, np.complexfloating):
+                    assert np.allclose(loaded, expected)
+                else:
+                    assert np.allclose(loaded, expected)
         finally:
             if os.path.exists(numpack_dir):
                 shutil.rmtree(numpack_dir)
@@ -314,27 +341,32 @@ class TestDropScenarios:
             if os.path.exists(numpack_dir):
                 shutil.rmtree(numpack_dir)
     
-    def test_drop_different_dtypes(self):
-        """测试不同数据类型的删除操作"""
-        dtypes = [np.float32, np.float64, np.int32, np.int64, np.uint8]
+    @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+    def test_drop_different_dtypes(self, dtype, test_values):
+        """测试所有数据类型的删除操作"""
         numpack_dir = tempfile.mkdtemp()
         
         try:
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
-                for i, dtype in enumerate(dtypes):
-                    array_name = f'array_{dtype.__name__}'
-                    test_data = np.arange(100, dtype=dtype).reshape(10, 10)
-                    npk.save({array_name: test_data})
-                    
-                    # 删除第5行
-                    npk.drop(array_name, 5)
-                    
-                    # 验证
-                    assert npk.get_shape(array_name) == (9, 10)
-                    loaded = npk.load(array_name)
-                    expected = np.delete(test_data, 5, axis=0)
+                array_name = f'array_{dtype.__name__}'
+                test_data = create_test_array(dtype, (10, 10))
+                npk.save({array_name: test_data})
+                
+                # 删除第5行
+                npk.drop(array_name, 5)
+                
+                # 验证
+                assert npk.get_shape(array_name) == (9, 10)
+                loaded = npk.load(array_name)
+                expected = np.delete(test_data, 5, axis=0)
+                
+                if dtype == np.bool_:
+                    assert np.array_equal(loaded, expected)
+                elif np.issubdtype(dtype, np.complexfloating):
                     assert np.allclose(loaded, expected)
-                    assert loaded.dtype == dtype
+                else:
+                    assert np.allclose(loaded, expected)
+                assert loaded.dtype == dtype
         finally:
             if os.path.exists(numpack_dir):
                 shutil.rmtree(numpack_dir)

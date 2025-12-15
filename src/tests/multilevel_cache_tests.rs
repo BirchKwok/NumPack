@@ -1,4 +1,4 @@
-use super::lazy_array::{
+use crate::lazy_array::{
     AdaptiveCache, CacheConsistencyReport, CacheItemMetadata, CachePolicy, CompressedCache,
     EvictionStrategy, HotSpotDetector, HotSpotStats, IntelligentEvictionManager, LRUCache,
     MultiLevelCache, MultiLevelCacheReport,

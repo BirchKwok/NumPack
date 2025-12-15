@@ -5,9 +5,6 @@
 use crate::vector_engine::metrics::MetricType;
 use std::fmt;
 
-// 导入 SimSIMD traits
-use simsimd::{BinarySimilarity, ProbabilitySimilarity, SpatialSimilarity};
-
 /// SimSIMD 计算错误
 #[derive(Debug, Clone)]
 pub enum SimdError {

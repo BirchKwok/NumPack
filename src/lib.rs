@@ -41,15 +41,17 @@ use std::sync::MutexGuard;
 
 use crate::core::DataType;
 use crate::io::ParallelIO;
-use crate::lazy_array::{FastTypeConversion, OptimizedLazyArray};
-use crate::storage::{BinaryArrayMetadata, BinaryCachedStore, BinaryDataType, BinaryMetadataStore};
+use crate::lazy_array::indexing::{
+    AccessPattern, AccessStrategy, IndexParser, IndexResult, IndexType, SliceInfo,
+};
+use crate::lazy_array::OptimizedLazyArray;
 
 // Windows 平台专用：mmap 清理函数
 #[cfg(windows)]
 use crate::numpack::core::clear_mmap_cache_for_array;
 
 use crate::lazy_array::LogicalRowMap;
-use crate::storage::DeletionBitmap;
+// use crate::storage::DeletionBitmap; // 未使用，暂时注释
 use rayon::prelude::*;
 
 #[cfg(target_family = "unix")]
@@ -135,51 +137,6 @@ impl LazyArrayIterator {
 
         Ok(Some(row_array))
     }
-}
-
-// 新增：索引类型枚举
-#[derive(Debug, Clone)]
-enum IndexType {
-    Integer(i64),
-    Slice(SliceInfo),
-    BooleanMask(Vec<bool>),
-    IntegerArray(Vec<i64>),
-    Ellipsis,
-    NewAxis,
-}
-
-#[derive(Debug, Clone)]
-struct SliceInfo {
-    start: Option<i64>,
-    stop: Option<i64>,
-    step: Option<i64>,
-}
-
-// 新增：索引解析结果
-#[derive(Debug, Clone)]
-struct IndexResult {
-    indices: Vec<Vec<usize>>, // 每个维度的索引
-    result_shape: Vec<usize>,
-    needs_broadcasting: bool,
-    access_pattern: AccessPattern,
-}
-
-#[derive(Debug, Clone)]
-enum AccessPattern {
-    Sequential,
-    Random,
-    Clustered,
-    Mixed,
-}
-
-// 新增：访问策略
-#[derive(Debug, Clone)]
-enum AccessStrategy {
-    DirectMemory,
-    BlockCopy,
-    ParallelPointAccess,
-    PrefetchOptimized,
-    Adaptive,
 }
 
 // 新增：用户意图分类
@@ -672,7 +629,25 @@ impl LazyArray {
     // 生产级性能优化方法
     // ===========================
 
-    // 阶段1：极限FFI优化
+    /// Fetch rows in large batches while favouring optimised engines when available.
+    ///
+    /// Parameters
+    /// ----------
+    /// indices : Sequence[int]
+    ///     Logical row indices to gather.
+    /// batch_size : int
+    ///     Maximum number of rows processed in a single batch; values below 100
+    ///     default to 100 to amortise overhead.
+    ///
+    /// Returns
+    /// -------
+    /// List[numpy.ndarray]
+    ///     Materialised NumPy rows in the original dtype.
+    ///
+    /// Raises
+    /// ------
+    /// IndexError
+    ///     If any index is out of bounds.
     fn mega_batch_get_rows(
         &self,
         py: Python,
@@ -707,7 +682,22 @@ impl LazyArray {
         Ok(results)
     }
 
-    // 阶段2：深度SIMD优化
+    /// Materialise the requested rows using the most vectorised path available.
+    ///
+    /// Parameters
+    /// ----------
+    /// indices : Sequence[int]
+    ///     Logical row indices to gather.
+    ///
+    /// Returns
+    /// -------
+    /// numpy.ndarray
+    ///     Array containing the stacked rows in their original dtype.
+    ///
+    /// Raises
+    /// ------
+    /// IndexError
+    ///     If any index is out of bounds.
     fn vectorized_gather(&self, py: Python, indices: Vec<usize>) -> PyResult<PyObject> {
         // Handle empty indices case
         if indices.is_empty() {
@@ -750,6 +740,22 @@ impl LazyArray {
         self.create_numpy_array(py, all_data, &result_shape)
     }
 
+    /// Boolean indexing helper that always prefers the most parallel path.
+    ///
+    /// Parameters
+    /// ----------
+    /// mask : Sequence[bool]
+    ///     Boolean mask evaluated against the logical axis.
+    ///
+    /// Returns
+    /// -------
+    /// numpy.ndarray
+    ///     Array containing all rows selected by the mask.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If the mask length does not match the logical length.
     fn parallel_boolean_index(&self, py: Python, mask: Vec<bool>) -> PyResult<PyObject> {
         if mask.len() != self.shape[0] {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -789,9 +795,19 @@ impl LazyArray {
         self.create_numpy_array(py, selected_data, &result_shape)
     }
 
-    // 阶段3：内存管理优化
+    /// Workload-aware warm-up helper. Acts as a pass-through when no
+    /// specialised engine is available.
+    ///
+    /// Parameters
+    /// ----------
+    /// workload_hint : str
+    ///     Describes the anticipated access pattern; recognised values are
+    ///     ``"sequential"``, ``"random"``, ``"boolean"``, and ``"heavy"``.
+    ///
+    /// Returns
+    /// -------
+    /// None
     fn intelligent_warmup(&self, workload_hint: &str) -> PyResult<()> {
-        // 如果有优化引擎，使用智能预热
         if let Some(ref engine) = self.optimized_engine {
             use crate::access_pattern::AccessHint;
             let hint = match workload_hint {
@@ -805,7 +821,7 @@ impl LazyArray {
             return Ok(());
         }
 
-        // 回退到基础预热实现
+        // Fallback to a simple warm-up heuristic when no engine is present.
         let warmup_size = match workload_hint {
             "sequential" => 0.1,
             "random" => 0.05,
@@ -824,20 +840,51 @@ impl LazyArray {
         Ok(())
     }
 
-    // 阶段4：算法级优化
+    /// Alias to the production-grade boolean indexing path.
+    ///
+    /// Parameters
+    /// ----------
+    /// mask : Sequence[bool]
+    ///     Boolean mask evaluated against the logical axis.
+    ///
+    /// Returns
+    /// -------
+    /// numpy.ndarray
+    ///     Array containing all rows selected by the mask.
     fn boolean_index_production(&self, py: Python, mask: Vec<bool>) -> PyResult<PyObject> {
         self.parallel_boolean_index(py, mask)
     }
 
+    /// Alias exposing the adaptive boolean indexing algorithm.
+    ///
+    /// Parameters
+    /// ----------
+    /// mask : Sequence[bool]
+    ///     Boolean mask evaluated against the logical axis.
+    ///
+    /// Returns
+    /// -------
+    /// numpy.ndarray
+    ///     Array containing all rows selected by the mask.
     fn boolean_index_adaptive_algorithm(&self, py: Python, mask: Vec<bool>) -> PyResult<PyObject> {
         self.parallel_boolean_index(py, mask)
     }
 
+    /// Return the boolean indexing algorithm that would be selected for the mask.
+    ///
+    /// Parameters
+    /// ----------
+    /// mask : Sequence[bool]
+    ///     Boolean mask evaluated against the logical axis.
+    ///
+    /// Returns
+    /// -------
+    /// str
+    ///     Name of the strategy chosen for the provided mask.
     fn choose_optimal_algorithm(&self, mask: Vec<bool>) -> PyResult<String> {
         let selected_count = mask.iter().filter(|&&x| x).count();
         let selection_density = selected_count as f64 / mask.len() as f64;
 
-        // 如果有优化引擎，使用更智能的算法选择
         let algorithm = if self.optimized_engine.is_some() {
             if selection_density < 0.005 {
                 "OptimizedZeroCopy"
@@ -848,17 +895,14 @@ impl LazyArray {
             } else {
                 "OptimizedSIMD"
             }
+        } else if selection_density < 0.01 {
+            "ZeroCopy"
+        } else if selection_density > 0.9 {
+            "Vectorized"
+        } else if selection_density > 0.5 {
+            "AdaptivePrefetch"
         } else {
-            // 回退到基础算法选择
-            if selection_density < 0.01 {
-                "ZeroCopy"
-            } else if selection_density > 0.9 {
-                "Vectorized"
-            } else if selection_density > 0.5 {
-                "AdaptivePrefetch"
-            } else {
-                "StandardSIMD"
-            }
+            "StandardSIMD"
         };
 
         Ok(algorithm.to_string())
@@ -1593,58 +1637,8 @@ impl LazyArray {
     }
 
     // 新增：解析切片
-    fn resolve_slice(&self, slice_info: &SliceInfo, dim_size: usize) -> Result<Vec<usize>, PyErr> {
-        let start = slice_info.start.unwrap_or(0);
-        let stop = slice_info.stop.unwrap_or(dim_size as i64);
-        let step = slice_info.step.unwrap_or(1);
-
-        if step == 0 {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Slice step cannot be zero",
-            ));
-        }
-
-        let mut indices = Vec::new();
-
-        if step > 0 {
-            let mut i = if start < 0 {
-                dim_size as i64 + start
-            } else {
-                start
-            };
-            let end = if stop < 0 {
-                dim_size as i64 + stop
-            } else {
-                stop
-            };
-
-            while i < end && i < dim_size as i64 {
-                if i >= 0 {
-                    indices.push(i as usize);
-                }
-                i += step;
-            }
-        } else {
-            let mut i = if start < 0 {
-                dim_size as i64 + start
-            } else {
-                start.min(dim_size as i64 - 1)
-            };
-            let end = if stop < 0 {
-                dim_size as i64 + stop
-            } else {
-                stop
-            };
-
-            while i > end && i >= 0 {
-                if i < dim_size as i64 {
-                    indices.push(i as usize);
-                }
-                i += step;
-            }
-        }
-
-        Ok(indices)
+    fn resolve_slice(&self, slice_info: &SliceInfo, dim_size: usize) -> PyResult<Vec<usize>> {
+        crate::lazy_array::indexing::resolve_slice(slice_info, dim_size)
     }
 
     // 新增：解析布尔掩码
@@ -1681,51 +1675,7 @@ impl LazyArray {
 
     // 新增：分析访问模式
     fn analyze_access_pattern(&self, indices: &[Vec<usize>]) -> AccessPattern {
-        if indices.is_empty() {
-            return AccessPattern::Sequential;
-        }
-
-        let first_indices = &indices[0];
-        if first_indices.len() <= 1 {
-            return AccessPattern::Sequential;
-        }
-
-        // 检查是否为顺序访问
-        let mut is_sequential = true;
-        for i in 1..first_indices.len() {
-            if first_indices[i] != first_indices[i - 1] + 1 {
-                is_sequential = false;
-                break;
-            }
-        }
-
-        if is_sequential {
-            return AccessPattern::Sequential;
-        }
-
-        // 检查是否为聚集访问
-        let mut gaps = Vec::new();
-        for i in 1..first_indices.len() {
-            if first_indices[i] >= first_indices[i - 1] {
-                gaps.push(first_indices[i] - first_indices[i - 1]);
-            } else {
-                // 如果索引不是升序，直接返回随机访问
-                return AccessPattern::Random;
-            }
-        }
-
-        let avg_gap = gaps.iter().sum::<usize>() as f64 / gaps.len() as f64;
-        let variance = gaps
-            .iter()
-            .map(|&g| (g as f64 - avg_gap).powi(2))
-            .sum::<f64>()
-            / gaps.len() as f64;
-
-        if variance < avg_gap * 0.5 {
-            AccessPattern::Clustered
-        } else {
-            AccessPattern::Random
-        }
+        IndexParser::detect_access_pattern(indices)
     }
 
     // 新增：选择访问策略
@@ -2354,6 +2304,7 @@ impl LazyArray {
 }
 
 // 简化的内存复制函数
+#[allow(dead_code)]
 unsafe fn safe_memory_copy(src: *const u8, dst: *mut u8, size: usize) {
     // Windows平台使用简单的安全复制
     #[cfg(target_os = "windows")]
@@ -2466,72 +2417,86 @@ impl NumPack {
             match dtype {
                 DataType::Bool => {
                     let array = value.downcast::<PyArrayDyn<bool>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     bool_arrays.push((name, array, dtype));
                 }
                 DataType::Uint8 => {
                     let array = value.downcast::<PyArrayDyn<u8>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     u8_arrays.push((name, array, dtype));
                 }
                 DataType::Uint16 => {
                     let array = value.downcast::<PyArrayDyn<u16>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     u16_arrays.push((name, array, dtype));
                 }
                 DataType::Uint32 => {
                     let array = value.downcast::<PyArrayDyn<u32>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     u32_arrays.push((name, array, dtype));
                 }
                 DataType::Uint64 => {
                     let array = value.downcast::<PyArrayDyn<u64>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     u64_arrays.push((name, array, dtype));
                 }
                 DataType::Int8 => {
                     let array = value.downcast::<PyArrayDyn<i8>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     i8_arrays.push((name, array, dtype));
                 }
                 DataType::Int16 => {
                     let array = value.downcast::<PyArrayDyn<i16>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     i16_arrays.push((name, array, dtype));
                 }
                 DataType::Int32 => {
                     let array = value.downcast::<PyArrayDyn<i32>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     i32_arrays.push((name, array, dtype));
                 }
                 DataType::Int64 => {
                     let array = value.downcast::<PyArrayDyn<i64>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     i64_arrays.push((name, array, dtype));
                 }
                 DataType::Float16 => {
                     let array = value.downcast::<PyArrayDyn<f16>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     f16_arrays.push((name, array, dtype));
                 }
                 DataType::Float32 => {
                     let array = value.downcast::<PyArrayDyn<f32>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     f32_arrays.push((name, array, dtype));
                 }
                 DataType::Float64 => {
                     let array = value.downcast::<PyArrayDyn<f64>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     f64_arrays.push((name, array, dtype));
                 }
                 DataType::Complex64 => {
                     let array = value.downcast::<PyArrayDyn<Complex32>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     complex64_arrays.push((name, array, dtype));
                 }
                 DataType::Complex128 => {
                     let array = value.downcast::<PyArrayDyn<Complex64>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     complex128_arrays.push((name, array, dtype));
                 }
             }
@@ -3085,79 +3050,92 @@ impl NumPack {
             match meta.get_dtype() {
                 DataType::Bool => {
                     let py_array = array.downcast::<PyArrayDyn<bool>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
                 DataType::Uint8 => {
                     let py_array = array.downcast::<PyArrayDyn<u8>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
                 DataType::Uint16 => {
                     let py_array = array.downcast::<PyArrayDyn<u16>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
                 DataType::Uint32 => {
                     let py_array = array.downcast::<PyArrayDyn<u32>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
                 DataType::Uint64 => {
                     let py_array = array.downcast::<PyArrayDyn<u64>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
                 DataType::Int8 => {
                     let py_array = array.downcast::<PyArrayDyn<i8>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
                 DataType::Int16 => {
                     let py_array = array.downcast::<PyArrayDyn<i16>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
                 DataType::Int32 => {
                     let py_array = array.downcast::<PyArrayDyn<i32>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
                 DataType::Int64 => {
                     let py_array = array.downcast::<PyArrayDyn<i64>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
                 DataType::Float16 => {
                     let py_array = array.downcast::<PyArrayDyn<f16>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
                 DataType::Float32 => {
                     let py_array = array.downcast::<PyArrayDyn<f32>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
                 DataType::Float64 => {
                     let py_array = array.downcast::<PyArrayDyn<f64>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
                 DataType::Complex64 => {
                     let py_array = array.downcast::<PyArrayDyn<Complex32>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     let bytes = unsafe {
                         std::slice::from_raw_parts(
@@ -3169,7 +3147,8 @@ impl NumPack {
                 }
                 DataType::Complex128 => {
                     let py_array = array.downcast::<PyArrayDyn<Complex64>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     let bytes = unsafe {
                         std::slice::from_raw_parts(
@@ -3427,72 +3406,86 @@ impl NumPack {
             match meta.get_dtype() {
                 DataType::Bool => {
                     let array = value.downcast::<PyArrayDyn<bool>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Uint8 => {
                     let array = value.downcast::<PyArrayDyn<u8>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Uint16 => {
                     let array = value.downcast::<PyArrayDyn<u16>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Uint32 => {
                     let array = value.downcast::<PyArrayDyn<u32>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Uint64 => {
                     let array = value.downcast::<PyArrayDyn<u64>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Int8 => {
                     let array = value.downcast::<PyArrayDyn<i8>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Int16 => {
                     let array = value.downcast::<PyArrayDyn<i16>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Int32 => {
                     let array = value.downcast::<PyArrayDyn<i32>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Int64 => {
                     let array = value.downcast::<PyArrayDyn<i64>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Float16 => {
                     let array = value.downcast::<PyArrayDyn<f16>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Float32 => {
                     let array = value.downcast::<PyArrayDyn<f32>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Float64 => {
                     let array = value.downcast::<PyArrayDyn<f64>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Complex64 => {
                     let array = value.downcast::<PyArrayDyn<Complex32>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
                 DataType::Complex128 => {
                     let array = value.downcast::<PyArrayDyn<Complex64>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let readonly = array.readonly();
+                    let array = unsafe { readonly.as_array().to_owned() };
                     self.io.replace_rows(&name, &array, &indices)?;
                 }
             }
@@ -4211,6 +4204,7 @@ fn _lib_numpack(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 // 通用清理函数
 #[pyfunction]
+#[allow(dead_code)]
 fn force_cleanup_windows_handles() -> PyResult<()> {
     // 清理临时文件缓存
     clear_temp_files_from_cache();
@@ -4218,11 +4212,13 @@ fn force_cleanup_windows_handles() -> PyResult<()> {
 }
 
 // 通用文件句柄释放函数（兼容性保留）
+#[allow(dead_code)]
 fn release_windows_file_handle(_path: &Path) {
     // 不再需要特殊处理，保留函数名以兼容现有代码
 }
 
 /// 安全创建内存 slice 的辅助函数
+#[allow(dead_code)]
 fn safe_slice_from_mmap(mmap: &Mmap, offset: usize, size: usize) -> Result<&[u8], PyErr> {
     if offset + size > mmap.len() {
         return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
@@ -4233,6 +4229,7 @@ fn safe_slice_from_mmap(mmap: &Mmap, offset: usize, size: usize) -> Result<&[u8]
 }
 
 /// 安全复制内存数据的辅助函数 - 防止 Windows 内存访问冲突
+#[allow(dead_code)]
 fn safe_copy_from_mmap(mmap: &Mmap, offset: usize, size: usize) -> Result<Vec<u8>, PyErr> {
     if offset + size > mmap.len() {
         return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(

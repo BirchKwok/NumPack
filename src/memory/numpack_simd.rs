@@ -7,7 +7,6 @@
 //! 4. FFI友好：批量处理减少Python-Rust边界开销
 
 use crate::core::metadata::DataType;
-use std::arch;
 
 /// CPU特性支持信息
 #[derive(Debug, Clone)]
@@ -487,8 +486,13 @@ mod x86_impl;
 mod test_simd;
 
 // 重新导出实现
+#[allow(unused_imports)]
 pub use access_pattern_simd::*;
+#[allow(unused_imports)]
 pub use arm_impl::*;
+#[allow(unused_imports)]
 pub use benchmark::*;
+#[allow(unused_imports)]
 pub use scalar_impl::*;
+#[allow(unused_imports)]
 pub use x86_impl::*;

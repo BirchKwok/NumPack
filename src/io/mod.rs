@@ -6,5 +6,4 @@ pub mod batch_access_engine;
 pub mod parallel_io;
 
 // 重新导出常用类型
-pub use batch_access_engine::*;
 pub use parallel_io::*;

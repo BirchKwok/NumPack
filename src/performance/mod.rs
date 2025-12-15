@@ -9,7 +9,9 @@ pub mod monitor;
 pub mod profiler;
 
 // 只导出实际使用的模块
+#[allow(unused_imports)]
 pub use gil_optimization::{GILOperation, GILOptimizer, GILReleaseConfig};
+#[allow(unused_imports)]
 pub use monitor::*;
 // 暂时注释掉未使用的导入，避免警告
 // pub use metrics::*;

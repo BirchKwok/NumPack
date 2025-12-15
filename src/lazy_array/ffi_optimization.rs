@@ -10,9 +10,8 @@
 
 use memmap2::Mmap;
 use ndarray::{ArrayD, ArrayViewD, IxDyn};
-use numpy::{PyArray, PyArrayDyn, ToPyArray};
+use numpy::ToPyArray;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyTuple};
 use std::sync::Arc;
 
 use crate::core::metadata::DataType;

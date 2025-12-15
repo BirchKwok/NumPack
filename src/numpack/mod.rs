@@ -4,5 +4,6 @@
 pub mod core;
 pub mod python_bindings;
 
+#[allow(unused_imports)]
 pub use core::*;
 // Python绑定不重新导出，仅供lib.rs使用

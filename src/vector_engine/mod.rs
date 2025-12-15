@@ -11,6 +11,9 @@ pub mod python_bindings;
 pub mod simd_backend;
 
 // 重新导出主要类型
+#[allow(unused_imports)]
 pub use core::VectorEngine;
+#[allow(unused_imports)]
 pub use metrics::MetricType;
+#[allow(unused_imports)]
 pub use simd_backend::{SIMDCapabilities, SimdBackend, SimdError};

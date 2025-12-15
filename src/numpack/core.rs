@@ -111,72 +111,72 @@ impl NumPack {
             match dtype {
                 DataType::Bool => {
                     let array = value.downcast::<PyArrayDyn<bool>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let array = unsafe { array.readonly().as_array().to_owned() };
                     bool_arrays.push((name, array, dtype));
                 }
                 DataType::Uint8 => {
                     let array = value.downcast::<PyArrayDyn<u8>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let array = unsafe { array.readonly().as_array().to_owned() };
                     u8_arrays.push((name, array, dtype));
                 }
                 DataType::Uint16 => {
                     let array = value.downcast::<PyArrayDyn<u16>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let array = unsafe { array.readonly().as_array().to_owned() };
                     u16_arrays.push((name, array, dtype));
                 }
                 DataType::Uint32 => {
                     let array = value.downcast::<PyArrayDyn<u32>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let array = unsafe { array.readonly().as_array().to_owned() };
                     u32_arrays.push((name, array, dtype));
                 }
                 DataType::Uint64 => {
                     let array = value.downcast::<PyArrayDyn<u64>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let array = unsafe { array.readonly().as_array().to_owned() };
                     u64_arrays.push((name, array, dtype));
                 }
                 DataType::Int8 => {
                     let array = value.downcast::<PyArrayDyn<i8>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let array = unsafe { array.readonly().as_array().to_owned() };
                     i8_arrays.push((name, array, dtype));
                 }
                 DataType::Int16 => {
                     let array = value.downcast::<PyArrayDyn<i16>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let array = unsafe { array.readonly().as_array().to_owned() };
                     i16_arrays.push((name, array, dtype));
                 }
                 DataType::Int32 => {
                     let array = value.downcast::<PyArrayDyn<i32>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let array = unsafe { array.readonly().as_array().to_owned() };
                     i32_arrays.push((name, array, dtype));
                 }
                 DataType::Int64 => {
                     let array = value.downcast::<PyArrayDyn<i64>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let array = unsafe { array.readonly().as_array().to_owned() };
                     i64_arrays.push((name, array, dtype));
                 }
                 DataType::Float16 => {
                     let array = value.downcast::<PyArrayDyn<f16>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let array = unsafe { array.readonly().as_array().to_owned() };
                     f16_arrays.push((name, array, dtype));
                 }
                 DataType::Float32 => {
                     let array = value.downcast::<PyArrayDyn<f32>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let array = unsafe { array.readonly().as_array().to_owned() };
                     f32_arrays.push((name, array, dtype));
                 }
                 DataType::Float64 => {
                     let array = value.downcast::<PyArrayDyn<f64>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let array = unsafe { array.readonly().as_array().to_owned() };
                     f64_arrays.push((name, array, dtype));
                 }
                 DataType::Complex64 => {
                     let array = value.downcast::<PyArrayDyn<Complex32>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let array = unsafe { array.readonly().as_array().to_owned() };
                     complex64_arrays.push((name, array, dtype));
                 }
                 DataType::Complex128 => {
                     let array = value.downcast::<PyArrayDyn<Complex64>>()?;
-                    let array = unsafe { array.as_array().to_owned() };
+                    let array = unsafe { array.readonly().as_array().to_owned() };
                     complex128_arrays.push((name, array, dtype));
                 }
             }
@@ -523,80 +523,93 @@ impl NumPack {
             match dtype {
                 DataType::Bool => {
                     let py_array = array.downcast::<PyArrayDyn<bool>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     let bytes: Vec<u8> = data.iter().map(|&b| if b { 1 } else { 0 }).collect();
                     file.write_all(&bytes)?;
                 }
                 DataType::Uint8 => {
                     let py_array = array.downcast::<PyArrayDyn<u8>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(data)?;
                 }
                 DataType::Uint16 => {
                     let py_array = array.downcast::<PyArrayDyn<u16>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
                 DataType::Uint32 => {
                     let py_array = array.downcast::<PyArrayDyn<u32>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
                 DataType::Uint64 => {
                     let py_array = array.downcast::<PyArrayDyn<u64>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
                 DataType::Int8 => {
                     let py_array = array.downcast::<PyArrayDyn<i8>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
                 DataType::Int16 => {
                     let py_array = array.downcast::<PyArrayDyn<i16>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
                 DataType::Int32 => {
                     let py_array = array.downcast::<PyArrayDyn<i32>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
                 DataType::Int64 => {
                     let py_array = array.downcast::<PyArrayDyn<i64>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
                 DataType::Float16 => {
                     let py_array = array.downcast::<PyArrayDyn<f16>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
                 DataType::Float32 => {
                     let py_array = array.downcast::<PyArrayDyn<f32>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
                 DataType::Float64 => {
                     let py_array = array.downcast::<PyArrayDyn<f64>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     file.write_all(bytemuck::cast_slice(data))?;
                 }
                 DataType::Complex64 => {
                     let py_array = array.downcast::<PyArrayDyn<Complex32>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     let bytes = unsafe {
                         std::slice::from_raw_parts(
@@ -608,7 +621,8 @@ impl NumPack {
                 }
                 DataType::Complex128 => {
                     let py_array = array.downcast::<PyArrayDyn<Complex64>>()?;
-                    let array_ref = unsafe { py_array.as_array() };
+                    let readonly = py_array.readonly();
+                    let array_ref = unsafe { readonly.as_array() };
                     let data = array_ref.as_slice().unwrap();
                     let bytes = unsafe {
                         std::slice::from_raw_parts(

@@ -5,6 +5,22 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Tuple, Union, Optional
 import numpy as np
 
+# NumPack 兼容性补丁：numpy>=2.0不再允许在issubdtype的第二个参数中传入tuple。
+# 我们在运行时检测并注入一个向后兼容的实现，以保证测试及旧版本代码继续正常工作。
+if hasattr(np, "issubdtype"):
+    try:
+        # 触发一次检测，如果抛出TypeError，说明需要补丁
+        np.issubdtype(np.float32, (np.integer, np.bool_))  # type: ignore[arg-type]
+    except TypeError:
+        _orig_issubdtype = np.issubdtype
+
+        def _numpack_issubdtype(arg1, arg2):
+            if isinstance(arg2, tuple):
+                return any(_orig_issubdtype(arg1, candidate) for candidate in arg2)
+            return _orig_issubdtype(arg1, arg2)
+
+        np.issubdtype = _numpack_issubdtype  # type: ignore[assignment]
+
 __version__ = "0.4.4"
 
 # Platform detection

@@ -2,7 +2,7 @@
 //!
 //! 包含各种高级索引优化技术，特别针对Windows平台的优化
 
-use crate::indexing::algorithms::{IndexAlgorithmExecutor, IndexError};
+use crate::indexing::algorithms::IndexError;
 use crate::indexing::types::*;
 use crate::memory::simd_processor::SIMDProcessor;
 use rayon::prelude::*;

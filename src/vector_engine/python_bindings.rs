@@ -1,15 +1,36 @@
-//! Python FFI 绑定
+//! Python FFI bindings
 //!
-//! 将向量引擎的功能暴露给 Python
+//! Exposes vector engine functionality to Python
 
-use numpy::{PyArray1, PyArrayDyn, PyArrayMethods, PyReadonlyArrayDyn};
+use numpy::{PyArray1, PyArrayMethods, PyReadonlyArrayDyn};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
 use crate::vector_engine::core::VectorEngine;
 use crate::vector_engine::metrics::MetricType;
 
-/// Python 侧的向量引擎包装
+/// Python wrapper for the vector engine
+///
+/// This is a Python binding for the SimSIMD Rust library, providing high-performance
+/// vector similarity computation with SIMD acceleration (AVX2, AVX-512, NEON, SVE).
+///
+/// Supported data types:
+/// - float64 (f64): Double precision floating point
+/// - float32 (f32): Single precision floating point
+/// - float16 (f16): Half precision floating point (not yet implemented)
+/// - int8 (i8): 8-bit signed integers
+/// - uint8 (u8): Binary vectors (for hamming/jaccard metrics)
+///
+/// Supported metrics:
+/// - "dot", "dot_product", "dotproduct": Dot product (similarity, higher is better)
+/// - "cos", "cosine", "cosine_similarity": Cosine similarity (similarity, range [-1, 1], higher is better)
+/// - "l2", "euclidean", "l2_distance": L2/Euclidean distance (distance, lower is better)
+/// - "l2sq", "l2_squared", "squared_euclidean": Squared L2 distance (distance, lower is better, faster than l2)
+/// - "hamming": Hamming distance for binary vectors (distance, lower is better)
+/// - "jaccard": Jaccard distance for binary vectors (distance, lower is better)
+/// - "kl", "kl_divergence": Kullback-Leibler divergence (distance, lower is better)
+/// - "js", "js_divergence": Jensen-Shannon divergence (distance, lower is better)
+/// - "inner", "inner_product": Inner product (similarity, higher is better, same as dot)
 #[pyclass(module = "numpack", name = "VectorEngine")]
 pub struct PyVectorEngine {
     engine: VectorEngine,
@@ -17,7 +38,9 @@ pub struct PyVectorEngine {
 
 #[pymethods]
 impl PyVectorEngine {
-    /// 创建新的向量引擎实例
+    /// Create a new vector engine instance
+    ///
+    /// Automatically detects CPU SIMD capabilities (AVX2, AVX-512, NEON, SVE).
     #[new]
     pub fn new() -> Self {
         Self {
@@ -25,58 +48,116 @@ impl PyVectorEngine {
         }
     }
 
-    /// 获取 SIMD 能力信息
+    /// Get SIMD capabilities information
+    ///
+    /// Returns:
+    ///     str: A string describing detected SIMD features (e.g., "CPU: AVX2, AVX-512")
     pub fn capabilities(&self) -> String {
         self.engine.capabilities()
     }
 
-    /// 计算两个向量的度量值
+    /// Compute the metric value between two vectors
+    ///
+    /// Supports multiple data types, automatically selects the optimal computation path
+    /// based on input dtype:
+    /// - int8 (i8): Integer vectors (supports: dot, cosine, l2, l2sq)
+    /// - float32 (f32): Single precision floating point (all metrics)
+    /// - float64 (f64): Double precision floating point (all metrics)
+    /// - uint8 (u8): Binary vectors (supports: hamming, jaccard only)
     ///
     /// Args:
-    ///     a: 第一个向量 (numpy array)
-    ///     b: 第二个向量 (numpy array)
-    ///     metric: 度量类型字符串 ('dot', 'cosine', 'l2', etc.)
+    ///     a: First vector (1D numpy array, any supported dtype)
+    ///     b: Second vector (1D numpy array, same dtype and length as a)
+    ///     metric: Metric type string. Supported values:
+    ///         - "dot", "dot_product", "dotproduct": Dot product
+    ///         - "cos", "cosine", "cosine_similarity": Cosine similarity
+    ///         - "l2", "euclidean", "l2_distance": L2/Euclidean distance
+    ///         - "l2sq", "l2_squared", "squared_euclidean": Squared L2 distance
+    ///         - "hamming": Hamming distance (for binary vectors)
+    ///         - "jaccard": Jaccard distance (for binary vectors)
+    ///         - "kl", "kl_divergence": Kullback-Leibler divergence
+    ///         - "js", "js_divergence": Jensen-Shannon divergence
+    ///         - "inner", "inner_product": Inner product
     ///
     /// Returns:
-    ///     度量值 (float)
+    ///     float: The computed metric value (float64)
+    ///
+    /// Raises:
+    ///     TypeError: If dtype is not supported or a/b dtypes don't match
+    ///     ValueError: If the metric is unknown or computation fails
+    ///     ValueError: If vector dimensions don't match
     #[pyo3(signature = (a, b, metric))]
     pub fn compute_metric(
         &self,
         py: Python,
-        a: PyReadonlyArrayDyn<f64>,
-        b: PyReadonlyArrayDyn<f64>,
+        a: &Bound<'_, PyAny>,
+        b: &Bound<'_, PyAny>,
         metric: &str,
     ) -> PyResult<f64> {
-        // 解析度量类型
+        // Parse metric type
         let metric_type = MetricType::from_str(metric)
             .ok_or_else(|| PyValueError::new_err(format!("Unknown metric: {}", metric)))?;
 
-        // 提取数据（零拷贝）
-        let a_slice = a.as_slice()?;
-        let b_slice = b.as_slice()?;
+        // Get array dtypes
+        let a_dtype = a.getattr("dtype")?.str()?.to_string();
+        let b_dtype = b.getattr("dtype")?.str()?.to_string();
 
-        // 计算
-        self.engine
-            .compute_metric(a_slice, b_slice, metric_type)
-            .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))
+        // Ensure both arrays have the same dtype
+        if a_dtype != b_dtype {
+            return Err(PyTypeError::new_err(format!(
+                "Array a dtype ({}) must match array b dtype ({})",
+                a_dtype, b_dtype
+            )));
+        }
+
+        // Dispatch to different computation paths based on dtype
+        match a_dtype.as_str() {
+            "float64" => self.compute_metric_f64(py, a, b, metric_type),
+            "float32" => self.compute_metric_f32(py, a, b, metric_type),
+            "int8" => self.compute_metric_i8(py, a, b, metric_type),
+            "uint8" => self.compute_metric_u8(py, a, b, metric_type),
+            _ => Err(PyTypeError::new_err(format!(
+                "Unsupported dtype: {}. Supported: float64, float32, int8, uint8",
+                a_dtype
+            ))),
+        }
     }
 
-    /// 批量计算：query 向量与多个候选向量的度量
+    /// Batch compute metrics between a query vector and multiple candidate vectors
     ///
-    /// 支持多种数据类型，自动根据输入 dtype 选择最优计算路径：
-    /// - i8: 整数向量（dot, cosine, l2, l2sq）
-    /// - f16: 半精度浮点（所有度量）
-    /// - f32: 单精度浮点（所有度量）
-    /// - f64: 双精度浮点（所有度量）
-    /// - u8: 二进制向量（hamming, jaccard）
+    /// Supports multiple data types, automatically selects the optimal computation path
+    /// based on input dtype:
+    /// - int8 (i8): Integer vectors (supports: dot, cosine, l2, l2sq)
+    /// - float16 (f16): Half precision floating point (all metrics, not yet implemented)
+    /// - float32 (f32): Single precision floating point (all metrics)
+    /// - float64 (f64): Double precision floating point (all metrics)
+    /// - uint8 (u8): Binary vectors (supports: hamming, jaccard only)
     ///
     /// Args:
-    ///     query: 查询向量 (1D numpy array, any supported dtype)
-    ///     candidates: 候选向量矩阵 (2D numpy array, shape: [N, D], same dtype as query)
-    ///     metric: 度量类型字符串
+    ///     query: Query vector (1D numpy array, any supported dtype)
+    ///     candidates: Candidate vectors matrix (2D numpy array, shape: [N, D], same dtype as query)
+    ///     metric: Metric type string. Supported values:
+    ///         - "dot", "dot_product", "dotproduct": Dot product
+    ///         - "cos", "cosine", "cosine_similarity": Cosine similarity
+    ///         - "l2", "euclidean", "l2_distance": L2/Euclidean distance
+    ///         - "l2sq", "l2_squared", "squared_euclidean": Squared L2 distance
+    ///         - "hamming": Hamming distance (for uint8 binary vectors only)
+    ///         - "jaccard": Jaccard distance (for uint8 binary vectors only)
+    ///         - "kl", "kl_divergence": Kullback-Leibler divergence
+    ///         - "js", "js_divergence": Jensen-Shannon divergence
+    ///         - "inner", "inner_product": Inner product
     ///
     /// Returns:
-    ///     度量值数组 (1D numpy array, shape: [N], always f64)
+    ///     numpy.ndarray: Metric values array (1D numpy array of float64, shape: [N])
+    ///
+    /// Raises:
+    ///     TypeError: If dtype is not supported or query/candidates dtypes don't match
+    ///     ValueError: If metric is unknown, computation fails, or dimensions don't match
+    ///
+    /// Note:
+    ///     For large batches (>= 500 candidates), computation is automatically parallelized
+    ///     using multiple CPU cores. Smaller batches use serial computation to avoid
+    ///     thread pool overhead.
     #[pyo3(signature = (query, candidates, metric))]
     pub fn batch_compute(
         &self,
@@ -85,15 +166,15 @@ impl PyVectorEngine {
         candidates: &Bound<'_, PyAny>,
         metric: &str,
     ) -> PyResult<Py<PyArray1<f64>>> {
-        // 解析度量类型
+        // Parse metric type
         let metric_type = MetricType::from_str(metric)
             .ok_or_else(|| PyValueError::new_err(format!("Unknown metric: {}", metric)))?;
 
-        // 获取数组的 dtype
+        // Get array dtypes
         let query_dtype = query.getattr("dtype")?.str()?.to_string();
         let candidates_dtype = candidates.getattr("dtype")?.str()?.to_string();
 
-        // 确保两个数组类型一致
+        // Ensure both arrays have the same dtype
         if query_dtype != candidates_dtype {
             return Err(PyTypeError::new_err(format!(
                 "Query dtype ({}) must match candidates dtype ({})",
@@ -101,8 +182,8 @@ impl PyVectorEngine {
             )));
         }
 
-        // 根据 dtype 分派到不同的计算路径
-        // 这样可以避免不必要的类型转换，直接使用 SimSIMD 的原生支持
+        // Dispatch to different computation paths based on dtype
+        // This avoids unnecessary type conversions and directly uses SimSIMD's native support
         match query_dtype.as_str() {
             "float64" => self.batch_compute_f64(py, query, candidates, metric_type),
             "float32" => self.batch_compute_f32(py, query, candidates, metric_type),
@@ -116,24 +197,38 @@ impl PyVectorEngine {
         }
     }
 
-    /// Top-K 搜索：找到最相似/最近的 k 个向量
+    /// Top-K search: Find the k most similar/closest vectors
     ///
-    /// 支持多种数据类型（自动识别 dtype）：
-    /// - i8, f32, f64, u8（与 batch_compute 相同）
+    /// Supports multiple data types (automatically detects dtype):
+    /// - int8 (i8), float32 (f32), float64 (f64), uint8 (u8)
+    ///   (same as batch_compute)
     ///
     /// Args:
-    ///     query: 查询向量 (1D numpy array, any supported dtype)
-    ///     candidates: 候选向量矩阵 (2D numpy array, same dtype as query)
-    ///     metric: 度量类型字符串
-    ///     k: 返回的结果数量
+    ///     query: Query vector (1D numpy array, any supported dtype)
+    ///     candidates: Candidate vectors matrix (2D numpy array, same dtype as query)
+    ///     metric: Metric type string. Supported values:
+    ///         - "dot", "dot_product", "dotproduct": Dot product
+    ///         - "cos", "cosine", "cosine_similarity": Cosine similarity
+    ///         - "l2", "euclidean", "l2_distance": L2/Euclidean distance
+    ///         - "l2sq", "l2_squared", "squared_euclidean": Squared L2 distance
+    ///         - "hamming": Hamming distance (for uint8 binary vectors only)
+    ///         - "jaccard": Jaccard distance (for uint8 binary vectors only)
+    ///         - "kl", "kl_divergence": Kullback-Leibler divergence
+    ///         - "js", "js_divergence": Jensen-Shannon divergence
+    ///         - "inner", "inner_product": Inner product
+    ///     k: Number of results to return
     ///
     /// Returns:
-    ///     (indices, scores):
-    ///         - indices: 索引数组 (shape: [k])
-    ///         - scores: 分数数组 (shape: [k])
-    ///         
-    ///     对于相似度度量（dot, cosine），返回最高的 k 个
-    ///     对于距离度量（l2, l2sq, hamming, jaccard, kl, js），返回最低的 k 个
+    ///     tuple: (indices, scores)
+    ///         - indices: Array of candidate indices (1D numpy array of uint64, shape: [k])
+    ///         - scores: Array of metric scores (1D numpy array of float64, shape: [k])
+    ///
+    ///         For similarity metrics (dot, cosine, inner): returns k highest scores
+    ///         For distance metrics (l2, l2sq, hamming, jaccard, kl, js): returns k lowest scores
+    ///
+    /// Raises:
+    ///     TypeError: If dtype is not supported or query/candidates dtypes don't match
+    ///     ValueError: If metric is unknown, computation fails, or dimensions don't match
     #[pyo3(signature = (query, candidates, metric, k))]
     pub fn top_k_search(
         &self,
@@ -143,15 +238,15 @@ impl PyVectorEngine {
         metric: &str,
         k: usize,
     ) -> PyResult<(Py<PyArray1<usize>>, Py<PyArray1<f64>>)> {
-        // 解析度量类型
+        // Parse metric type
         let metric_type = MetricType::from_str(metric)
             .ok_or_else(|| PyValueError::new_err(format!("Unknown metric: {}", metric)))?;
 
-        // 获取数组的 dtype
+        // Get array dtypes
         let query_dtype = query.getattr("dtype")?.str()?.to_string();
         let candidates_dtype = candidates.getattr("dtype")?.str()?.to_string();
 
-        // 确保两个数组类型一致
+        // Ensure both arrays have the same dtype
         if query_dtype != candidates_dtype {
             return Err(PyTypeError::new_err(format!(
                 "Query dtype ({}) must match candidates dtype ({})",
@@ -159,7 +254,7 @@ impl PyVectorEngine {
             )));
         }
 
-        // 根据 dtype 分派
+        // Dispatch based on dtype
         match query_dtype.as_str() {
             "float64" => self.top_k_search_f64(py, query, candidates, metric_type, k),
             "float32" => self.top_k_search_f32(py, query, candidates, metric_type, k),
@@ -174,14 +269,193 @@ impl PyVectorEngine {
 }
 
 // ========================================================================
-// 类型特化实现：为每种数据类型提供零拷贝的计算路径
-// 这些是私有辅助方法，不暴露给 Python
+// Type-specialized implementations: Zero-copy computation paths for each data type
+// These are private helper methods, not exposed to Python
 // ========================================================================
 
 impl PyVectorEngine {
-    /// f64 批量计算（双精度浮点）
+    /// f64 single vector computation (double precision floating point)
+    fn compute_metric_f64(
+        &self,
+        _py: Python,
+        a: &Bound<'_, PyAny>,
+        b: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<f64> {
+        use numpy::PyArrayMethods;
+
+        let a_arr: PyReadonlyArrayDyn<f64> = a.extract()?;
+        let b_arr: PyReadonlyArrayDyn<f64> = b.extract()?;
+
+        // Check dimensions
+        let readonly_a = a_arr.readonly();
+        let a_array = readonly_a.as_array();
+        let readonly_b = b_arr.readonly();
+        let b_array = readonly_b.as_array();
+        let a_shape = a_array.shape();
+        let b_shape = b_array.shape();
+
+        if a_shape.len() != 1 || b_shape.len() != 1 {
+            return Err(PyTypeError::new_err("Both arrays must be 1D vectors"));
+        }
+
+        if a_shape[0] != b_shape[0] {
+            return Err(PyValueError::new_err(format!(
+                "Vector dimensions don't match: {} vs {}",
+                a_shape[0], b_shape[0]
+            )));
+        }
+
+        let a_slice = a_arr.as_slice()?;
+        let b_slice = b_arr.as_slice()?;
+
+        self.engine
+            .compute_metric(a_slice, b_slice, metric_type)
+            .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))
+    }
+
+    /// f32 single vector computation (single precision floating point)
+    fn compute_metric_f32(
+        &self,
+        _py: Python,
+        a: &Bound<'_, PyAny>,
+        b: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<f64> {
+        use numpy::PyArrayMethods;
+
+        let a_arr: PyReadonlyArrayDyn<f32> = a.extract()?;
+        let b_arr: PyReadonlyArrayDyn<f32> = b.extract()?;
+
+        // Check dimensions
+        let readonly_a = a_arr.readonly();
+        let a_array = readonly_a.as_array();
+        let readonly_b = b_arr.readonly();
+        let b_array = readonly_b.as_array();
+        let a_shape = a_array.shape();
+        let b_shape = b_array.shape();
+
+        if a_shape.len() != 1 || b_shape.len() != 1 {
+            return Err(PyTypeError::new_err("Both arrays must be 1D vectors"));
+        }
+
+        if a_shape[0] != b_shape[0] {
+            return Err(PyValueError::new_err(format!(
+                "Vector dimensions don't match: {} vs {}",
+                a_shape[0], b_shape[0]
+            )));
+        }
+
+        let a_slice = a_arr.as_slice()?;
+        let b_slice = b_arr.as_slice()?;
+
+        let result = self
+            .engine
+            .compute_metric_f32(a_slice, b_slice, metric_type)
+            .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
+
+        Ok(result as f64)
+    }
+
+    /// i8 single vector computation (integer vectors)
+    fn compute_metric_i8(
+        &self,
+        _py: Python,
+        a: &Bound<'_, PyAny>,
+        b: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<f64> {
+        use numpy::PyArrayMethods;
+
+        let a_arr: PyReadonlyArrayDyn<i8> = a.extract()?;
+        let b_arr: PyReadonlyArrayDyn<i8> = b.extract()?;
+
+        // Check dimensions
+        let readonly_a = a_arr.readonly();
+        let a_array = readonly_a.as_array();
+        let readonly_b = b_arr.readonly();
+        let b_array = readonly_b.as_array();
+        let a_shape = a_array.shape();
+        let b_shape = b_array.shape();
+
+        if a_shape.len() != 1 || b_shape.len() != 1 {
+            return Err(PyTypeError::new_err("Both arrays must be 1D vectors"));
+        }
+
+        if a_shape[0] != b_shape[0] {
+            return Err(PyValueError::new_err(format!(
+                "Vector dimensions don't match: {} vs {}",
+                a_shape[0], b_shape[0]
+            )));
+        }
+
+        let a_slice = a_arr.as_slice()?;
+        let b_slice = b_arr.as_slice()?;
+
+        let result = self
+            .engine
+            .cpu_backend
+            .compute_i8(a_slice, b_slice, metric_type)
+            .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
+
+        Ok(result)
+    }
+
+    /// u8 single vector computation (binary vectors - hamming/jaccard)
+    fn compute_metric_u8(
+        &self,
+        _py: Python,
+        a: &Bound<'_, PyAny>,
+        b: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<f64> {
+        use numpy::PyArrayMethods;
+
+        // u8 only supports Hamming and Jaccard
+        if !matches!(metric_type, MetricType::Hamming | MetricType::Jaccard) {
+            return Err(PyValueError::new_err(format!(
+                "uint8 arrays only support 'hamming' and 'jaccard' metrics, got: {}",
+                metric_type.as_str()
+            )));
+        }
+
+        let a_arr: PyReadonlyArrayDyn<u8> = a.extract()?;
+        let b_arr: PyReadonlyArrayDyn<u8> = b.extract()?;
+
+        // Check dimensions
+        let readonly_a = a_arr.readonly();
+        let a_array = readonly_a.as_array();
+        let readonly_b = b_arr.readonly();
+        let b_array = readonly_b.as_array();
+        let a_shape = a_array.shape();
+        let b_shape = b_array.shape();
+
+        if a_shape.len() != 1 || b_shape.len() != 1 {
+            return Err(PyTypeError::new_err("Both arrays must be 1D vectors"));
+        }
+
+        if a_shape[0] != b_shape[0] {
+            return Err(PyValueError::new_err(format!(
+                "Vector dimensions don't match: {} vs {}",
+                a_shape[0], b_shape[0]
+            )));
+        }
+
+        let a_slice = a_arr.as_slice()?;
+        let b_slice = b_arr.as_slice()?;
+
+        let result = self
+            .engine
+            .cpu_backend
+            .compute_u8(a_slice, b_slice, metric_type)
+            .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
+
+        Ok(result)
+    }
+
+    /// f64 batch computation (double precision floating point)
     ///
-    /// 🚀 优化：减少 FFI 开销，直接传递连续内存
+    /// 🚀 Optimization: Reduces FFI overhead by directly passing contiguous memory
     fn batch_compute_f64(
         &self,
         py: Python,
@@ -195,7 +469,8 @@ impl PyVectorEngine {
         let candidates_arr: PyReadonlyArrayDyn<f64> = candidates.extract()?;
 
         let query_slice = query_arr.as_slice()?;
-        let candidates_array = candidates_arr.as_array();
+        let readonly_candidates = candidates_arr.readonly();
+        let candidates_array = readonly_candidates.as_array();
         let shape = candidates_array.shape();
 
         if shape.len() != 2 {
@@ -215,19 +490,19 @@ impl PyVectorEngine {
 
         let candidates_slice = candidates_arr.as_slice()?;
 
-        // 🚀 关键优化：使用 usize 传递地址（可以跨线程）
+        // 🚀 Key optimization: Use usize to pass addresses (can cross threads)
         let query_addr = query_slice.as_ptr() as usize;
         let candidates_addr = candidates_slice.as_ptr() as usize;
 
-        // 释放 GIL 执行并行计算
+        // Release GIL for parallel computation
         let scores = py
             .allow_threads(|| {
-                // 🚀 智能批处理策略：小批量串行，大批量并行
-                // 避免小批量时 Rayon 线程池的开销
+                // 🚀 Smart batching strategy: serial for small batches, parallel for large batches
+                // Avoids Rayon thread pool overhead for small batches
                 const PARALLEL_THRESHOLD: usize = 500;
 
                 if n_candidates < PARALLEL_THRESHOLD {
-                    // 串行：避免线程池开销
+                    // Serial: avoid thread pool overhead
                     let mut scores = Vec::with_capacity(n_candidates);
                     for i in 0..n_candidates {
                         unsafe {
@@ -246,7 +521,7 @@ impl PyVectorEngine {
                     }
                     Ok(scores)
                 } else {
-                    // 并行：大批量使用多核
+                    // Parallel: use multiple cores for large batches
                     #[cfg(feature = "rayon")]
                     {
                         use rayon::prelude::*;
@@ -296,7 +571,7 @@ impl PyVectorEngine {
         Ok(PyArray1::from_vec(py, scores).into())
     }
 
-    /// f32 批量计算（单精度浮点）
+    /// f32 batch computation (single precision floating point)
     fn batch_compute_f32(
         &self,
         py: Python,
@@ -310,7 +585,8 @@ impl PyVectorEngine {
         let candidates_arr: PyReadonlyArrayDyn<f32> = candidates.extract()?;
 
         let query_slice = query_arr.as_slice()?;
-        let candidates_array = candidates_arr.as_array();
+        let readonly_candidates = candidates_arr.readonly();
+        let candidates_array = readonly_candidates.as_array();
         let shape = candidates_array.shape();
 
         if shape.len() != 2 {
@@ -330,7 +606,7 @@ impl PyVectorEngine {
 
         let candidates_slice = candidates_arr.as_slice()?;
 
-        // 优化：使用 usize 传递地址
+        // Optimization: use usize to pass addresses
         let query_addr = query_slice.as_ptr() as usize;
         let candidates_addr = candidates_slice.as_ptr() as usize;
 
@@ -375,12 +651,12 @@ impl PyVectorEngine {
             })
             .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
 
-        // 转换 f32 结果为 f64（统一输出类型）
+        // Convert f32 results to f64 (unified output type)
         let scores_f64: Vec<f64> = scores.into_iter().map(|x| x as f64).collect();
         Ok(PyArray1::from_vec(py, scores_f64).into())
     }
 
-    /// f16 批量计算（半精度浮点）
+    /// f16 batch computation (half precision floating point)
     fn batch_compute_f16(
         &self,
         py: Python,
@@ -388,13 +664,13 @@ impl PyVectorEngine {
         _candidates: &Bound<'_, PyAny>,
         _metric_type: MetricType,
     ) -> PyResult<Py<PyArray1<f64>>> {
-        // TODO: 实现 f16 支持（需要 half crate 集成）
+        // TODO: Implement f16 support (requires half crate integration)
         Err(PyTypeError::new_err(
             "float16 support not yet implemented. Please use float32 or float64.",
         ))
     }
 
-    /// i8 批量计算（整数向量）
+    /// i8 batch computation (integer vectors)
     fn batch_compute_i8(
         &self,
         py: Python,
@@ -408,7 +684,8 @@ impl PyVectorEngine {
         let candidates_arr: PyReadonlyArrayDyn<i8> = candidates.extract()?;
 
         let query_slice = query_arr.as_slice()?;
-        let candidates_array = candidates_arr.as_array();
+        let readonly_candidates = candidates_arr.readonly();
+        let candidates_array = readonly_candidates.as_array();
         let shape = candidates_array.shape();
 
         if shape.len() != 2 {
@@ -428,7 +705,7 @@ impl PyVectorEngine {
 
         let candidates_slice = candidates_arr.as_slice()?;
 
-        // 🚀 优化：使用 usize 传递地址
+        // 🚀 Optimization: use usize to pass addresses
         let query_addr = query_slice.as_ptr() as usize;
         let candidates_addr = candidates_slice.as_ptr() as usize;
 
@@ -476,7 +753,7 @@ impl PyVectorEngine {
         Ok(PyArray1::from_vec(py, scores).into())
     }
 
-    /// u8 批量计算（二进制向量 - hamming/jaccard）
+    /// u8 batch computation (binary vectors - hamming/jaccard)
     fn batch_compute_u8(
         &self,
         py: Python,
@@ -486,7 +763,7 @@ impl PyVectorEngine {
     ) -> PyResult<Py<PyArray1<f64>>> {
         use numpy::PyArrayMethods;
 
-        // u8 只支持 Hamming 和 Jaccard
+        // u8 only supports Hamming and Jaccard
         if !matches!(metric_type, MetricType::Hamming | MetricType::Jaccard) {
             return Err(PyValueError::new_err(format!(
                 "uint8 arrays only support 'hamming' and 'jaccard' metrics, got: {}",
@@ -498,7 +775,8 @@ impl PyVectorEngine {
         let candidates_arr: PyReadonlyArrayDyn<u8> = candidates.extract()?;
 
         let query_slice = query_arr.as_slice()?;
-        let candidates_array = candidates_arr.as_array();
+        let readonly_candidates = candidates_arr.readonly();
+        let candidates_array = readonly_candidates.as_array();
         let shape = candidates_array.shape();
 
         if shape.len() != 2 {
@@ -518,7 +796,7 @@ impl PyVectorEngine {
 
         let candidates_slice = candidates_arr.as_slice()?;
 
-        // 🚀 优化：使用 usize 传递地址
+        // 🚀 Optimization: use usize to pass addresses
         let query_addr = query_slice.as_ptr() as usize;
         let candidates_addr = candidates_slice.as_ptr() as usize;
 
@@ -567,10 +845,10 @@ impl PyVectorEngine {
     }
 
     // ========================================================================
-    // Top-K 搜索实现：为每种数据类型提供优化的 Top-K 搜索
+    // Top-K search implementations: Optimized Top-K search for each data type
     // ========================================================================
 
-    /// Top-K 搜索 (f64)
+    /// Top-K search (f64)
     fn top_k_search_f64(
         &self,
         py: Python,
@@ -579,14 +857,14 @@ impl PyVectorEngine {
         metric_type: MetricType,
         k: usize,
     ) -> PyResult<(Py<PyArray1<usize>>, Py<PyArray1<f64>>)> {
-        // 先计算所有分数
+        // First compute all scores
         let scores_array = self.batch_compute_f64(py, query, candidates, metric_type)?;
 
-        // 提取分数
+        // Extract scores
         let scores = scores_array.bind(py).readonly();
         let scores_slice = scores.as_slice()?;
 
-        // Top-K 选择
+        // Top-K selection
         let (indices, top_scores) =
             Self::select_top_k(scores_slice, k, metric_type.is_similarity());
 
@@ -596,7 +874,7 @@ impl PyVectorEngine {
         ))
     }
 
-    /// Top-K 搜索 (f32)
+    /// Top-K search (f32)
     fn top_k_search_f32(
         &self,
         py: Python,
@@ -617,7 +895,7 @@ impl PyVectorEngine {
         ))
     }
 
-    /// Top-K 搜索 (i8)
+    /// Top-K search (i8)
     fn top_k_search_i8(
         &self,
         py: Python,
@@ -638,7 +916,7 @@ impl PyVectorEngine {
         ))
     }
 
-    /// Top-K 搜索 (u8)
+    /// Top-K search (u8)
     fn top_k_search_u8(
         &self,
         py: Python,
@@ -650,7 +928,7 @@ impl PyVectorEngine {
         let scores_array = self.batch_compute_u8(py, query, candidates, metric_type)?;
         let scores = scores_array.bind(py).readonly();
         let scores_slice = scores.as_slice()?;
-        // u8 的度量都是距离（越小越好）
+        // u8 metrics are all distances (lower is better)
         let (indices, top_scores) = Self::select_top_k(scores_slice, k, false);
 
         Ok((
@@ -659,39 +937,39 @@ impl PyVectorEngine {
         ))
     }
 
-    /// 从分数数组中选择 Top-K
+    /// Select Top-K from a scores array
     ///
     /// Args:
-    ///     scores: 分数数组
-    ///     k: 返回数量
-    ///     is_similarity: true = 越大越好（相似度），false = 越小越好（距离）
+    ///     scores: Array of scores
+    ///     k: Number of results to return
+    ///     is_similarity: true = higher is better (similarity), false = lower is better (distance)
     ///
     /// Returns:
-    ///     (indices, top_scores): 索引和对应的分数
+    ///     (indices, top_scores): Indices and corresponding scores
     fn select_top_k(scores: &[f64], k: usize, is_similarity: bool) -> (Vec<usize>, Vec<f64>) {
         let n = scores.len();
-        let k = k.min(n); // k 不能超过总数
+        let k = k.min(n); // k cannot exceed total count
 
-        // 创建 (index, score) 对
+        // Create (index, score) pairs
         let mut indexed_scores: Vec<(usize, f64)> = scores
             .iter()
             .enumerate()
             .map(|(i, &score)| (i, score))
             .collect();
 
-        // 部分排序：只排序前 k 个
-        // 相似度：降序（大到小），距离：升序（小到大）
+        // Partial sort: only sort top k
+        // Similarity: descending (high to low), Distance: ascending (low to high)
         if is_similarity {
-            // 使用 select_nth_unstable 进行 O(n) 部分排序
+            // Use select_nth_unstable for O(n) partial sort
             indexed_scores.select_nth_unstable_by(k - 1, |a, b| {
                 b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
             });
-            // 对前 k 个再排序
+            // Sort top k again
             indexed_scores[..k].sort_unstable_by(|a, b| {
                 b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
             });
         } else {
-            // 距离：升序
+            // Distance: ascending
             indexed_scores.select_nth_unstable_by(k - 1, |a, b| {
                 a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)
             });
@@ -700,7 +978,7 @@ impl PyVectorEngine {
             });
         }
 
-        // 提取前 k 个的索引和分数
+        // Extract indices and scores of top k
         let indices: Vec<usize> = indexed_scores[..k].iter().map(|(i, _)| *i).collect();
         let top_scores: Vec<f64> = indexed_scores[..k].iter().map(|(_, s)| *s).collect();
 
@@ -708,9 +986,9 @@ impl PyVectorEngine {
     }
 }
 
-/// 注册向量引擎模块到 Python
+/// Register vector engine module to Python
 pub fn register_vector_engine_module(parent_module: &Bound<'_, PyModule>) -> PyResult<()> {
-    // 直接在父模块中注册类
+    // Register class directly in parent module
     parent_module.add_class::<PyVectorEngine>()?;
     Ok(())
 }

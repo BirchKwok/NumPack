@@ -3,7 +3,6 @@
 //! 提供智能的GIL释放策略，在I/O密集型操作期间释放GIL以实现真正的并行性
 
 use pyo3::prelude::*;
-use std::time::{Duration, Instant};
 
 /// GIL释放配置
 #[derive(Clone, Debug)]

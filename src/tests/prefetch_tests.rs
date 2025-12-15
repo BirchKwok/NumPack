@@ -9,7 +9,7 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::lazy_array::*;
+    use crate::lazy_array::*;
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 

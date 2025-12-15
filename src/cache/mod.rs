@@ -6,7 +6,7 @@
 pub mod adaptive_cache;
 pub mod adaptive_compression;
 pub mod compressed_cache;
-pub mod compression_cache;
+// pub mod compression_cache; // 已删除：完全未使用
 pub mod lru_cache;
 pub mod multilevel_cache;
 pub mod performance_monitor;
@@ -18,7 +18,6 @@ pub mod smart_cache;
 pub use prefetch::*;
 // pub use multilevel_cache::*;
 // pub use adaptive_cache::*;
-// pub use compression_cache::*;
 // pub use lru_cache::*;
 // pub use compressed_cache::*;
 // pub use performance_monitor::*;

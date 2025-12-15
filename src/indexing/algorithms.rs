@@ -6,8 +6,6 @@
 use crate::indexing::types::*;
 pub use crate::performance::metrics::IndexAlgorithm;
 use rayon::prelude::*;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 #[cfg(target_arch = "x86_64")]

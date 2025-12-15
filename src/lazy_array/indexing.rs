@@ -2,8 +2,9 @@
 //!
 //! 从lib.rs中提取的索引解析和处理逻辑
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyEllipsis, PyList, PySlice, PyTuple};
+use pyo3::types::{PyList, PySlice, PyTuple};
 
 /// 索引类型枚举
 #[derive(Debug, Clone)]
@@ -130,34 +131,71 @@ impl SliceInfo {
             } else {
                 0
             }
+        } else if stop > start {
+            (stop - start + step - 1) / step
         } else {
-            if stop > start {
-                (stop - start + step - 1) / step
-            } else {
-                0
-            }
+            0
         }
     }
 
     /// 生成切片索引
-    pub fn generate_indices(&self, length: usize) -> Vec<usize> {
-        let (start, stop, step) = self.normalize(length);
-        let mut indices = Vec::new();
-
-        if step == 1 {
-            for i in start..stop {
-                indices.push(i);
-            }
-        } else {
-            let mut i = start;
-            while i < stop {
-                indices.push(i);
-                i += step;
-            }
-        }
-
-        indices
+    pub fn generate_indices(&self, length: usize) -> PyResult<Vec<usize>> {
+        resolve_slice(self, length)
     }
+}
+
+/// 将SliceInfo解析为实际的索引序列
+#[inline]
+pub fn resolve_slice(slice_info: &SliceInfo, dim_size: usize) -> PyResult<Vec<usize>> {
+    let start = slice_info.start.unwrap_or(0);
+    let stop = slice_info.stop.unwrap_or(dim_size as i64);
+    let step = slice_info.step.unwrap_or(1);
+
+    if step == 0 {
+        return Err(PyErr::new::<PyValueError, _>("Slice step cannot be zero"));
+    }
+
+    let mut indices = Vec::new();
+
+    if step > 0 {
+        let mut i = if start < 0 {
+            dim_size as i64 + start
+        } else {
+            start
+        };
+        let end = if stop < 0 {
+            dim_size as i64 + stop
+        } else {
+            stop
+        };
+
+        while i < end && i < dim_size as i64 {
+            if i >= 0 {
+                indices.push(i as usize);
+            }
+            i += step;
+        }
+    } else {
+        let mut i = if start < 0 {
+            dim_size as i64 + start
+        } else {
+            start.min(dim_size as i64 - 1)
+        };
+        let end = if stop < 0 {
+            dim_size as i64 + stop
+        } else {
+            stop
+        };
+
+        while i > end && i >= 0 {
+            if i < dim_size as i64 {
+                indices.push(i as usize);
+            }
+            i += step;
+        }
+    }
+
+    Ok(indices)
 }
 
 impl IndexResult {
@@ -353,7 +391,7 @@ impl IndexParser {
                 }
 
                 IndexType::Slice(slice_info) => {
-                    let slice_indices = slice_info.generate_indices(dim_size);
+                    let slice_indices = slice_info.generate_indices(dim_size)?;
                     let slice_len = slice_indices.len();
 
                     indices.push(slice_indices);

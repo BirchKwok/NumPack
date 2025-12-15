@@ -6,5 +6,6 @@ pub mod error;
 pub mod metadata;
 
 // 重新导出常用类型
+#[allow(unused_imports)]
 pub use error::*;
 pub use metadata::*;

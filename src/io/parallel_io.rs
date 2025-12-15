@@ -6,7 +6,7 @@ use std::collections::{HashSet, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use crate::core::error::{NpkError, NpkResult};

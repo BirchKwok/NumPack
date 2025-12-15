@@ -3,7 +3,7 @@
 //! 本模块根据NumPack的实际访问模式智能选择最优的SIMD策略
 //! 包括随机访问、批量访问、流式访问等不同场景的专门优化
 
-use super::{DataType, NumPackSIMD, SIMDError, SIMDStrategy};
+use super::{DataType, NumPackSIMD, SIMDStrategy};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 

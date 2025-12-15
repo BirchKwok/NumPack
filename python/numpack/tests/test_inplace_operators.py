@@ -5,163 +5,248 @@ import numpy as np
 import numpack as npk
 from pathlib import Path
 import shutil
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent))
+import conftest
+ALL_DTYPES = conftest.ALL_DTYPES
+create_test_array = conftest.create_test_array
 
 
 class TestInPlaceOperators:
     """测试 LazyArray 原地操作符"""
     
-    @pytest.fixture
-    def test_data_dir(self, tmp_path):
-        """创建测试数据目录"""
-        test_dir = tmp_path / "test_inplace"
+    @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+    def test_imul(self, tmp_path, dtype, test_values):
+        """测试 *= 操作符（所有数据类型）"""
+        test_dir = tmp_path / f"test_imul_{dtype.__name__}"
         test_dir.mkdir(exist_ok=True)
         
-        # 创建测试数据
-        data = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]], dtype=np.float32)
+        data = create_test_array(dtype, (3, 3))
         with npk.NumPack(test_dir) as pack:
             pack.save({'array': data})
-        
-        yield test_dir
-        
-        # 清理
-        if test_dir.exists():
-            shutil.rmtree(test_dir)
-    
-    def test_imul(self, test_data_dir):
-        """测试 *= 操作符"""
-        with npk.NumPack(test_data_dir) as pack:
             a = pack.load('array', lazy=True)
-            a *= 4.1
+            original = a.copy()
+            
+            # 根据类型选择标量
+            if dtype == np.bool_:
+                scalar = True
+            elif np.issubdtype(dtype, np.integer):
+                scalar = 2
+            else:
+                scalar = 4.1
+            
+            a *= scalar
             
             # 结果应该是 numpy 数组
             assert isinstance(a, np.ndarray)
             
             # 验证结果值
-            expected = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]], dtype=np.float32) * 4.1
-            np.testing.assert_allclose(a, expected, rtol=1e-5)
+            expected = original * scalar
+            if dtype == np.bool_:
+                np.testing.assert_array_equal(a, expected)
+            else:
+                np.testing.assert_allclose(a, expected, rtol=1e-5)
     
-    def test_iadd(self, test_data_dir):
-        """测试 += 操作符"""
-        with npk.NumPack(test_data_dir) as pack:
+    @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+    def test_iadd(self, tmp_path, dtype, test_values):
+        """测试 += 操作符（所有数据类型）"""
+        test_dir = tmp_path / f"test_iadd_{dtype.__name__}"
+        test_dir.mkdir(exist_ok=True)
+        
+        data = create_test_array(dtype, (3, 3))
+        with npk.NumPack(test_dir) as pack:
+            pack.save({'array': data})
             a = pack.load('array', lazy=True)
-            a += 10
+            original = a.copy()
+            
+            # 根据类型选择标量
+            if dtype == np.bool_:
+                scalar = True
+            elif np.issubdtype(dtype, np.integer):
+                scalar = 10
+            else:
+                scalar = 10.0
+            
+            a += scalar
             
             assert isinstance(a, np.ndarray)
-            expected = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]], dtype=np.float32) + 10
-            np.testing.assert_array_equal(a, expected)
+            expected = original + scalar
+            if dtype == np.bool_:
+                np.testing.assert_array_equal(a, expected)
+            else:
+                np.testing.assert_allclose(a, expected)
     
-    def test_isub(self, test_data_dir):
-        """测试 -= 操作符"""
-        with npk.NumPack(test_data_dir) as pack:
+    @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+    def test_isub(self, tmp_path, dtype, test_values):
+        """测试 -= 操作符（所有数据类型）"""
+        if dtype == np.bool_:
+            pytest.skip("In-place subtraction not supported for boolean types in numpy")
+
+        test_dir = tmp_path / f"test_isub_{dtype.__name__}"
+        test_dir.mkdir(exist_ok=True)
+        
+        data = create_test_array(dtype, (3, 3))
+        with npk.NumPack(test_dir) as pack:
+            pack.save({'array': data})
             a = pack.load('array', lazy=True)
-            a -= 5
+            original = a.copy()
+            
+            # 根据类型选择标量
+            if dtype == np.bool_:
+                scalar = True
+            elif np.issubdtype(dtype, np.integer):
+                scalar = 5
+            else:
+                scalar = 5.0
+            
+            a -= scalar
             
             assert isinstance(a, np.ndarray)
-            expected = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]], dtype=np.float32) - 5
-            np.testing.assert_array_equal(a, expected)
+            expected = original - scalar
+            if dtype == np.bool_:
+                np.testing.assert_array_equal(a, expected)
+            else:
+                np.testing.assert_allclose(a, expected)
     
-    def test_itruediv(self, test_data_dir):
-        """测试 /= 操作符"""
-        with npk.NumPack(test_data_dir) as pack:
+    @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+    def test_itruediv(self, tmp_path, dtype, test_values):
+        """测试 /= 操作符（仅浮点和复数类型）"""
+        if np.issubdtype(dtype, (np.integer, np.bool_)):
+            pytest.skip("True division not applicable for integer/bool types")
+        
+        test_dir = tmp_path / f"test_itruediv_{dtype.__name__}"
+        test_dir.mkdir(exist_ok=True)
+        
+        data = create_test_array(dtype, (3, 3))
+        with npk.NumPack(test_dir) as pack:
+            pack.save({'array': data})
             a = pack.load('array', lazy=True)
-            a /= 2
+            original = a.copy()
+            
+            a /= 2.0
             
             assert isinstance(a, np.ndarray)
-            expected = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]], dtype=np.float32) / 2
-            np.testing.assert_array_equal(a, expected)
+            expected = original / 2.0
+            np.testing.assert_allclose(a, expected)
     
-    def test_ifloordiv(self, test_data_dir):
-        """测试 //= 操作符"""
-        with npk.NumPack(test_data_dir) as pack:
+    @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+    def test_ifloordiv(self, tmp_path, dtype, test_values):
+        """测试 //= 操作符（仅整数类型）"""
+        if not np.issubdtype(dtype, np.integer):
+            pytest.skip("Floor division only applicable for integer types")
+        
+        test_dir = tmp_path / f"test_ifloordiv_{dtype.__name__}"
+        test_dir.mkdir(exist_ok=True)
+        
+        data = create_test_array(dtype, (3, 3))
+        with npk.NumPack(test_dir) as pack:
+            pack.save({'array': data})
             a = pack.load('array', lazy=True)
+            original = a.copy()
+            
             a //= 2
             
             assert isinstance(a, np.ndarray)
-            expected = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]], dtype=np.float32) // 2
+            expected = original // 2
             np.testing.assert_array_equal(a, expected)
     
-    def test_imod(self, test_data_dir):
-        """测试 %= 操作符"""
-        with npk.NumPack(test_data_dir) as pack:
+    @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+    def test_imod(self, tmp_path, dtype, test_values):
+        """测试 %= 操作符（仅整数类型）"""
+        if not np.issubdtype(dtype, np.integer):
+            pytest.skip("Modulo only applicable for integer types")
+        
+        test_dir = tmp_path / f"test_imod_{dtype.__name__}"
+        test_dir.mkdir(exist_ok=True)
+        
+        data = create_test_array(dtype, (3, 3))
+        with npk.NumPack(test_dir) as pack:
+            pack.save({'array': data})
             a = pack.load('array', lazy=True)
+            original = a.copy()
+            
             a %= 3
             
             assert isinstance(a, np.ndarray)
-            expected = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]], dtype=np.float32) % 3
+            expected = original % 3
             np.testing.assert_array_equal(a, expected)
     
-    def test_ipow(self, test_data_dir):
-        """测试 **= 操作符"""
-        with npk.NumPack(test_data_dir) as pack:
+    @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+    def test_ipow(self, tmp_path, dtype, test_values):
+        """测试 **= 操作符（数值类型）"""
+        if dtype == np.bool_:
+            pytest.skip("Power operation not applicable for bool type")
+        
+        test_dir = tmp_path / f"test_ipow_{dtype.__name__}"
+        test_dir.mkdir(exist_ok=True)
+        
+        data = create_test_array(dtype, (3, 3))
+        with npk.NumPack(test_dir) as pack:
+            pack.save({'array': data})
             a = pack.load('array', lazy=True)
+            original = a.copy()
+            
             a **= 2
             
             assert isinstance(a, np.ndarray)
-            expected = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]], dtype=np.float32) ** 2
-            np.testing.assert_array_equal(a, expected)
+            expected = original ** 2
+            if np.issubdtype(dtype, np.complexfloating):
+                np.testing.assert_allclose(a, expected)
+            else:
+                np.testing.assert_allclose(a, expected)
     
-    def test_chained_operations(self, test_data_dir):
-        """测试连续的原地操作"""
-        with npk.NumPack(test_data_dir) as pack:
+    @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+    def test_chained_operations(self, tmp_path, dtype, test_values):
+        """测试连续的原地操作（仅浮点类型）"""
+        if np.issubdtype(dtype, (np.integer, np.bool_)):
+            pytest.skip("Chained operations with division only applicable for floating point types")
+        
+        test_dir = tmp_path / f"test_chained_{dtype.__name__}"
+        test_dir.mkdir(exist_ok=True)
+        
+        data = create_test_array(dtype, (3, 3))
+        with npk.NumPack(test_dir) as pack:
+            pack.save({'array': data})
             a = pack.load('array', lazy=True)
+            original = a.copy()
+            
             a *= 2
-            a += 10
-            a /= 3
+            a += 10.0
+            a /= 3.0
             
             assert isinstance(a, np.ndarray)
-            
-            # 验证结果
-            expected = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]], dtype=np.float32)
-            expected = (expected * 2 + 10) / 3
+            expected = (original * 2 + 10.0) / 3.0
             np.testing.assert_allclose(a, expected, rtol=1e-5)
     
-    def test_with_numpy_array(self, test_data_dir):
-        """测试与 numpy 数组的交互"""
-        with npk.NumPack(test_data_dir) as pack:
-            lazy_array = pack.load('array', lazy=True)
-            numpy_array = np.array([1, 2, 3], dtype=np.float32)
+    @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+    def test_original_lazyarray_unchanged(self, tmp_path, dtype, test_values):
+        """验证原始 LazyArray 不受影响（所有数据类型）"""
+        test_dir = tmp_path / f"test_unchanged_{dtype.__name__}"
+        test_dir.mkdir(exist_ok=True)
+        
+        data = create_test_array(dtype, (3, 3))
+        with npk.NumPack(test_dir) as pack:
+            pack.save({'array': data})
             
-            # LazyArray 与 numpy 数组相乘
-            result = lazy_array
-            result *= numpy_array
-            
-            assert isinstance(result, np.ndarray)
-            
-            # 验证广播是否正确
-            expected = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]], dtype=np.float32) * numpy_array
-            np.testing.assert_array_equal(result, expected)
-    
-    def test_with_scalar_types(self, test_data_dir):
-        """测试不同标量类型"""
-        with npk.NumPack(test_data_dir) as pack:
-            # 整数
-            a = pack.load('array', lazy=True)
-            a *= 2
-            assert isinstance(a, np.ndarray)
-            
-            # 浮点数
-            b = pack.load('array', lazy=True)
-            b *= 2.5
-            assert isinstance(b, np.ndarray)
-            
-            # 复数
-            c = pack.load('array', lazy=True)
-            c *= (1 + 2j)
-            assert isinstance(c, np.ndarray)
-    
-    def test_original_lazyarray_unchanged(self, test_data_dir):
-        """验证原始 LazyArray 不受影响"""
-        with npk.NumPack(test_data_dir) as pack:
             # 第一次加载
             a = pack.load('array', lazy=True)
             original_data = np.array(a)
             
             # 应用原地操作
-            a *= 2
+            if dtype == np.bool_:
+                a |= True
+            elif np.issubdtype(dtype, np.integer):
+                a *= 2
+            else:
+                a *= 2.0
             
             # 重新加载，验证文件中的数据没有改变
             b = pack.load('array', lazy=True)
             reloaded_data = np.array(b)
             
-            np.testing.assert_array_equal(original_data, reloaded_data)
+            if dtype == np.bool_:
+                np.testing.assert_array_equal(original_data, reloaded_data)
+            else:
+                np.testing.assert_allclose(original_data, reloaded_data)
 

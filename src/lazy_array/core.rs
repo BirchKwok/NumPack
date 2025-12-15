@@ -10,7 +10,7 @@ use crate::memory::simd_processor::SIMDProcessor;
 use memmap2::Mmap;
 use std::fs::File;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 // 访问模式分析相关类型
 #[derive(Debug, Clone)]
@@ -150,28 +150,25 @@ impl OptimizedLazyArray {
         }
     }
 
+    /// Selects the appropriate boolean indexing strategy based on mask selectivity.
     pub fn boolean_index_smart(&self, mask: &[bool]) -> Vec<Vec<u8>> {
         if mask.len() != self.shape[0] {
             return vec![];
         }
 
-        // 智能选择策略：根据选择性决定使用哪种算法
         let selectivity = mask.iter().filter(|&&x| x).count() as f64 / mask.len() as f64;
 
         if selectivity < 0.1 {
-            // 稀疏情况：先收集索引再批量读取
             self.boolean_index_sparse(mask)
         } else if selectivity > 0.8 {
-            // 密集情况：连续读取后过滤
             self.boolean_index_dense(mask)
         } else {
-            // 中等情况：标准遍历
             self.boolean_index_standard(mask)
         }
     }
 
+    /// Highly optimized boolean indexing variant that leverages parallel execution.
     pub fn boolean_index_extreme(&self, mask: &[bool]) -> Vec<Vec<u8>> {
-        // 极端优化版本：使用并行处理
         if mask.len() != self.shape[0] {
             return vec![];
         }
@@ -190,8 +187,8 @@ impl OptimizedLazyArray {
             .collect()
     }
 
+    /// Micro-optimized boolean indexing using preallocation and fast row access.
     pub fn boolean_index_micro(&self, mask: &[bool]) -> Vec<Vec<u8>> {
-        // 微优化版本：内存预分配和批量操作
         if mask.len() != self.shape[0] {
             return vec![];
         }
@@ -237,8 +234,8 @@ impl OptimizedLazyArray {
             vec![]
         }
     }
+    /// Performs cache warm-up by sampling rows based on the given rate.
     pub fn warmup_cache(&self, sample_rate: f64) {
-        // 智能缓存预热：根据采样率预读数据
         let sample_size = (self.shape[0] as f64 * sample_rate.clamp(0.0, 1.0)) as usize;
         let step = if sample_size > 0 {
             self.shape[0] / sample_size
@@ -247,7 +244,7 @@ impl OptimizedLazyArray {
         };
 
         for i in (0..self.shape[0]).step_by(step) {
-            let _ = self.get_row(i); // 触发数据加载到页缓存
+            let _ = self.get_row(i);
         }
     }
 
@@ -261,7 +258,7 @@ impl OptimizedLazyArray {
             return vec![];
         }
 
-        // 自适应预取：根据访问模式决定预取策略
+        // Adaptive prefetch: select strategy based on sampling density
         let selected_indices: Vec<usize> = mask
             .iter()
             .enumerate()
@@ -339,14 +336,11 @@ impl OptimizedLazyArray {
             return vec![];
         }
 
-        // 向量化收集：使用并行处理和批量优化
         use rayon::prelude::*;
 
         if indices.len() < 50 {
-            // 小数据集：串行处理避免并行开销
             self.get_rows(indices)
         } else {
-            // 大数据集：并行处理
             indices.par_iter().map(|&idx| self.get_row(idx)).collect()
         }
     }
@@ -356,7 +350,6 @@ impl OptimizedLazyArray {
             return vec![];
         }
 
-        // 并行布尔索引
         use rayon::prelude::*;
 
         let chunk_size = (mask.len() / rayon::current_num_threads()).max(1000);
@@ -441,7 +434,7 @@ impl OptimizedLazyArray {
     }
 
     pub fn boolean_index_adaptive_algorithm(&self, mask: &[bool]) -> Vec<Vec<u8>> {
-        // 自适应算法：动态选择最佳策略
+        // Adaptive algorithm: dynamically switch between implementations
         self.boolean_index_production(mask)
     }
 
@@ -538,7 +531,7 @@ impl OptimizedLazyArray {
     }
 
     pub fn adaptive_gather(&self, indices: &[usize]) -> Vec<Vec<u8>> {
-        // 自适应聚合：根据访问模式动态选择策略
+        // Adaptive aggregation: pick the most suitable strategy based on access pattern
         if indices.is_empty() {
             return vec![];
         }

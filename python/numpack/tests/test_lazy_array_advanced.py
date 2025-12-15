@@ -3,6 +3,12 @@ import pytest
 import tempfile
 import os
 from numpack import NumPack, force_cleanup_windows_handles
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent))
+import conftest
+ALL_DTYPES = conftest.ALL_DTYPES
+create_test_array = conftest.create_test_array
 
 
 @pytest.fixture
@@ -277,9 +283,11 @@ class TestLazyArrayAdvancedMethods:
         # LazyArray 更注重内存映射和零拷贝操作
         assert not hasattr(lazy_arr, 'astype')
         
-        # copy 方法可能不存在，这是正常的
-        # LazyArray 主要用于内存映射，避免拷贝大量数据
-        assert not hasattr(lazy_arr, 'copy')
+        # copy 方法在新版本中可用，用于获取独立的 NumPy 拷贝
+        if hasattr(lazy_arr, 'copy'):
+            copied = lazy_arr.copy()
+            assert isinstance(copied, np.ndarray)
+            assert copied.dtype == np.asarray(lazy_arr).dtype
 
     def test_lazy_array_boolean_mask_types(self, lazy_array_small):
         """测试 LazyArray 支持不同类型的布尔掩码"""
@@ -390,17 +398,11 @@ class TestLazyArrayAdvancedMethods:
 class TestLazyArrayDataTypes:
     """测试 LazyArray 对不同数据类型的支持"""
 
-    @pytest.mark.parametrize("dtype", [
-        np.float32, np.float64, np.int32, np.int64, 
-        np.uint32, np.int16, np.uint16
-    ])
-    def test_lazy_array_different_dtypes(self, numpack, dtype):
-        """测试 LazyArray 对不同数据类型的支持"""
+    @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
+    def test_lazy_array_different_dtypes(self, numpack, dtype, test_values):
+        """测试 LazyArray 对所有数据类型的支持"""
         # 创建测试数据
-        if np.issubdtype(dtype, np.integer):
-            data = np.random.randint(0, 100, size=(100, 50), dtype=dtype)
-        else:
-            data = np.random.rand(100, 50).astype(dtype)
+        data = create_test_array(dtype, (100, 50))
         
         numpack.save({'data_dtype_test': data})
         
@@ -413,7 +415,12 @@ class TestLazyArrayDataTypes:
         
         # 测试数据访问
         row = lazy_arr[0]
-        assert np.allclose(row, data[0])
+        if dtype == np.bool_:
+            assert np.array_equal(row, data[0])
+        elif np.issubdtype(dtype, np.complexfloating):
+            assert np.allclose(row, data[0])
+        else:
+            assert np.allclose(row, data[0])
         
         # 测试 reshape (不使用-1维度)
         total_size = data.size

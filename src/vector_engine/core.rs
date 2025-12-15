@@ -1,7 +1,7 @@
 //! 向量引擎核心实现
 
 use crate::vector_engine::metrics::MetricType;
-use crate::vector_engine::simd_backend::{Result, SimdBackend, SimdError};
+use crate::vector_engine::simd_backend::{Result, SimdBackend};
 
 /// 向量计算引擎
 pub struct VectorEngine {

@@ -10,20 +10,24 @@ pub mod smart_router;
 pub mod strategy_selector;
 pub mod types;
 
-// 重新导出核心类型
+// 重新导出核心类型（保持API稳定，未被内部使用时忽略未用警告）
+#[allow(unused_imports)]
 pub use types::{
     AccessInfo, AccessPattern, AccessPatternAnalyzer, AccessStatistics, AccessStrategy,
     IndexOptimizationConfig, IndexPerformanceMonitor, IndexPerformanceReport, IndexResult,
     IndexType, SliceInfo,
 };
 
+#[allow(unused_imports)]
 pub use algorithms::{IndexAlgorithmExecutor, IndexError};
 
+#[allow(unused_imports)]
 pub use strategy_selector::{
     AccessStrategySelector, AdaptationStats, EstimatedPerformance, StrategySelection,
     StrategySelectionReport,
 };
 
+#[allow(unused_imports)]
 pub use optimizations::{IndexOptimizationManager, OptimizationReport};
 
 /// 索引系统主控制器
