@@ -1,6 +1,6 @@
 [package]
 name = "numpack"
-version = "0.4.4"
+version = "0.4.5"
 edition = "2021"
 
 [lib]
@@ -78,12 +78,12 @@ overflow-checks = false      # 发布版本禁用溢出检查
 opt-level = 3
 codegen-units = 1
 
-# 🚀 新增：针对向量计算的额外优化
+# 新增：针对向量计算的额外优化
 [profile.release.package.simsimd]
 opt-level = 3
 codegen-units = 1
 
-# 🚀 新增：针对当前crate的额外优化
+# 新增：针对当前crate的额外优化
 [profile.release.package.numpack]
 opt-level = 3
 codegen-units = 1

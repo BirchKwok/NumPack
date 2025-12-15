@@ -35,7 +35,7 @@ def detect_platform():
     system = platform.system()
     machine = platform.machine()
     
-    print(f"\n🔍 平台检测:")
+    print(f"\n平台检测:")
     print(f"  操作系统: {system}")
     print(f"  架构: {machine}")
     print(f"  Python: {platform.python_version()}")
@@ -99,10 +99,10 @@ def run_maturin_build_wheel(features_str, python_interpreter):
             return None
         
     except subprocess.CalledProcessError as e:
-        print(f"❌ 构建失败: {e}")
+        print(f"构建失败: {e}")
         return None
     except FileNotFoundError:
-        print("❌ 错误: 未找到 maturin")
+        print("错误: 未找到 maturin")
         print("请安装: pip install maturin")
         return None
 
@@ -116,7 +116,7 @@ def install_wheel(wheel_paths, python_interpreter):
         python_interpreter: Python 解释器路径
     """
     print("\n" + "=" * 70)
-    print("📦 安装 wheel 文件")
+    print("安装 wheel 文件")
     print("=" * 70)
 
     # 确保 wheel_paths 是列表
@@ -127,7 +127,7 @@ def install_wheel(wheel_paths, python_interpreter):
     wheel_files = [p for p in wheel_paths if p.endswith('.whl')]
 
     if not wheel_files:
-        print("⚠️  未找到 wheel 文件")
+        print("未找到 wheel 文件")
         return False
 
     # 获取当前 Python 版本 (major.minor)
@@ -137,7 +137,7 @@ def install_wheel(wheel_paths, python_interpreter):
     compatible_wheels = [w for w in wheel_files if f"cp{python_version}" in w]
 
     if not compatible_wheels:
-        print(f"⚠️  未找到兼容 Python {python_version} 的 wheel 文件")
+        print(f"未找到兼容 Python {python_version} 的 wheel 文件")
         return False
 
     print(f"  找到 {len(compatible_wheels)} 个兼容的 wheel 文件")
@@ -149,7 +149,7 @@ def install_wheel(wheel_paths, python_interpreter):
         print("✓ 安装成功!")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"❌ 安装失败: {e}")
+        print(f"安装失败: {e}")
         return False
 
 
@@ -175,12 +175,12 @@ def sync_extension_module(python_interpreter):
             text=True,
         )
     except subprocess.CalledProcessError as exc:
-        print(f"⚠️  无法定位已安装的扩展模块: {exc}")
+        print(f"无法定位已安装的扩展模块: {exc}")
         return
 
     extension_path = Path(result.stdout.strip())
     if not extension_path.exists():
-        print(f"⚠️  未找到扩展文件: {extension_path}")
+        print(f"未找到扩展文件: {extension_path}")
         return
 
     destination = source_dir / extension_path.name
@@ -188,12 +188,12 @@ def sync_extension_module(python_interpreter):
         shutil.copy2(extension_path, destination)
         print(f"✓ 已同步扩展模块到源码目录: {destination.name}")
     except Exception as exc:
-        print(f"⚠️  同步扩展模块失败: {exc}")
+        print(f"同步扩展模块失败: {exc}")
 
 
 def verify_installation(python_interpreter):
     """验证安装"""
-    print(f"\n🔍 验证安装:")
+    print(f"\n验证安装:")
     
     try:
             # 尝试导入 numpack
@@ -215,12 +215,12 @@ def verify_installation(python_interpreter):
             
             return True
         else:
-            print("  ❌ NumPack 导入失败")
+            print("  NumPack 导入失败")
             print(f"  {result.stderr}")
             return False
             
     except Exception as e:
-        print(f"  ⚠ 验证时出错: {e}")
+        print(f"  验证时出错: {e}")
         return False
 
 
@@ -268,7 +268,7 @@ def main():
 
     if not built_files:
         print("\n" + "=" * 70)
-        print("❌ 构建失败")
+        print("构建失败")
         print("=" * 70)
         sys.exit(1)
 
@@ -280,7 +280,7 @@ def main():
     # 步骤 2: 安装 wheel
     if not install_wheel(built_files, sys.executable):
         print("\n" + "=" * 70)
-        print("❌ 安装失败")
+        print("安装失败")
         print("=" * 70)
         sys.exit(1)
 
@@ -292,14 +292,14 @@ def main():
 
     # 打印使用提示
     print("\n" + "=" * 70)
-    print("🎉 完成!")
+    print("完成!")
     print("=" * 70)
     
-    print("\n📚 后续步骤:")
+    print("\n后续步骤:")
     print("  1. 快速测试: python quick_test.py")
     print("  2. 验证安装: python build.py --verify-only")
     
-    print("\n💡 使用提示:")
+    print("\n使用提示:")
     print("  import numpack")
     print("  engine = numpack.VectorEngine()")
     print("  scores = engine.batch_compute(query, candidates, metric='dot')")

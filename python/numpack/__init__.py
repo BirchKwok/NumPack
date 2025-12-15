@@ -5,11 +5,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Tuple, Union, Optional
 import numpy as np
 
-# NumPack 兼容性补丁：numpy>=2.0不再允许在issubdtype的第二个参数中传入tuple。
-# 我们在运行时检测并注入一个向后兼容的实现，以保证测试及旧版本代码继续正常工作。
 if hasattr(np, "issubdtype"):
     try:
-        # 触发一次检测，如果抛出TypeError，说明需要补丁
         np.issubdtype(np.float32, (np.integer, np.bool_))  # type: ignore[arg-type]
     except TypeError:
         _orig_issubdtype = np.issubdtype
@@ -21,7 +18,7 @@ if hasattr(np, "issubdtype"):
 
         np.issubdtype = _numpack_issubdtype  # type: ignore[assignment]
 
-__version__ = "0.4.4"
+__version__ = "0.4.5"
 
 # Platform detection
 def _is_windows():
@@ -177,7 +174,7 @@ class NumPack:
         if not isinstance(arrays, dict):
             raise ValueError("arrays must be a dictionary")
         
-        # 🚀 Performance optimization: If cache mode is enabled, only update cache
+        # Performance optimization: If cache mode is enabled, only update cache
         if self._cache_enabled:
             for name, arr in arrays.items():
                 # Critical optimization: Check if it's a reference to a cached array
@@ -195,7 +192,7 @@ class NumPack:
                 # 新数组或替换的数组
                 self._memory_cache[name] = arr  # No copy, directly reference
                 
-                # 🚀 优化：标记为脏数组
+                # 优化：标记为脏数组
                 if hasattr(self, '_batch_context'):
                     self._batch_context._dirty_arrays.add(name)
             return
@@ -609,7 +606,7 @@ class NumPack:
             self._memory_cache.clear()
     
     def _flush_cache_with_sync(self):
-        """🚀 优化：刷新缓存并强制同步元数据"""
+        """优化：刷新缓存并强制同步元数据"""
         if self._memory_cache:
             self._npk.save(self._memory_cache, None)
             # 强制同步元数据到磁盘（Batch Mode专用）
@@ -731,7 +728,7 @@ class BatchModeContext:
     Manages in-memory caching of arrays for batch operations.
     All cached changes are written to disk on exit.
     
-    🚀 Optimizations:
+    Optimizations:
     - Zero-copy caching: Detects in-place modifications
     - Smart dirty tracking: Only flushes modified arrays
     - Performance monitoring: Tracks cache efficiency
@@ -741,7 +738,7 @@ class BatchModeContext:
         self.npk = numpack_instance
         self.memory_limit = memory_limit
         self._memory_used = 0
-        # 🚀 优化：智能脏标记
+        # 优化：智能脏标记
         self._dirty_arrays = set()  # Track which arrays were actually modified
         self._cache_hits = 0
         self._cache_misses = 0
@@ -749,7 +746,7 @@ class BatchModeContext:
     def __enter__(self):
         """Enter batch mode - enable optimized memory caching"""
         self.npk._cache_enabled = True
-        # 🚀 设置batch context引用，让save方法可以访问脏标记
+        # 设置batch context引用，让save方法可以访问脏标记
         self.npk._batch_context = self
         # 记录初始缓存状态（用于智能检测）
         self._initial_cache_ids = {name: id(arr) for name, arr in self.npk._memory_cache.items()}
@@ -758,7 +755,7 @@ class BatchModeContext:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Exit batch mode - flush only modified arrays"""
         try:
-            # 🚀 优化：只刷新修改过的数组（脏数组）
+            # 优化：只刷新修改过的数组（脏数组）
             self._flush_dirty_arrays()
         finally:
             self.npk._cache_enabled = False
@@ -770,7 +767,7 @@ class BatchModeContext:
         return False  # Don't suppress exceptions
     
     def _flush_dirty_arrays(self):
-        """🚀 优化的刷新：只写入修改过的数组 + 强制同步元数据"""
+        """优化的刷新：只写入修改过的数组 + 强制同步元数据"""
         if not self.npk._memory_cache:
             return
         
@@ -789,7 +786,7 @@ class BatchModeContext:
                     dirty_arrays[name] = arr
                     continue
         
-        # 🚀 优化：只刷新修改过的数组，并强制同步元数据
+        # 优化：只刷新修改过的数组，并强制同步元数据
         if dirty_arrays:
             # 过滤掉无效的数组对象
             valid_arrays = {}
@@ -817,7 +814,7 @@ class BatchModeContext:
                     # 无论如何都要清理缓存
                     self.npk._memory_cache.clear()
                     return
-                # 🚀 批量操作结束，强制同步元数据
+                # 批量操作结束，强制同步元数据
                 if hasattr(self.npk._npk, 'sync_metadata'):
                     try:
                         self.npk._npk.sync_metadata()

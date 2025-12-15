@@ -335,7 +335,7 @@ if __name__ == "__main__":
         test_lazy_array_complex_operations()
 
         print("=" * 60)
-        print("✅ All tests passed! LazyArray now supports arithmetic operators like NumPy memmap.")
+        print("All tests passed! LazyArray now supports arithmetic operators like NumPy memmap.")
         print()
         print("Usage example:")
         print("```python")
@@ -353,6 +353,6 @@ if __name__ == "__main__":
         print("```")
 
     except Exception as e:
-        print(f"❌ Test failed: {e}")
+        print(f"Test failed: {e}")
         import traceback
         traceback.print_exc()

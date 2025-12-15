@@ -726,7 +726,7 @@ impl NumPack {
         let mut new_shape = meta.shape.iter().map(|&x| x as usize).collect::<Vec<_>>();
         new_shape[0] = indices.len();
 
-        // 🚀 优化策略：使用 zero-copy 转换，避免 to_vec() 的内存复制
+        // 优化策略：使用 zero-copy 转换，避免 to_vec() 的内存复制
         // 直接从 Vec<u8> 转换为目标类型的 Vec<T>
         let array: PyObject = match meta.get_dtype() {
             DataType::Bool => {
@@ -738,7 +738,7 @@ impl NumPack {
                 array.into_pyarray(py).into()
             }
             DataType::Uint8 => {
-                // 🚀 优化：直接使用 data，无需 to_vec()
+                // 优化：直接使用 data，无需 to_vec()
                 let array = unsafe { ArrayD::from_shape_vec_unchecked(new_shape, data) };
                 array.into_pyarray(py).into()
             }

@@ -408,62 +408,62 @@ def load_checkpoint(npk):
 
 ## Performance Tips
 
-### ✅ DO
+### DO
 
 ```python
-# ✅ Use context manager
+# Use context manager
 with NumPack("data.npk") as npk:
     # Operations
 
-# ✅ Load once, use multiple times
+# Load once, use multiple times
 with NumPack("data.npk") as npk:
     arr = npk.load('data')
     for i in range(100):
         process(arr)
 
-# ✅ Use batch mode for frequent modifications
+# Use batch mode for frequent modifications
 with npk.writable_batch_mode() as wb:
     arr = wb.load('data')
     for i in range(100):
         arr *= 1.1
 
-# ✅ Use lazy load for partial access
+# Use lazy load for partial access
 lazy = npk.load('data', lazy=True)
 subset = lazy[1000:2000]
 
-# ✅ Use streaming for large data
+# Use streaming for large data
 for batch in npk.stream_load('data', buffer_size=10000):
     process(batch)
 
-# ✅ Use appropriate dtype
+# Use appropriate dtype
 data = np.random.rand(100, 50).astype(np.float32)
 ```
 
-### ❌ DON'T
+### DON'T
 
 ```python
-# ❌ Don't create instance in loop
+# Don't create instance in loop
 for i in range(100):
     with NumPack("data.npk") as npk:
         data = npk.load('data')
 
-# ❌ Don't load repeatedly
+# Don't load repeatedly
 with NumPack("data.npk") as npk:
     for i in range(100):
         arr = npk.load('data')  # Reloads every time
         value = arr[i]
 
-# ❌ Don't use normal mode for frequent modifications
+# Don't use normal mode for frequent modifications
 for i in range(100):
     arr = npk.load('data')
     arr *= 2
     npk.save({'data': arr})  # Slow
 
-# ❌ Don't eager load for partial access
+# Don't eager load for partial access
 arr = npk.load('large_data')  # Loads 10GB
 subset = arr[:100]  # Only need 1MB
 
-# ❌ Don't use float64 unnecessarily
+# Don't use float64 unnecessarily
 data = np.random.rand(100, 50)  # float64, 2x size
 ```
 

@@ -151,7 +151,7 @@ with NumPack("data.npk") as npk:
 
 ### Best Practices
 
-#### ✅ Good Usage
+#### Good Usage
 
 ```python
 # Load once, use multiple times
@@ -164,7 +164,7 @@ with NumPack("data.npk") as npk:
     test_data = lazy_arr[90000:]
 ```
 
-#### ❌ Avoid
+#### Avoid
 
 ```python
 # Don't create lazy array repeatedly
@@ -597,14 +597,14 @@ with NumPack("data.npk") as npk:
 ### Tip 2: Batch Similar Operations
 
 ```python
-# ❌ Inefficient: Multiple small operations
+# Inefficient: Multiple small operations
 with NumPack("data.npk") as npk:
     for i in range(100):
         arr = npk.load('features')
         arr[i] *= 2
         npk.save({'features': arr})
 
-# ✅ Efficient: Batch mode
+# Efficient: Batch mode
 with NumPack("data.npk") as npk:
     with npk.batch_mode():
         for i in range(100):
@@ -631,13 +631,13 @@ with NumPack("data.npk") as npk:
 ### Tip 4: Minimize File Opens
 
 ```python
-# ❌ Inefficient: Open file repeatedly
+# Inefficient: Open file repeatedly
 for i in range(100):
     with NumPack("data.npk") as npk:
         data = npk.load('features')
         process(data)
 
-# ✅ Efficient: Open once
+# Efficient: Open once
 with NumPack("data.npk") as npk:
     for i in range(100):
         data = npk.load('features')

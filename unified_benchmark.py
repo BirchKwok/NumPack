@@ -184,7 +184,7 @@ class FormatBenchmark:
             return time_ms
             
         except Exception as e:
-            print(f"  ❌ {format_name} {operation_name} failed: {e}")
+            print(f"  {format_name} {operation_name} failed: {e}")
             self.results.add_error(format_name, operation_name, str(e))
             return None
     
@@ -196,7 +196,7 @@ class FormatBenchmark:
             return
         
         format_name = "NumPack"
-        print(f"\n📦 Testing {format_name}...")
+        print(f"\nTesting {format_name}...")
         
         path = self.temp_dir / "numpack_data"
         if path.exists():
@@ -276,11 +276,11 @@ class FormatBenchmark:
         
         # ==================== Random Access Tests ====================
         # 注意：必须在 replace/append 之前测试，因为它们会修改文件状态
-        # 🚀 重要：为确保测试的准确性，在随机访问测试前重新创建干净的文件
+        # 重要：为确保测试的准确性，在随机访问测试前重新创建干净的文件
         with NumPack(path, drop_if_exists=True) as npk:
             npk.save({array_name: data})
         
-        print(f"\n  🎲 Testing Random Access Performance...")
+        print(f"\n  Testing Random Access Performance...")
         
         # Random Access - Small Batch (100 indices)
         random_indices_small = np.random.randint(0, min(len(data), 10000), 100).tolist()
@@ -328,7 +328,7 @@ class FormatBenchmark:
             print(f"  ✓ Random Access (10K): {time_ms:.3f}ms")
         
         # ==================== Sequential Access Tests ====================
-        print(f"\n  📊 Testing Sequential Access Performance...")
+        print(f"\n  Testing Sequential Access Performance...")
         
         # Sequential Access - Small Batch (100 consecutive rows)
         npk_seq_small = NumPack(path)
@@ -373,7 +373,7 @@ class FormatBenchmark:
             print(f"  ✓ Sequential Access (10K): {time_ms:.3f}ms")
         
         # ==================== Batch Mode 测试 ====================
-        print(f"\n  🚀 Testing Batch Mode Performance...")
+        print(f"\n  Testing Batch Mode Performance...")
         
         # 在 Batch Mode 测试之前，先执行 Replace 和 Append 测试
         # （这些会修改文件，所以放在最后）
@@ -488,14 +488,14 @@ class FormatBenchmark:
                 speedup = time_normal / time_writable if time_normal and time_writable else 0
                 print(f"  ✓ Writable Batch Mode (100x modify): {time_writable:.3f}ms (speedup: {speedup:.1f}x)")
         except Exception as e:
-            print(f"  ⚠ Writable Batch Mode test skipped: {e}")
+            print(f"  Writable Batch Mode test skipped: {e}")
     
     # ==================== NPY 测试 ====================
     
     def test_npy(self, data: np.ndarray):
         """测试 NPY 格式"""
         format_name = "NPY"
-        print(f"\n📦 Testing {format_name}...")
+        print(f"\nTesting {format_name}...")
         
         path = self.temp_dir / "data.npy"
         
@@ -647,7 +647,7 @@ class FormatBenchmark:
     def test_npz(self, data: np.ndarray, array_name: str = "data"):
         """测试 NPZ 格式"""
         format_name = "NPZ"
-        print(f"\n📦 Testing {format_name}...")
+        print(f"\nTesting {format_name}...")
         
         path = self.temp_dir / "data.npz"
         
@@ -673,7 +673,7 @@ class FormatBenchmark:
         
         # NPZ不支持真正的lazy load（压缩格式必须解压）
         self.results.add(format_name, "Lazy Load", None, note="N/A (compressed)")
-        print(f"  ⚠ Lazy Load: N/A (compressed format)")
+        print(f"  Lazy Load: N/A (compressed format)")
         
         # Replace
         replace_data = np.random.rand(100, data.shape[1]).astype(data.dtype)
@@ -782,11 +782,11 @@ class FormatBenchmark:
     def test_zarr(self, data: np.ndarray, array_name: str = "data"):
         """测试 Zarr 格式"""
         if not ZARR_AVAILABLE:
-            print("\n📦 Zarr not available, skipping...")
+            print("\nZarr not available, skipping...")
             return
         
         format_name = "Zarr"
-        print(f"\n📦 Testing {format_name}...")
+        print(f"\nTesting {format_name}...")
         
         path = self.temp_dir / "data.zarr"
         if path.exists():
@@ -937,11 +937,11 @@ class FormatBenchmark:
     def test_hdf5(self, data: np.ndarray, dataset_name: str = "data"):
         """测试 HDF5 格式"""
         if not HDF5_AVAILABLE:
-            print("\n📦 HDF5 not available, skipping...")
+            print("\nHDF5 not available, skipping...")
             return
         
         format_name = "HDF5"
-        print(f"\n📦 Testing {format_name}...")
+        print(f"\nTesting {format_name}...")
         
         path = self.temp_dir / "data.h5"
         if path.exists():
@@ -1108,11 +1108,11 @@ class FormatBenchmark:
     def test_parquet(self, data: np.ndarray):
         """测试 Parquet 格式"""
         if not ARROW_AVAILABLE:
-            print("\n📦 Parquet not available, skipping...")
+            print("\nParquet not available, skipping...")
             return
         
         format_name = "Parquet"
-        print(f"\n📦 Testing {format_name}...")
+        print(f"\nTesting {format_name}...")
         
         path = self.temp_dir / "data.parquet"
         
@@ -1140,7 +1140,7 @@ class FormatBenchmark:
         
         # Parquet 不支持真正的 lazy load
         self.results.add(format_name, "Lazy Load", None, note="N/A (columnar)")
-        print(f"  ⚠ Lazy Load: N/A (columnar format)")
+        print(f"  Lazy Load: N/A (columnar format)")
         
         # Replace (需要重写)
         replace_data = np.random.rand(100, data.shape[1]).astype(data.dtype)
@@ -1242,11 +1242,11 @@ class FormatBenchmark:
     def test_arrow(self, data: np.ndarray):
         """测试 Arrow/Feather 格式"""
         if not ARROW_AVAILABLE:
-            print("\n📦 Arrow not available, skipping...")
+            print("\nArrow not available, skipping...")
             return
         
         format_name = "Arrow/Feather"
-        print(f"\n📦 Testing {format_name}...")
+        print(f"\nTesting {format_name}...")
         
         path = self.temp_dir / "data.feather"
         
@@ -1274,7 +1274,7 @@ class FormatBenchmark:
         
         # Arrow/Feather 支持部分列读取，但不支持行级lazy load
         self.results.add(format_name, "Lazy Load", None, note="N/A (columnar)")
-        print(f"  ⚠ Lazy Load: N/A (columnar format)")
+        print(f"  Lazy Load: N/A (columnar format)")
         
         # Replace (需要重写)
         replace_data = np.random.rand(100, data.shape[1]).astype(data.dtype)

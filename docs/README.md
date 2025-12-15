@@ -2,7 +2,7 @@
 
 Welcome to the NumPack API documentation! NumPack is a high-performance array storage library that combines Rust's performance with Python's ease of use.
 
-## 📚 Documentation Index
+## Documentation Index
 
 ### Getting Started
 
@@ -57,7 +57,7 @@ Welcome to the NumPack API documentation! NumPack is a high-performance array st
 
 ---
 
-## 🚀 Quick Links
+## Quick Links
 
 ### By Use Case
 
@@ -81,7 +81,7 @@ Welcome to the NumPack API documentation! NumPack is a high-performance array st
 
 ---
 
-## 📊 Performance Highlights
+## Performance Highlights
 
 NumPack excels in three key areas:
 
@@ -112,7 +112,7 @@ with npk.writable_batch_mode() as wb:
 
 ---
 
-## 🎯 Common Tasks
+## Common Tasks
 
 ### Save and Load Data
 ```python
@@ -126,7 +126,7 @@ with NumPack("data.npk") as npk:
     # Load
     features = npk.load('features')
 ```
-📖 [Full documentation](./02_core_operations.md#save-operations)
+[Full documentation](./02_core_operations.md#save-operations)
 
 ### Modify Existing Data
 ```python
@@ -137,7 +137,7 @@ with NumPack("data.npk") as npk:
     # Append new rows (405x faster than NPY)
     npk.append({'features': more_data})
 ```
-📖 [Full documentation](./02_core_operations.md#replace-operations)
+[Full documentation](./02_core_operations.md#replace-operations)
 
 ### High-Performance Batch Processing
 ```python
@@ -147,7 +147,7 @@ with NumPack("data.npk") as npk:
         arr = wb.load('features')
         arr *= 2.0  # Direct file modification
 ```
-📖 [Full documentation](./03_batch_processing.md)
+[Full documentation](./03_batch_processing.md)
 
 ### Large Dataset Handling
 ```python
@@ -161,11 +161,11 @@ with NumPack("large_data.npk") as npk:
     for batch in npk.stream_load('features', buffer_size=10000):
         process(batch)
 ```
-📖 [Full documentation](./04_advanced_features.md)
+[Full documentation](./04_advanced_features.md)
 
 ---
 
-## 🔧 Installation
+## Installation
 
 ### From PyPI (Recommended)
 ```bash
@@ -188,32 +188,32 @@ maturin develop
 - Rust >= 1.70.0
 - Appropriate C/C++ compiler
 
-📖 [Full installation guide](./01_getting_started.md#installation)
+[Full installation guide](./01_getting_started.md#installation)
 
 ---
 
-## 💡 When to Use NumPack
+## When to Use NumPack
 
-### ✅ Strongly Recommended (90% of use cases)
+### Strongly Recommended (90% of use cases)
 
-- ✅ Machine learning and deep learning pipelines
-- ✅ Real-time data stream processing
-- ✅ Data annotation and correction workflows
-- ✅ Feature stores with dynamic updates
-- ✅ Any scenario requiring frequent data modifications
-- ✅ Fast data loading requirements
+- Machine learning and deep learning pipelines
+- Real-time data stream processing
+- Data annotation and correction workflows
+- Feature stores with dynamic updates
+- Any scenario requiring frequent data modifications
+- Fast data loading requirements
 
-### ⚠️ Consider Alternatives (10% of use cases)
+### Consider Alternatives (10% of use cases)
 
-- ❌ Write-once, never modify → Use NPY (2.2x faster initial write)
-- ❌ Frequent single-row random access → Use NPY mmap
-- ❌ Extreme compression requirements → Use NPZ (10% smaller, 1000x slower)
+- Write-once, never modify → Use NPY (2.2x faster initial write)
+- Frequent single-row random access → Use NPY mmap
+- Extreme compression requirements → Use NPZ (10% smaller, 1000x slower)
 
-📖 [Performance comparison](./05_performance_guide.md#performance-overview)
+[Performance comparison](./05_performance_guide.md#performance-overview)
 
 ---
 
-## 📖 API Overview
+## API Overview
 
 ### Core Classes
 
@@ -241,11 +241,11 @@ lazy_arr = npk.load('array', lazy=True)
 | `batch_mode()` | Batch processing | **25-37x speedup** |
 | `writable_batch_mode()` | Zero-copy batch | **174x speedup** |
 
-📖 [Complete API reference](./02_core_operations.md)
+[Complete API reference](./02_core_operations.md)
 
 ---
 
-## 🎓 Learning Path
+## Learning Path
 
 ### Beginner
 1. Read [Getting Started Guide](./01_getting_started.md)
@@ -264,7 +264,7 @@ lazy_arr = npk.load('array', lazy=True)
 
 ---
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
@@ -284,11 +284,11 @@ lazy_arr = npk.load('array', lazy=True)
 - Call `npk.update(array_name)` to compact
 - See [Core Operations](./02_core_operations.md#update)
 
-📖 [Full troubleshooting guide](./06_quick_reference.md#troubleshooting)
+[Full troubleshooting guide](./06_quick_reference.md#troubleshooting)
 
 ---
 
-## 📝 Examples Repository
+## Examples Repository
 
 All documentation includes practical examples. For complete working examples, see:
 

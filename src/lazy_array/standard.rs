@@ -90,7 +90,7 @@ impl LogicalRowMap {
 
 /// 标准LazyArray结构体 - 提供基本的懒加载数组功能
 ///
-/// 🚀 性能优化：支持可写mmap，允许直接修改数据
+/// 性能优化：支持可写mmap，允许直接修改数据
 #[pyclass(module = "numpack")]
 pub struct LazyArray {
     pub(crate) mmap: Arc<Mmap>,
@@ -100,9 +100,9 @@ pub struct LazyArray {
     pub(crate) array_path: String,
     pub(crate) modify_time: i64,
     pub(crate) logical_rows: Option<LogicalRowMap>,
-    /// 🚀 可写标志：如果为true，表示这是可写的mmap
+    /// 可写标志：如果为true，表示这是可写的mmap
     pub(crate) is_writable: bool,
-    /// 🚀 脏标志：如果为true，表示数据已被修改，需要sync
+    /// 脏标志：如果为true，表示数据已被修改，需要sync
     pub(crate) is_dirty: bool,
 }
 

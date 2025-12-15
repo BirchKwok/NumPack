@@ -219,7 +219,7 @@ impl ArrayView {
                 for (i, &old_row) in retained[chunk_start..chunk_end].iter().enumerate() {
                     let src_offset = old_row * row_size;
                     let dst_offset = i * row_size;
-                    // 🚀 SIMD优化: 使用向量化拷贝替代标准拷贝 (4-8x faster)
+                    // SIMD优化: 使用向量化拷贝替代标准拷贝 (4-8x faster)
                     simd_optimized::fast_copy(
                         &mmap[src_offset..src_offset + row_size],
                         &mut result_slice[dst_offset..dst_offset + row_size],
@@ -505,7 +505,7 @@ impl ArrayView {
                             &mut write_buffer[current_offset..dst_end]
                         };
 
-                        // 🚀 SIMD优化: 使用向量化拷贝 (4-8x faster)
+                        // SIMD优化: 使用向量化拷贝 (4-8x faster)
                         simd_optimized::fast_copy(src_slice, dst_slice);
                         current_offset = dst_end;
                     }
@@ -623,14 +623,14 @@ impl ParallelIO {
         }
     }
 
-    // 🚀 I/O性能优化：自适应缓冲区大小
+    // I/O性能优化：自适应缓冲区大小
     const SMALL_ARRAY_THRESHOLD: usize = 1024 * 1024; // 1MB
     const MEDIUM_ARRAY_THRESHOLD: usize = 10 * 1024 * 1024; // 10MB
     const SMALL_BUFFER_SIZE: usize = 256 * 1024; // 256KB for small arrays
     const MEDIUM_BUFFER_SIZE: usize = 4 * 1024 * 1024; // 4MB for medium arrays
     const LARGE_BUFFER_SIZE: usize = 16 * 1024 * 1024; // 16MB for large arrays
 
-    /// 🚀 优化：选择最优缓冲区大小
+    /// 优化：选择最优缓冲区大小
     ///
     /// 根据数据大小自适应选择缓冲区：
     /// - 小数组（<1MB）：256KB缓冲区，避免内存浪费
@@ -648,7 +648,7 @@ impl ParallelIO {
 
     /// 保存单个数组的优化实现
     ///
-    /// 🚀 性能优化：
+    /// 性能优化：
     /// 1. 智能路径选择：已存在且形状相同 → replace路径（最快）
     /// 2. 自适应缓冲区：根据数据大小选择最优缓冲区
     /// 3. SIMD加速写入：对于大数据使用SIMD拷贝
@@ -662,7 +662,7 @@ impl ParallelIO {
         let data_path = self.base_dir.join(&data_file);
         let array_shape: Vec<u64> = array.shape().iter().map(|&x| x as u64).collect();
 
-        // 🚀 优化1：检查是否可以使用replace路径（已优化的覆盖写入）
+        // 优化1：检查是否可以使用replace路径（已优化的覆盖写入）
         if let Some(existing_meta) = self.get_array_meta(name) {
             if existing_meta.shape == array_shape && existing_meta.get_dtype() == *dtype {
                 // 数组已存在且形状、类型完全相同
@@ -678,13 +678,13 @@ impl ParallelIO {
             }
         }
 
-        // 🚀 优化2：创建新文件 - 使用自适应缓冲区和优化的写入
+        // 优化2：创建新文件 - 使用自适应缓冲区和优化的写入
         let total_size = array.shape().iter().product::<usize>() * std::mem::size_of::<T>();
 
         // 选择最优缓冲区大小
         let buffer_size = Self::optimal_buffer_size(total_size);
 
-        // 🚀 优化：直接使用 BufWriter 创建文件，避免额外的 set_len 调用
+        // 优化：直接使用 BufWriter 创建文件，避免额外的 set_len 调用
         let file = OpenOptions::new()
             .write(true)
             .create(true)
@@ -695,7 +695,7 @@ impl ParallelIO {
         let data_ptr = array.as_ptr() as *const u8;
         let data_slice = unsafe { std::slice::from_raw_parts(data_ptr, total_size) };
 
-        // 🚀 优化3：对于大文件，分块写入以减少内存压力
+        // 优化3：对于大文件，分块写入以减少内存压力
         // 但对于小/中型文件，直接写入更高效
         if total_size > Self::MEDIUM_ARRAY_THRESHOLD {
             // 超大文件：分块写入
@@ -713,7 +713,7 @@ impl ParallelIO {
             writer.write_all(data_slice)?;
         }
 
-        // 🚀 优化：延迟 flush，让操作系统自动刷新
+        // 优化：延迟 flush，让操作系统自动刷新
         // 对于大文件，立即 flush 可能会阻塞
         // 对于小文件，flush 的开销相对较小，但仍可延迟
         // 注释掉立即 flush，让 BufWriter 在 drop 时自动 flush
@@ -725,7 +725,7 @@ impl ParallelIO {
         Ok((name.to_string(), meta))
     }
 
-    /// 🚀 优化的大数组写入
+    /// 优化的大数组写入
     ///
     /// 对于>10MB的大数组，使用特殊优化：
     /// 1. 更大的缓冲区（16MB）
@@ -746,7 +746,7 @@ impl ParallelIO {
         let data_ptr = array.as_ptr() as *const u8;
         let data_slice = unsafe { std::slice::from_raw_parts(data_ptr, total_size) };
 
-        // 🚀 使用SIMD优化的批量写入
+        // 使用SIMD优化的批量写入
         // 对于大块数据，SIMD拷贝可以提供2-4x加速
         let chunk_size = buffer_size;
         let mut offset = 0;
@@ -775,7 +775,7 @@ impl ParallelIO {
         &self,
         arrays: &[(String, ArrayD<T>, DataType)],
     ) -> NpkResult<()> {
-        // 🚀 优化4：智能并行策略
+        // 优化4：智能并行策略
         // 只有在多个数组且总数据量足够大时才使用并行
         // 避免小数据的并行开销
         let total_data_size: usize = arrays
@@ -807,13 +807,13 @@ impl ParallelIO {
                 .collect::<Result<Vec<_>, _>>()?
         };
 
-        // 🚀 批量更新元数据（不立即同步）
+        // 批量更新元数据（不立即同步）
         for (_name, meta) in metadata_updates {
             let binary_meta = Self::array_metadata_to_binary(meta);
             self.metadata.add_array(binary_meta)?;
         }
 
-        // 🚀 性能关键优化：延迟元数据同步
+        // 性能关键优化：延迟元数据同步
         //
         // 问题分析：
         // - 元数据sync()调用触发磁盘I/O，每次保存都同步导致性能下降2-3x
@@ -1203,7 +1203,7 @@ impl ParallelIO {
                     }
 
                     let offset = (normalized_idx - first_idx) as usize * row_size;
-                    // 🚀 SIMD优化: 使用向量化拷贝 (4-8x faster)
+                    // SIMD优化: 使用向量化拷贝 (4-8x faster)
                     let src = unsafe {
                         std::slice::from_raw_parts(
                             data.as_ptr().add(data_idx * row_size) as *const u8,

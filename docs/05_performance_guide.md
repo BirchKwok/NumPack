@@ -36,7 +36,7 @@ NumPack excels in three key areas:
 
 ### When to Use NumPack
 
-✅ **Strongly Recommended** (90% of use cases):
+**Strongly Recommended** (90% of use cases):
 - Machine learning and deep learning pipelines
 - Real-time data stream processing
 - Data annotation and correction workflows
@@ -44,7 +44,7 @@ NumPack excels in three key areas:
 - Any scenario requiring frequent data modifications
 - Fast data loading requirements
 
-⚠️ **Consider Alternatives** (10% of use cases):
+**Consider Alternatives** (10% of use cases):
 - Write-once, never modify → Use NPY (faster initial write, 2.2x)
 - Frequent single-row access → Use NPY mmap
 - Extreme compression requirements → Use NPZ (10% smaller, but 1000x slower)
@@ -87,8 +87,8 @@ NumPack excels in three key areas:
 | Mode | Time (100 operations) | Speedup |
 |------|----------------------|---------|
 | Normal Mode | 856ms | 1.0x |
-| **Batch Mode** | 34ms | **25x faster** 🔥 |
-| **Writable Batch Mode** | 4.9ms | **174x faster** 🔥🔥 |
+| **Batch Mode** | 34ms | **25x faster** |
+| **Writable Batch Mode** | 4.9ms | **174x faster** |
 
 ### File Size Comparison
 
@@ -179,14 +179,14 @@ with NumPack("data.npk") as npk:
 #### Pattern: Multiple Modifications
 
 ```python
-# ❌ Inefficient: Normal mode (856ms for 100 ops)
+# Inefficient: Normal mode (856ms for 100 ops)
 with NumPack("data.npk") as npk:
     for i in range(100):
         arr = npk.load('features')
         arr *= 1.1
         npk.save({'features': arr})
 
-# ✅ Good: Batch mode (34ms, 25x faster)
+# Good: Batch mode (34ms, 25x faster)
 with NumPack("data.npk") as npk:
     with npk.batch_mode():
         for i in range(100):
@@ -194,7 +194,7 @@ with NumPack("data.npk") as npk:
             arr *= 1.1
             npk.save({'features': arr})
 
-# ✅ Best: Writable batch mode (4.9ms, 174x faster)
+# Best: Writable batch mode (4.9ms, 174x faster)
 with NumPack("data.npk") as npk:
     with npk.writable_batch_mode() as wb:
         arr = wb.load('features')  # Load once
@@ -256,21 +256,21 @@ with NumPack("optimized.npk", drop_if_exists=True) as npk:
 ### Strategy 4: Minimize File Opens
 
 ```python
-# ❌ Very Inefficient: Open file in every iteration
+# Very Inefficient: Open file in every iteration
 def process_data_bad():
     for i in range(1000):
         with NumPack("data.npk") as npk:  # File open overhead
             data = npk.load('features')
             process(data)
 
-# ✅ Efficient: Open once
+# Efficient: Open once
 def process_data_good():
     with NumPack("data.npk") as npk:  # Single file open
         for i in range(1000):
             data = npk.load('features')
             process(data)
 
-# ✅ Best: Open once + cache array
+# Best: Open once + cache array
 def process_data_best():
     with NumPack("data.npk") as npk:
         data = npk.load('features')  # Load once
@@ -292,12 +292,12 @@ import numpy as np
 def compute_statistics_approaches(npk, array_name):
     """Compare different approaches for computing statistics"""
     
-    # ❌ Memory-intensive: Load full array
+    # Memory-intensive: Load full array
     def approach1():
         arr = npk.load(array_name)  # All in memory
         return arr.mean(), arr.std()
     
-    # ✅ Memory-efficient: Streaming
+    # Memory-efficient: Streaming
     def approach2():
         total_sum = 0
         total_sq_sum = 0
@@ -366,13 +366,13 @@ with NumPack("data.npk") as npk:
 ### Pitfall 1: Repeated Array Loading
 
 ```python
-# ❌ BAD: Load inside loop (100x overhead)
+# BAD: Load inside loop (100x overhead)
 with NumPack("data.npk") as npk:
     for i in range(100):
         arr = npk.load('features')  # Reloads every time
         value = arr[i]
 
-# ✅ GOOD: Load once
+# GOOD: Load once
 with NumPack("data.npk") as npk:
     arr = npk.load('features')  # Load once
     for i in range(100):
@@ -384,7 +384,7 @@ with NumPack("data.npk") as npk:
 ### Pitfall 2: Not Using Batch Mode for Modifications
 
 ```python
-# ❌ BAD: Normal mode for frequent modifications
+# BAD: Normal mode for frequent modifications
 with NumPack("data.npk") as npk:
     for i in range(50):
         arr = npk.load('features')
@@ -392,7 +392,7 @@ with NumPack("data.npk") as npk:
         npk.save({'features': arr})
 # Time: ~1800ms
 
-# ✅ GOOD: Batch mode
+# GOOD: Batch mode
 with NumPack("data.npk") as npk:
     with npk.batch_mode():
         for i in range(50):
@@ -401,7 +401,7 @@ with NumPack("data.npk") as npk:
             npk.save({'features': arr})
 # Time: ~48ms (37x faster)
 
-# ✅ BEST: Writable batch mode
+# BEST: Writable batch mode
 with NumPack("data.npk") as npk:
     with npk.writable_batch_mode() as wb:
         arr = wb.load('features')
@@ -413,13 +413,13 @@ with NumPack("data.npk") as npk:
 ### Pitfall 3: Wrong Loading Mode for Access Pattern
 
 ```python
-# ❌ BAD: Eager load for partial access
+# BAD: Eager load for partial access
 with NumPack("large.npk") as npk:
     arr = npk.load('features')  # Loads 10GB into memory
     subset = arr[1000:2000]     # Only need 1MB
 # Memory: 10GB, Time: 8.27ms
 
-# ✅ GOOD: Lazy load
+# GOOD: Lazy load
 with NumPack("large.npk") as npk:
     arr = npk.load('features', lazy=True)  # ~0 memory
     subset = arr[1000:2000]                # Only loads needed portion
@@ -429,13 +429,13 @@ with NumPack("large.npk") as npk:
 ### Pitfall 4: Inefficient Data Types
 
 ```python
-# ❌ BAD: Using float64 unnecessarily
+# BAD: Using float64 unnecessarily
 data = np.random.rand(1000000, 100)  # float64, 800MB
 with NumPack("data.npk") as npk:
     npk.save({'features': data})
 # Save time: 32ms, File size: 800MB
 
-# ✅ GOOD: Use float32
+# GOOD: Use float32
 data = np.random.rand(1000000, 100).astype(np.float32)  # 400MB
 with NumPack("data.npk") as npk:
     npk.save({'features': data})
@@ -445,14 +445,14 @@ with NumPack("data.npk") as npk:
 ### Pitfall 5: Not Caching Array Reference in Writable Batch Mode
 
 ```python
-# ❌ BAD: Load in every iteration
+# BAD: Load in every iteration
 with npk.writable_batch_mode() as wb:
     for i in range(1000):
         arr = wb.load('features')  # Creates new mmap
         arr *= 1.1
 # Time: ~500ms
 
-# ✅ GOOD: Cache reference
+# GOOD: Cache reference
 with npk.writable_batch_mode() as wb:
     arr = wb.load('features')  # Load once
     for i in range(1000):
@@ -463,13 +463,13 @@ with npk.writable_batch_mode() as wb:
 ### Pitfall 6: Forgetting to Compact After Deletions
 
 ```python
-# ❌ BAD: Many deletions without compaction
+# BAD: Many deletions without compaction
 with NumPack("data.npk") as npk:
     for i in range(10000):
         npk.drop('features', [i])
 # Disk space not reclaimed, file still large
 
-# ✅ GOOD: Compact after deletions
+# GOOD: Compact after deletions
 with NumPack("data.npk") as npk:
     # Logical deletion
     npk.drop('features', list(range(10000)))

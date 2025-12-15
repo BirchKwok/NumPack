@@ -21,7 +21,7 @@ NumPack provides two high-performance batch processing modes for scenarios with 
 | **load() behavior** | Copy to memory | Create file view |
 | **Modification** | Modify memory copy | Direct file modification |
 | **save() behavior** | Update cache | No-op (optional) |
-| **Shape changes** | ✅ Supported | ❌ Not supported |
+| **Shape changes** | Supported | Not supported |
 | **Best for** | Small arrays (< 100MB) | Large arrays (> 100MB) |
 | **Performance boost** | 25-37x | 174x |
 | **Memory constraint** | Moderate | Very tight |
@@ -133,12 +133,12 @@ with NumPack("data.npk") as npk:
         
         # Append new data (shape change)
         new_data = np.random.rand(100, 100).astype(np.float32)
-        npk.append({'features': new_data})  # ✅ Supported
+        npk.append({'features': new_data})  # Supported
         
         # Reshape (shape change)
         metadata = npk.load('metadata')
         metadata = metadata.reshape(-1, 10)
-        npk.save({'metadata': metadata})  # ✅ Supported
+        npk.save({'metadata': metadata})  # Supported
 ```
 
 ### Memory Management
@@ -318,14 +318,14 @@ with NumPack("large.npk") as npk:
 For maximum performance, cache the array reference instead of loading repeatedly:
 
 ```python
-# ✅ Efficient: Cache reference
+# Efficient: Cache reference
 with NumPack("data.npk") as npk:
     with npk.writable_batch_mode() as wb:
         arr = wb.load('features')  # Load once
         for i in range(1000):
             arr *= 1.1  # Reuse cached reference
 
-# ❌ Inefficient: Load every time
+# Inefficient: Load every time
 with NumPack("data.npk") as npk:
     with npk.writable_batch_mode() as wb:
         for i in range(1000):
@@ -406,26 +406,26 @@ with NumPack("benchmark.npk") as npk:
 
 ### Use `batch_mode` when:
 
-✅ You need to change array shapes (append/reshape/resize)  
-✅ Arrays are relatively small (< 100MB total)  
-✅ You want to create new arrays during processing  
-✅ Memory is not a constraint  
-✅ Maximum flexibility is needed  
+You need to change array shapes (append/reshape/resize)  
+Arrays are relatively small (< 100MB total)  
+You want to create new arrays during processing  
+Memory is not a constraint  
+Maximum flexibility is needed  
 
 ### Use `writable_batch_mode` when:
 
-✅ Arrays are large (> 100MB)  
-✅ Only value modifications needed (no shape changes)  
-✅ Memory is constrained  
-✅ Processing TB-scale datasets  
-✅ Maximum performance is critical  
-✅ Filesystem supports mmap  
+Arrays are large (> 100MB)  
+Only value modifications needed (no shape changes)  
+Memory is constrained  
+Processing TB-scale datasets  
+Maximum performance is critical  
+Filesystem supports mmap  
 
 ---
 
 ## Best Practices
 
-### ✅ Recommended Patterns
+### Recommended Patterns
 
 #### 1. Cache Array Reference (writable_batch_mode)
 
@@ -475,18 +475,18 @@ with npk.writable_batch_mode() as wb:
         chunk *= 2.0  # Only this chunk in physical memory
 ```
 
-### ❌ Avoid These Mistakes
+### Avoid These Mistakes
 
 #### 1. Changing Shape in writable_batch_mode
 
 ```python
-# ❌ Wrong: Creates new array, loses mmap
+# Wrong: Creates new array, loses mmap
 with npk.writable_batch_mode() as wb:
     arr = wb.load('data')
     arr = arr.reshape(-1, 10)  # Creates copy
     wb.save({'data': arr})
 
-# ✅ Correct: Use batch_mode for reshaping
+# Correct: Use batch_mode for reshaping
 with npk.batch_mode():
     arr = npk.load('data')
     arr = arr.reshape(-1, 10)
@@ -496,13 +496,13 @@ with npk.batch_mode():
 #### 2. Repeated Loading
 
 ```python
-# ❌ Inefficient: Creates new mmap each time
+# Inefficient: Creates new mmap each time
 with npk.writable_batch_mode() as wb:
     for i in range(100):
         arr = wb.load('data')
         arr *= 1.1
 
-# ✅ Efficient: Load once
+# Efficient: Load once
 with npk.writable_batch_mode() as wb:
     arr = wb.load('data')
     for i in range(100):
@@ -512,13 +512,13 @@ with npk.writable_batch_mode() as wb:
 #### 3. Nested Contexts
 
 ```python
-# ❌ Wrong: Nested batch contexts
+# Wrong: Nested batch contexts
 with npk.batch_mode():
     with npk.writable_batch_mode() as wb:
         # Undefined behavior
         pass
 
-# ✅ Correct: Separate sequential contexts
+# Correct: Separate sequential contexts
 with npk.batch_mode():
     # Process small arrays
     pass
@@ -696,7 +696,7 @@ The key difference is in `arr.flags['OWNDATA']` and the underlying buffer source
 **A:** Not in the same context, but sequentially:
 
 ```python
-# ✅ OK
+# OK
 with npk.writable_batch_mode() as wb:
     # Process large arrays
     pass
@@ -705,7 +705,7 @@ with npk.batch_mode():
     # Process small arrays
     pass
 
-# ❌ Not recommended
+# Not recommended
 with npk.batch_mode():
     with npk.writable_batch_mode() as wb:
         # Undefined behavior
@@ -716,10 +716,10 @@ with npk.batch_mode():
 
 **A:** Most operations are supported, with limitations:
 
-- ✅ In-place modifications: `arr *= 2.0`, `arr += 1.0`, `arr[0] = 5.0`
-- ✅ Universal functions: `np.sin(arr)`, `np.exp(arr)` (if in-place)
-- ❌ Shape changes: `arr.reshape()`, `arr.resize()`
-- ❌ New arrays: `arr + arr2` (creates new array, loses mmap)
+- In-place modifications: `arr *= 2.0`, `arr += 1.0`, `arr[0] = 5.0`
+- Universal functions: `np.sin(arr)`, `np.exp(arr)` (if in-place)
+- Shape changes: `arr.reshape()`, `arr.resize()`
+- New arrays: `arr + arr2` (creates new array, loses mmap)
 
 ---
 

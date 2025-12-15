@@ -38,7 +38,7 @@ impl SIMDBenchmark {
     pub fn run_comprehensive_benchmark(&mut self) -> Vec<BenchmarkResult> {
         let mut results = Vec::new();
 
-        println!("🚀 开始NumPack SIMD性能基准测试...");
+        println!("开始NumPack SIMD性能基准测试...");
 
         // 1. 数据类型特异化测试
         results.extend(self.benchmark_data_type_specialization());
@@ -58,13 +58,13 @@ impl SIMDBenchmark {
         // 6. 多平台兼容性测试
         results.extend(self.benchmark_cross_platform_compatibility());
 
-        println!("✅ SIMD基准测试完成，共{}个测试用例", results.len());
+        println!("SIMD基准测试完成，共{}个测试用例", results.len());
         results
     }
 
     /// 数据类型特异化基准测试
     fn benchmark_data_type_specialization(&mut self) -> Vec<BenchmarkResult> {
-        println!("📊 测试数据类型特异化SIMD优化...");
+        println!("测试数据类型特异化SIMD优化...");
         let mut results = Vec::new();
 
         let data_types = vec![
@@ -113,7 +113,7 @@ impl SIMDBenchmark {
 
     /// 访问模式优化基准测试
     fn benchmark_access_patterns(&mut self) -> Vec<BenchmarkResult> {
-        println!("🎯 测试访问模式感知SIMD优化...");
+        println!("测试访问模式感知SIMD优化...");
         let mut results = Vec::new();
 
         let data_size = 32768;

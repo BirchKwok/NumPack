@@ -4,13 +4,13 @@ NumPack is a high-performance array storage library that combines Rust's perform
 
 ## Key Features
 
-- 🚀 **397x faster** row replacement than NPY
-- ⚡ **405x faster** data append than NPY  
-- 💨 **54x faster** lazy loading than NPY mmap
-- 📖 **1.3x faster** full data loading than NPY
-- 🔄 **174x speedup** with Writable Batch Mode for frequent modifications
-- 💾 Zero-copy operations with minimal memory footprint
-- 🛠 Seamless integration with existing NumPy workflows
+- **397x faster** row replacement than NPY
+- **405x faster** data append than NPY  
+- **54x faster** lazy loading than NPY mmap
+- **1.3x faster** full data loading than NPY
+- **174x speedup** with Writable Batch Mode for frequent modifications
+- Zero-copy operations with minimal memory footprint
+- Seamless integration with existing NumPy workflows
 
 ## Installation
 
@@ -131,13 +131,13 @@ NumPack supports both context manager and manual file management, but using `wit
 3. **Best Reliability**: Especially important on Windows for proper file handle management
 
 ```python
-# ✅ Recommended: Context manager
+# Recommended: Context manager
 with NumPack("data.npk") as npk:
     npk.save({'array': data})
     result = npk.load('array')
 # File automatically closed here
 
-# ⚠️ Manual management (requires explicit close)
+# Manual management (requires explicit close)
 npk = NumPack("data.npk")
 npk.open()
 npk.save({'array': data})
@@ -261,13 +261,13 @@ print(f"Version: {info['version']}")
 ### Example: Efficient Usage Pattern
 
 ```python
-# ✅ Efficient: Reuse instance
+# Efficient: Reuse instance
 with NumPack("data.npk") as npk:
     for i in range(100):
         data = npk.load('array')
         process(data)
 
-# ❌ Inefficient: Create new instance each time
+# Inefficient: Create new instance each time
 for i in range(100):
     with NumPack("data.npk") as npk:
         data = npk.load('array')

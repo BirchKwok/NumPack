@@ -249,5 +249,5 @@ if __name__ == "__main__":
     test_cls.test_no_bitmap_fast_path()
     print("✓ test_no_bitmap_fast_path passed")
     
-    print("\n✅ All tests passed!")
+    print("\nAll tests passed!")
 

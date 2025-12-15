@@ -1,5 +1,5 @@
 """
-🚀 Writable Batch Mode 使用示例
+Writable Batch Mode 使用示例
 
 展示如何使用零内存开销的writable_batch_mode进行高性能数组操作
 """
@@ -44,12 +44,12 @@ def example_basic_usage():
         wb.save({'array1': arr1, 'array2': arr2, 'array3': arr3})
     
     elapsed = time.perf_counter() - start
-    print(f"\n✅ Modifying 3 arrays took: {elapsed * 1000:.2f} ms")
+    print(f"\nModifying 3 arrays took: {elapsed * 1000:.2f} ms")
     print(f"💾 Memory overhead: Nearly 0 MB (virtual memory only)")
     
     # 验证修改已持久化
     result = npk.load('array1', lazy=False)
-    print(f"📊 Verification: array1 mean = {result.mean():.4f}")
+    print(f"Verification: array1 mean = {result.mean():.4f}")
     
     npk.close()
     print()
@@ -86,12 +86,12 @@ def example_high_performance_loop():
     
     elapsed = time.perf_counter() - start
     
-    print(f"\n✅ 100 random operations took: {elapsed * 1000:.2f} ms")
+    print(f"\n100 random operations took: {elapsed * 1000:.2f} ms")
     print(f"📈 Average per operation: {elapsed * 10:.3f} ms")
-    print(f"🎯 Performance target: < 100 ms (< 1 ms/op)")
+    print(f"Performance target: < 100 ms (< 1 ms/op)")
     
     if elapsed * 1000 <= 100:
-        print(f"🎉 Target met! Speedup ~18-20x")
+        print(f"Target met! Speedup ~18-20x")
     
     npk.close()
     print()
@@ -125,9 +125,9 @@ def example_large_array():
     
     elapsed = time.perf_counter() - start
     
-    print(f"\n✅ Processing ~240MB data took: {elapsed * 1000:.2f} ms")
+    print(f"\nProcessing ~240MB data took: {elapsed * 1000:.2f} ms")
     print(f"💾 Memory overhead: Nearly 0 MB")
-    print(f"🌟 Advantage: Supports TB-scale data (disk limited, not memory)")
+    print(f"Advantage: Supports TB-scale data (disk limited, not memory)")
     
     npk.close()
     print()
@@ -170,14 +170,14 @@ def example_comparison():
     writable_time = time.perf_counter() - start
     
     print("\n" + "=" * 60)
-    print("📊 Performance comparison results:")
+    print("Performance comparison results:")
     print("=" * 60)
     print(f"{'Mode':<25} {'Time(ms)':<12} {'Memory overhead'}")
     print("-" * 60)
     print(f"{'batch_mode':<25} {batch_time*1000:<12.2f} ~8 MB")
     print(f"{'writable_batch_mode':<25} {writable_time*1000:<12.2f} ~0 MB")
     print("=" * 60)
-    print("\n✅ Conclusion:")
+    print("\nConclusion:")
     print("  • batch_mode: Small arrays, pursue extreme speed")
     print("  • writable_batch_mode: Large arrays, zero memory overhead")
     
@@ -200,7 +200,7 @@ def example_best_practices():
         'data2': np.random.rand(100, 1000),
     })
     
-    print("\n✅ Recommended practices:")
+    print("\nRecommended practices:")
     print()
     
     # 1. 使用context manager
@@ -224,7 +224,7 @@ def example_best_practices():
         for i in range(10):
             arr1 *= 1.1
             arr2 += 0.1
-    print("✅ Avoid repeatedly loading the same array")
+    print("Avoid repeatedly loading the same array")
     print()
     
     # 3. 异常处理
@@ -236,16 +236,16 @@ def example_best_practices():
             # 即使抛出异常，也会自动flush和清理
     except Exception as e:
         pass
-    print("✅ Context manager automatically cleans up resources")
+    print("Context manager automatically cleans up resources")
     print()
     
     npk.close()
 
 
 if __name__ == '__main__':
-    print("\n" + "🚀" * 30)
+    print("\n" + "=" * 60)
     print("Writable Batch Mode - Zero memory overhead high performance solution")
-    print("🚀" * 30 + "\n")
+    print("=" * 60 + "\n")
     
     # 运行所有示例
     example_basic_usage()
@@ -255,9 +255,9 @@ if __name__ == '__main__':
     example_best_practices()
     
     print("\n" + "=" * 60)
-    print("🎉 All examples completed!")
+    print("All examples completed!")
     print("=" * 60)
-    print("\n💡 Usage recommendations:")
+    print("\nUsage recommendations:")
     print("  • Small arrays (< 100MB): Use batch_mode()")
     print("  • Large arrays (> 100MB): Use writable_batch_mode()")
     print("  • Memory-constrained environments: Always use writable_batch_mode()")

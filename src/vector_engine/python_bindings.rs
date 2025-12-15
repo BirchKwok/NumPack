@@ -455,7 +455,7 @@ impl PyVectorEngine {
 
     /// f64 batch computation (double precision floating point)
     ///
-    /// 🚀 Optimization: Reduces FFI overhead by directly passing contiguous memory
+    /// Optimization: Reduces FFI overhead by directly passing contiguous memory
     fn batch_compute_f64(
         &self,
         py: Python,
@@ -490,14 +490,14 @@ impl PyVectorEngine {
 
         let candidates_slice = candidates_arr.as_slice()?;
 
-        // 🚀 Key optimization: Use usize to pass addresses (can cross threads)
+        // Key optimization: Use usize to pass addresses (can cross threads)
         let query_addr = query_slice.as_ptr() as usize;
         let candidates_addr = candidates_slice.as_ptr() as usize;
 
         // Release GIL for parallel computation
         let scores = py
             .allow_threads(|| {
-                // 🚀 Smart batching strategy: serial for small batches, parallel for large batches
+                // Smart batching strategy: serial for small batches, parallel for large batches
                 // Avoids Rayon thread pool overhead for small batches
                 const PARALLEL_THRESHOLD: usize = 500;
 
@@ -705,7 +705,7 @@ impl PyVectorEngine {
 
         let candidates_slice = candidates_arr.as_slice()?;
 
-        // 🚀 Optimization: use usize to pass addresses
+        // Optimization: use usize to pass addresses
         let query_addr = query_slice.as_ptr() as usize;
         let candidates_addr = candidates_slice.as_ptr() as usize;
 
@@ -796,7 +796,7 @@ impl PyVectorEngine {
 
         let candidates_slice = candidates_arr.as_slice()?;
 
-        // 🚀 Optimization: use usize to pass addresses
+        // Optimization: use usize to pass addresses
         let query_addr = query_slice.as_ptr() as usize;
         let candidates_addr = candidates_slice.as_ptr() as usize;
 

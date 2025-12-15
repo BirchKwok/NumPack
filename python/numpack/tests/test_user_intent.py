@@ -46,7 +46,7 @@ class TestUserIntentRecognition:
         """测试单次访问意图识别"""
         lazy_array = self.npk.load('test_array', lazy=True)
         
-        # ✅ 正确的单次访问用法 - 应该被识别为SingleAccess
+        # 正确的单次访问用法 - 应该被识别为SingleAccess
         single_index = 42
         result = lazy_array[single_index]
         
@@ -55,13 +55,13 @@ class TestUserIntentRecognition:
         # 验证数据正确性
         expected = self.test_data['test_array'][single_index]
         np.testing.assert_array_almost_equal(result, expected, decimal=5)
-        print("✅ Single access intent recognized correctly")
+        print("Single access intent recognized correctly")
 
     def test_batch_access_intent(self):
         """测试批量访问意图识别"""
         lazy_array = self.npk.load('test_array', lazy=True)
         
-        # ✅ 正确的批量访问用法 - 应该被识别为BatchAccess
+        # 正确的批量访问用法 - 应该被识别为BatchAccess
         batch_indices = [10, 25, 50, 100, 200]
         result = lazy_array[batch_indices]
         
@@ -70,13 +70,13 @@ class TestUserIntentRecognition:
         # 验证数据正确性
         expected = self.test_data['test_array'][batch_indices]
         np.testing.assert_array_almost_equal(result, expected, decimal=5)
-        print("✅ Batch access intent recognized correctly")
+        print("Batch access intent recognized correctly")
 
     def test_numpy_array_batch_access(self):
         """测试NumPy数组索引的批量访问"""
         lazy_array = self.npk.load('test_array', lazy=True)
         
-        # ✅ NumPy数组索引 - 应该被识别为BatchAccess
+        # NumPy数组索引 - 应该被识别为BatchAccess
         indices = np.array([5, 15, 35, 75, 150])
         result = lazy_array[indices]
         
@@ -85,7 +85,7 @@ class TestUserIntentRecognition:
         # 验证数据正确性
         expected = self.test_data['test_array'][indices]
         np.testing.assert_array_almost_equal(result, expected, decimal=5)
-        print("✅ NumPy array index batch access correct")
+        print("NumPy array index batch access correct")
 
     def test_slice_access(self):
         """测试切片访问 - 应该被识别为ComplexIndex"""
@@ -99,13 +99,13 @@ class TestUserIntentRecognition:
         # 验证数据正确性
         expected = self.test_data['test_array'][10:20]
         np.testing.assert_array_almost_equal(result, expected, decimal=5)
-        print("✅ Slice access correct")
+        print("Slice access correct")
 
     def test_user_intent_examples(self):
         """展示正确的用户意图用法示例"""
         lazy_array = self.npk.load('test_array', lazy=True)
         
-        print("\n🎯 User Intent Examples:")
+        print("\nUser Intent Examples:")
         
         # Scenario 1: Clear single access
         print("Scenario 1 - Clear single access:")
@@ -132,7 +132,7 @@ class TestUserIntentRecognition:
         rows = lazy_array[10:15]
         print(f"  Result: {rows.shape}")
         
-        print("\n✅ All user intent example tests passed")
+        print("\nAll user intent example tests passed")
 
 if __name__ == "__main__":
     # 运行测试
@@ -146,7 +146,7 @@ if __name__ == "__main__":
         test.test_slice_access()
         test.test_user_intent_examples()
         
-        print("\n🎉 All user intent recognition tests passed!")
+        print("\nAll user intent recognition tests passed!")
         
     finally:
         test.teardown_method() 

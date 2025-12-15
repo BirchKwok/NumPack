@@ -627,7 +627,7 @@ impl BinaryCachedStore {
         let mut store = self.store.write().unwrap();
         store.add_array(meta);
         drop(store);
-        // 🚀 性能关键优化：延迟同步，不立即写入磁盘
+        // 性能关键优化：延迟同步，不立即写入磁盘
         //
         // 问题：每次add_array都调用sync_to_disk导致性能下降2-3x
         // NumPy不会每次都fsync，所以更快
@@ -651,7 +651,7 @@ impl BinaryCachedStore {
         let mut store = self.store.write().unwrap();
         let result = store.remove_array(name);
         drop(store);
-        // 🚀 延迟同步优化
+        // 延迟同步优化
         // if result {
         //     self.sync_to_disk()?;
         // }
@@ -678,7 +678,7 @@ impl BinaryCachedStore {
         store.remove_array(name);
         store.add_array(meta);
         drop(store);
-        // 🚀 延迟同步优化
+        // 延迟同步优化
         // self.sync_to_disk()?;
         Ok(())
     }
@@ -687,7 +687,7 @@ impl BinaryCachedStore {
         let mut store = self.store.write().unwrap();
         *store = BinaryMetadataStore::new();
         drop(store);
-        // 🚀 延迟同步优化
+        // 延迟同步优化
         // self.sync_to_disk()?;
         Ok(())
     }
