@@ -30,7 +30,6 @@ try:
     import numpack._lib_numpack as rust_backend
     _NumPack = rust_backend.NumPack
     LazyArray = rust_backend.LazyArray
-    force_cleanup_windows_handles = rust_backend.force_cleanup_windows_handles
     _BACKEND_TYPE = "rust"
 except ImportError as e:
     raise ImportError(
@@ -712,6 +711,15 @@ class NumPack:
 
 
 
+# Backward compatible no-op function (Rust backend manages memory automatically)
+def force_cleanup_windows_handles():
+    """Force cleanup of Windows handles - Rust backend manages automatically.
+    
+    This function is kept for backward compatibility with old code.
+    """
+    import gc
+    gc.collect()
+    return True
 
 class BatchModeContext:
     """Batch mode context manager (Optimized v2.0)
