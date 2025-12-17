@@ -4192,6 +4192,7 @@ fn _lib_numpack(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<StreamLoader>()?;
 
     // 注册清理函数
+    m.add_function(wrap_pyfunction!(force_cleanup_windows_handles, m)?)?;
 
     // 注册新模块的Python绑定
     numpack::python_bindings::register_python_bindings(m)?;
@@ -4204,7 +4205,6 @@ fn _lib_numpack(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 // 通用清理函数
 #[pyfunction]
-#[allow(dead_code)]
 fn force_cleanup_windows_handles() -> PyResult<()> {
     // 清理临时文件缓存
     clear_temp_files_from_cache();

@@ -199,9 +199,9 @@ def verify_installation(python_interpreter):
             # 尝试导入 numpack
         result = subprocess.run(
             [python_interpreter, '-c', 
-             'import numpack; '
+             'import numpack; from numpack.vector_engine import VectorSearch; '
              'print("NumPack 版本:", numpack.__version__ if hasattr(numpack, "__version__") else "未知"); '
-             'engine = numpack.VectorEngine(); '
+             'engine = VectorSearch(); '
              'print("能力:", engine.capabilities())'],
             capture_output=True,
             text=True,
@@ -300,8 +300,8 @@ def main():
     print("  2. 验证安装: python build.py --verify-only")
     
     print("\n使用提示:")
-    print("  import numpack")
-    print("  engine = numpack.VectorEngine()")
+    print("  import numpack; from numpack.vector_engine import VectorSearch;")
+    print("  engine = VectorSearch()")
     print("  scores = engine.batch_compute(query, candidates, metric='dot')")
     
     print("\n" + "=" * 70 + "\n")
