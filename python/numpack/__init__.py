@@ -8,7 +8,7 @@ import numpy as np
 if hasattr(np, "issubdtype"):
     try:
         np.issubdtype(np.float32, (np.integer, np.bool_))  # type: ignore[arg-type]
-    except TypeError:
+    except (TypeError, ValueError):  # ValueError for numpy 2.x compatibility
         _orig_issubdtype = np.issubdtype
 
         def _numpack_issubdtype(arg1, arg2):

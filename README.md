@@ -13,6 +13,7 @@ NumPack is a high-performance array storage library that combines Rust's perform
 - **94.8x speedup** with Writable Batch Mode
 - Zero-copy operations with minimal memory footprint
 - Seamless integration with existing NumPy workflows
+- **Vector Engine**: SIMD-accelerated vector similarity search (AVX2, AVX-512, NEON, SVE)
 
 ### New I/O Optimizations
 
@@ -52,6 +53,11 @@ NumPack is a high-performance array storage library that combines Rust's perform
 - **Batch Processing Modes**: 
   - Batch Mode: 21x speedup for batch operations
   - Writable Batch Mode: 89x speedup for frequent modifications
+- **Vector Engine**: High-performance vector similarity search
+  - SIMD acceleration: AVX2, AVX-512, NEON, SVE
+  - In-memory and streaming (from file) search modes
+  - Multiple metrics: cosine, dot product, L2, hamming, jaccard, KL/JS divergence
+  - Multi-query batch optimization (30-50% faster)
 - **Multiple Data Types**: Supports various numerical data types including:
   - Boolean
   - Unsigned integers (8-bit to 64-bit)
@@ -183,6 +189,93 @@ with NumPack("data.npk") as npk:
             # No save needed - changes are automatic
 ```
 
+### Vector Engine
+
+NumPack includes a high-performance vector similarity search engine with SIMD acceleration (AVX2, AVX-512, NEON, SVE). It provides two main classes for different use cases:
+
+#### VectorSearch - In-Memory Search
+
+For datasets that fit in memory, `VectorSearch` provides fast similarity computation:
+
+```python
+from numpack.vector_engine import VectorSearch
+import numpy as np
+
+engine = VectorSearch()
+print(engine.capabilities())  # Show SIMD features, e.g., "CPU: AVX2, AVX-512"
+
+# Single pair computation
+a = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+b = np.array([4.0, 5.0, 6.0], dtype=np.float32)
+score = engine.compute_metric(a, b, 'cosine')
+
+# Batch computation
+query = np.random.randn(128).astype(np.float32)
+candidates = np.random.randn(10000, 128).astype(np.float32)
+scores = engine.batch_compute(query, candidates, 'cosine')
+
+# Top-K search
+indices, scores = engine.top_k_search(query, candidates, 'cosine', k=10)
+
+# Multi-query batch search (30-50% faster than loop)
+queries = np.random.randn(100, 128).astype(np.float32)
+all_indices, all_scores = engine.multi_query_top_k(queries, candidates, 'cosine', k=10)
+all_indices = all_indices.reshape(100, 10)  # Reshape to [n_queries, k]
+```
+
+#### StreamingVectorSearch - Memory-Efficient File Search
+
+For large datasets that don't fit in memory, `StreamingVectorSearch` reads directly from NumPack files:
+
+```python
+from numpack import NumPack
+from numpack.vector_engine import StreamingVectorSearch
+import numpy as np
+
+streaming = StreamingVectorSearch()
+query = np.random.randn(128).astype(np.float32)
+
+with NumPack('vectors.npk') as npk:
+    # Top-K search from file (10-30x faster than Python-based streaming)
+    indices, scores = streaming.streaming_top_k_from_file(
+        query, str(npk._filename), 'embeddings', 'cosine', k=10, batch_size=10000
+    )
+    
+    # Compute all scores from file
+    all_scores = streaming.streaming_batch_compute(
+        query, str(npk._filename), 'embeddings', 'cosine', batch_size=10000
+    )
+    
+    # Multi-query streaming search (2x faster than individual calls)
+    queries = np.random.randn(100, 128).astype(np.float32)
+    all_indices, all_scores = streaming.streaming_multi_query_top_k(
+        queries, str(npk._filename), 'embeddings', 'cosine', k=10, batch_size=10000
+    )
+```
+
+#### Supported Metrics
+
+| Metric Type | Aliases | Description |
+|-------------|---------|-------------|
+| **Similarity** (higher is better) | | |
+| Dot Product | `dot`, `dot_product`, `dotproduct` | Inner product of vectors |
+| Cosine | `cos`, `cosine`, `cosine_similarity` | Cosine similarity |
+| Inner Product | `inner`, `inner_product` | Same as dot product |
+| **Distance** (lower is better) | | |
+| L2/Euclidean | `l2`, `euclidean`, `l2_distance` | Euclidean distance |
+| Squared L2 | `l2sq`, `l2_squared`, `squared_euclidean` | Squared Euclidean distance |
+| Hamming | `hamming` | Hamming distance (uint8 only) |
+| Jaccard | `jaccard` | Jaccard distance (uint8 only) |
+| KL Divergence | `kl`, `kl_divergence` | Kullback-Leibler divergence |
+| JS Divergence | `js`, `js_divergence` | Jensen-Shannon divergence |
+
+#### Supported Data Types
+
+- **Float types**: float64, float32, float16
+- **Integer types**: int8, int16, int32, int64, uint8, uint16, uint32, uint64
+- **Mixed dtype**: Query and candidates can have different dtypes (auto-converted to float64)
+- **Binary vectors**: uint8 for hamming/jaccard metrics
+
 ## Performance
 
 All benchmarks were conducted on macOS (Apple Silicon) using the Rust backend with precise timeit measurements.
@@ -299,6 +392,8 @@ All benchmarks were conducted on macOS (Apple Silicon) using the Rust backend wi
 - Fast data loading requirements (1.58x faster than NPY)
 - Balanced read-write workloads
 - Sequential data processing workflows
+- **Vector similarity search** with SIMD acceleration
+- **Large-scale embedding search** from disk without loading all data
 
 **Consider Alternatives** (15% of use cases):
 - Write-once, never modify → Use NPY (1.95x faster write, but 321x slower for updates)
@@ -364,6 +459,35 @@ with NumPack("data.npk") as npk:
 for i in range(100):
     with NumPack("data.npk") as npk:
         data = npk.load('array')
+```
+
+### 5. Use Vector Engine for Similarity Search
+
+```python
+from numpack.vector_engine import VectorSearch, StreamingVectorSearch
+
+# In-memory search (data fits in memory)
+engine = VectorSearch()
+indices, scores = engine.top_k_search(query, candidates, 'cosine', k=10)
+
+# Streaming search (large datasets)
+streaming = StreamingVectorSearch()
+with NumPack('large_vectors.npk') as npk:
+    indices, scores = streaming.streaming_top_k_from_file(
+        query, str(npk._filename), 'embeddings', 'cosine', k=10, batch_size=10000
+    )
+```
+
+### 6. Use Multi-Query Batch for Multiple Queries
+
+```python
+# Efficient: Process all queries in one call (30-50% faster)
+engine = VectorSearch()
+all_indices, all_scores = engine.multi_query_top_k(queries, candidates, 'cosine', k=10)
+
+# Less efficient: Loop over queries
+for query in queries:
+    indices, scores = engine.top_k_search(query, candidates, 'cosine', k=10)
 ```
 
 ## Benchmark Methodology
