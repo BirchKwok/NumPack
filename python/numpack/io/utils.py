@@ -248,7 +248,7 @@ def _save_array_streaming(
 
     for start_idx in range(0, total_rows, batch_rows):
         end_idx = min(start_idx + batch_rows, total_rows)
-        chunk = np.array(arr[start_idx:end_idx])
+        chunk = np.ascontiguousarray(arr[start_idx:end_idx])
 
         if start_idx == 0:
             npk.save({array_name: chunk})

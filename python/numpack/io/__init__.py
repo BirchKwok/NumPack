@@ -551,8 +551,7 @@ def _to_npy_streaming(
     try:
         for start_idx in range(0, total_rows, batch_rows):
             end_idx = min(start_idx + batch_rows, total_rows)
-            indices = list(range(start_idx, end_idx))
-            chunk = npk.getitem(array_name, indices)
+            chunk = npk.getitem(array_name, slice(start_idx, end_idx))
             arr_out[start_idx:end_idx] = chunk
         arr_out.flush()
     finally:
@@ -831,16 +830,18 @@ def _to_csv_streaming(
         
         for start_idx in range(0, total_rows, batch_rows):
             end_idx = min(start_idx + batch_rows, total_rows)
-            indices = list(range(start_idx, end_idx))
-            chunk = npk.getitem(array_name, indices)
+            chunk = npk.getitem(array_name, slice(start_idx, end_idx))
             
             # 写入分块
-            for row in chunk:
-                if np.isscalar(row) or row.ndim == 0:
-                    line = fmt % row
-                else:
-                    line = delimiter.join([fmt % val for val in np.atleast_1d(row)])
-                f.write(line + '\n')
+            if isinstance(chunk, np.ndarray) and chunk.ndim == 2:
+                np.savetxt(f, chunk, delimiter=delimiter, fmt=fmt)
+            else:
+                for row in np.atleast_1d(chunk):
+                    if np.isscalar(row) or getattr(row, "ndim", 0) == 0:
+                        line = fmt % row
+                    else:
+                        line = delimiter.join([fmt % val for val in np.atleast_1d(row)])
+                    f.write(line + '\n')
 
 
 # =============================================================================
@@ -1126,8 +1127,7 @@ def _to_hdf5_dataset_streaming(
     
     for start_idx in range(0, total_rows, batch_rows):
         end_idx = min(start_idx + batch_rows, total_rows)
-        indices = list(range(start_idx, end_idx))
-        chunk = npk.getitem(array_name, indices)
+        chunk = npk.getitem(array_name, slice(start_idx, end_idx))
         dataset[start_idx:end_idx] = chunk
 
 
@@ -1332,8 +1332,7 @@ def _to_zarr_array_streaming(
     
     for start_idx in range(0, total_rows, batch_rows):
         end_idx = min(start_idx + batch_rows, total_rows)
-        indices = list(range(start_idx, end_idx))
-        chunk = npk.getitem(array_name, indices)
+        chunk = npk.getitem(array_name, slice(start_idx, end_idx))
         zarr_arr[start_idx:end_idx] = chunk
 
 
@@ -1518,8 +1517,7 @@ def _to_parquet_streaming(
     try:
         for start_idx in range(0, total_rows, batch_rows):
             end_idx = min(start_idx + batch_rows, total_rows)
-            indices = list(range(start_idx, end_idx))
-            chunk = npk.getitem(array_name, indices)
+            chunk = npk.getitem(array_name, slice(start_idx, end_idx))
             
             # 转换为 Table
             if chunk.ndim == 1:

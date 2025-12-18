@@ -211,6 +211,5 @@ def _to_hdf5_dataset_streaming(
 
     for start_idx in range(0, total_rows, batch_rows):
         end_idx = min(start_idx + batch_rows, total_rows)
-        indices = list(range(start_idx, end_idx))
-        chunk = npk.getitem(array_name, indices)
+        chunk = npk.getitem(array_name, slice(start_idx, end_idx))
         dataset[start_idx:end_idx] = chunk

@@ -284,16 +284,19 @@ def _to_csv_streaming(
 
         for start_idx in range(0, total_rows, batch_rows):
             end_idx = min(start_idx + batch_rows, total_rows)
-            indices = list(range(start_idx, end_idx))
-            chunk = npk.getitem(array_name, indices)
+            chunk = npk.getitem(array_name, slice(start_idx, end_idx))
 
             # 写入分块
-            for row in chunk:
-                if np.isscalar(row) or row.ndim == 0:
-                    line = fmt % row
-                else:
-                    line = delimiter.join([fmt % val for val in np.atleast_1d(row)])
-                f.write(line + '\n')
+            # 2D 数组用 numpy.savetxt 更快（C 实现），避免逐行 Python 循环
+            if isinstance(chunk, np.ndarray) and chunk.ndim == 2:
+                np.savetxt(f, chunk, delimiter=delimiter, fmt=fmt)
+            else:
+                for row in np.atleast_1d(chunk):
+                    if np.isscalar(row) or getattr(row, "ndim", 0) == 0:
+                        line = fmt % row
+                    else:
+                        line = delimiter.join([fmt % val for val in np.atleast_1d(row)])
+                    f.write(line + '\n')
 
 
 # =============================================================================

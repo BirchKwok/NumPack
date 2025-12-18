@@ -306,7 +306,7 @@ class NumPack:
             if hasattr(self, '_batch_context') and self._batch_context:
                 self._batch_context._dirty_arrays.discard(name)
 
-    def getitem(self, array_name: str, indexes: Union[List[int], int, np.ndarray]) -> np.ndarray:
+    def getitem(self, array_name: str, indexes: Union[List[int], int, np.ndarray, slice]) -> np.ndarray:
         """Random access to specified rows from NumPack file
         
         Parameters:
@@ -319,7 +319,9 @@ class NumPack:
         """
         self._check_context_mode()
         
-        if isinstance(indexes, int):
+        if isinstance(indexes, slice):
+            pass
+        elif isinstance(indexes, int):
             indexes = [indexes]
         elif isinstance(indexes, np.ndarray):
             indexes = indexes.tolist()

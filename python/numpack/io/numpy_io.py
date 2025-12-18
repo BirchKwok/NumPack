@@ -115,8 +115,8 @@ def _from_npy_streaming(
         # 分块写入
         for start_idx in range(0, total_rows, batch_rows):
             end_idx = min(start_idx + batch_rows, total_rows)
-            chunk = np.array(arr_mmap[start_idx:end_idx])  # 复制到内存
-
+            chunk = np.ascontiguousarray(arr_mmap[start_idx:end_idx])
+            
             if start_idx == 0:
                 npk.save({array_name: chunk})
             else:
@@ -269,8 +269,7 @@ def _to_npy_streaming(
     try:
         for start_idx in range(0, total_rows, batch_rows):
             end_idx = min(start_idx + batch_rows, total_rows)
-            indices = list(range(start_idx, end_idx))
-            chunk = npk.getitem(array_name, indices)
+            chunk = npk.getitem(array_name, slice(start_idx, end_idx))
             arr_out[start_idx:end_idx] = chunk
         arr_out.flush()
     finally:
