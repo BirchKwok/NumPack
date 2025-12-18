@@ -1,8 +1,8 @@
 """
 Windows-specific tests for file handle management and context managers
 
-这些测试主要在Windows平台运行，验证句柄管理和context manager的正确性。
-在非Windows平台上会跳过某些测试，但仍会运行通用的context manager测试。
+These tests primarily run on Windows to verify correct handle management and context manager behavior.
+On non-Windows platforms, some tests are skipped, but generic context manager tests still run.
 """
 
 import pytest
@@ -17,7 +17,7 @@ from pathlib import Path
 from numpack import NumPack, get_backend_info
 
 
-# 只在Windows上运行某些特定测试
+# Run certain tests only on Windows
 windows_only = pytest.mark.skipif(
     not sys.platform.startswith('win'),
     reason="Windows-specific tests"
@@ -26,39 +26,39 @@ windows_only = pytest.mark.skipif(
 
 @pytest.fixture
 def temp_dir():
-    """创建临时目录用于测试"""
+    """Create temporary directory for testing."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
 
 
 class TestContextManagerBasic:
-    """测试基本的context manager功能（所有平台）"""
+    """Test basic context manager functionality (all platforms)."""
     
     def test_context_manager_basic_usage(self, temp_dir):
-        """验证context manager基本使用"""
+        """Verify basic context manager usage."""
         npk_path = temp_dir / "test.npk"
         test_data = np.arange(100, dtype=np.int32)
         
-        # 使用context manager
+        # Use context manager
         with NumPack(str(npk_path), warn_no_context=False) as npk:
             npk.save({'data': test_data})
             loaded = npk.load('data')
             assert np.array_equal(loaded, test_data)
         
-        # 验证文件已创建
+        # Verify file was created
         assert npk_path.exists()
     
     def test_context_manager_auto_cleanup(self, temp_dir):
-        """验证context manager自动清理"""
+        """Verify context manager auto cleanup."""
         npk_path = temp_dir / "test.npk"
         test_data = np.arange(100, dtype=np.int32)
         
-        # 使用context manager
+        # Use context manager
         with NumPack(str(npk_path), warn_no_context=False) as npk:
             npk.save({'data': test_data})
         
-        # Context退出后，应该能够立即删除（在支持的平台上）
-        # 注意：Windows可能需要短暂延迟
+        # After context exit, should be able to delete immediately (on supported platforms)
+        # Note: Windows may need a brief delay
         if sys.platform.startswith('win'):
             time.sleep(0.1)
         
@@ -66,13 +66,13 @@ class TestContextManagerBasic:
             shutil.rmtree(npk_path)
             assert not npk_path.exists()
         except PermissionError:
-            # Windows上可能需要更长时间
+            # Windows may need more time
             time.sleep(0.5)
             shutil.rmtree(npk_path)
             assert not npk_path.exists()
     
     def test_nested_context_managers(self, temp_dir):
-        """测试嵌套context manager"""
+        """Test nested context managers."""
         npk_path1 = temp_dir / "test1.npk"
         npk_path2 = temp_dir / "test2.npk"
         
@@ -84,65 +84,65 @@ class TestContextManagerBasic:
                 loaded2 = npk2.load('data2')
                 assert len(loaded2) == 200
             
-            # npk2应该已关闭，npk1仍然打开
+            # npk2 should be closed, npk1 still open
             npk1.save({'data3': np.arange(50)})
             loaded1 = npk1.load('data1')
             assert len(loaded1) == 100
 
 
 class TestWindowsHandleManagement:
-    """测试Windows平台的句柄管理（Windows优先）"""
+    """Test Windows platform handle management (Windows priority)."""
     
     @windows_only
     def test_rapid_create_delete_windows(self, temp_dir):
-        """测试快速创建和删除文件（Windows特定）"""
-        for i in range(20):  # 减少迭代次数以加快测试
+        """Test rapid file creation and deletion (Windows-specific)."""
+        for i in range(20):  # Reduce iterations to speed up test
             npk_path = temp_dir / f"test_{i}.npk"
             
             with NumPack(str(npk_path), warn_no_context=False) as npk:
                 npk.save({'data': np.arange(100)})
             
-            # 在Windows上应该能够立即删除
-            time.sleep(0.05)  # 小延迟确保清理完成
+            # Should be able to delete immediately on Windows
+            time.sleep(0.05)  # Small delay to ensure cleanup completes
             shutil.rmtree(npk_path)
             assert not npk_path.exists()
     
     @windows_only
     def test_manual_close_releases_handles_windows(self, temp_dir):
-        """测试手动close()释放句柄（Windows特定）"""
+        """Test that manual close() releases handles (Windows-specific)."""
         npk_path = temp_dir / "test.npk"
         
         npk = NumPack(str(npk_path), warn_no_context=False)
-        npk.open()  # 需要先打开
+        npk.open()  # Must open first
         npk.save({'data': np.arange(100)})
         
-        # 显式close
+        # Explicit close
         npk.close()
         
-        # 应该能够立即删除；如果失败则重试
+        # Should be able to delete immediately; retry if fails
         try:
             shutil.rmtree(npk_path)
         except PermissionError:
-            # Windows上极少数情况可能需要短暂延迟
+            # In rare cases on Windows may need brief delay
             time.sleep(0.1)
             shutil.rmtree(npk_path)
         
         assert not npk_path.exists()
     
     def test_lazy_array_context_manager(self, temp_dir):
-        """测试LazyArray的context manager（所有平台）"""
+        """Test LazyArray context manager (all platforms)."""
         npk_path = temp_dir / "test.npk"
         large_data = np.arange(10000, dtype=np.float64)
         
         with NumPack(str(npk_path), warn_no_context=False) as npk:
             npk.save({'large': large_data})
             
-            # 直接使用LazyArray（它自己支持context manager）
+            # Use LazyArray directly (it supports context manager itself)
             lazy_arr = npk.load('large', lazy=True)
             result = lazy_arr[0:100]
             assert len(result) == 100
         
-        # 清理应该成功
+        # Cleanup should succeed
         if sys.platform.startswith('win'):
             time.sleep(0.1)
         shutil.rmtree(npk_path)
@@ -150,63 +150,63 @@ class TestWindowsHandleManagement:
 
 
 class TestStrictContextMode:
-    """测试严格context模式"""
+    """Test strict context mode."""
     
     def test_strict_mode_prevents_non_context_usage(self, temp_dir):
-        """测试strict mode阻止非context使用"""
+        """Test that strict mode prevents non-context usage."""
         npk_path = temp_dir / "test.npk"
         
-        # 创建strict mode实例
+        # Create strict mode instance
         npk = NumPack(str(npk_path), strict_context_mode=True, warn_no_context=False)
-        npk.open()  # 需要先打开才能测试strict模式
+        npk.open()  # Must open first to test strict mode
         
-        # 应该在使用outside context时抛出错误
+        # Should raise error when used outside context
         with pytest.raises(RuntimeError, match="strict context mode"):
             npk.save({'data': np.array([1, 2, 3])})
         
-        # 清理
+        # Cleanup
         npk.close()
     
     def test_strict_mode_works_in_context(self, temp_dir):
-        """测试strict mode在context中正常工作"""
+        """Test that strict mode works normally in context."""
         npk_path = temp_dir / "test.npk"
         
-        # 在context中应该正常工作
+        # Should work normally in context
         with NumPack(str(npk_path), strict_context_mode=True, warn_no_context=False) as npk:
             npk.save({'data': np.array([1, 2, 3])})
             result = npk.load('data')
             assert np.array_equal(result, np.array([1, 2, 3]))
     
     def test_operations_after_close_raise_error(self, temp_dir):
-        """测试close后操作抛出错误"""
+        """Test that operations after close raise error."""
         npk_path = temp_dir / "test.npk"
         
         with NumPack(str(npk_path), warn_no_context=False) as npk:
             npk.save({'data': np.array([1, 2, 3])})
         
-        # Context退出后应该已关闭
+        # Should be closed after context exit
         with pytest.raises(RuntimeError, match="closed"):
             npk.save({'more': np.array([4, 5, 6])})
     
     def test_multiple_close_calls_safe(self, temp_dir):
-        """测试多次调用close()是安全的"""
+        """Test that multiple close() calls are safe."""
         npk_path = temp_dir / "test.npk"
         
         npk = NumPack(str(npk_path), warn_no_context=False)
-        npk.open()  # 手动打开文件
+        npk.open()  # Manually open file
         npk.save({'data': np.arange(10)})
         
-        # 多次close应该不抛出错误
+        # Multiple close calls should not raise error
         npk.close()
         npk.close()
         npk.close()
 
 
 class TestExceptionHandling:
-    """测试异常处理"""
+    """Test exception handling."""
     
     def test_exception_during_context_still_cleans_up(self, temp_dir):
-        """测试异常不阻止cleanup"""
+        """Test that exceptions don't prevent cleanup."""
         npk_path = temp_dir / "test.npk"
         
         try:
@@ -214,50 +214,50 @@ class TestExceptionHandling:
                 npk.save({'data': np.arange(100)})
                 raise ValueError("Test exception")
         except ValueError:
-            pass  # 预期的异常
+            pass  # Expected exception
         
-        # 应该仍然能够清理
+        # Should still be able to cleanup
         if sys.platform.startswith('win'):
             time.sleep(0.1)
         shutil.rmtree(npk_path)
         assert not npk_path.exists()
     
     def test_close_is_idempotent(self, temp_dir):
-        """测试close是幂等的"""
+        """Test that close is idempotent."""
         npk_path = temp_dir / "test.npk"
         
         npk = NumPack(str(npk_path), warn_no_context=False)
-        npk.open()  # 手动打开文件
+        npk.open()  # Manually open file
         npk.save({'data': np.array([1, 2, 3])})
         
-        # 第一次close
+        # First close
         npk.close()
         
-        # 后续close不应该出错
+        # Subsequent close calls should not error
         for _ in range(5):
-            npk.close()  # 应该安全
+            npk.close()  # Should be safe
 
 
 class TestBackendConsistency:
-    """测试后端一致性"""
+    """Test backend consistency."""
     
     def test_backend_available(self):
-        """验证NumPack后端可用"""
+        """Verify NumPack backend is available."""
         info = get_backend_info()
         
-        # 验证后端信息可获取
+        # Verify backend info is accessible
         assert 'backend_type' in info
         assert 'platform' in info
         assert 'version' in info
         
-        # 验证后端类型一致（现在只有Rust后端）
+        # Verify backend type is consistent (now only Rust backend)
         assert info['backend_type'] == 'rust'
     
     def test_large_file_operations(self, temp_dir):
-        """测试大文件操作可靠性"""
+        """Test large file operation reliability."""
         npk_path = temp_dir / "large.npk"
         
-        # 创建较大数据集
+        # Create larger dataset
         large_array = np.random.randn(1000, 100).astype(np.float64)
         
         with NumPack(str(npk_path), warn_no_context=False) as npk:
@@ -266,30 +266,30 @@ class TestBackendConsistency:
             
             assert np.allclose(loaded, large_array)
         
-        # 验证cleanup
+        # Verify cleanup
         if sys.platform.startswith('win'):
             time.sleep(0.1)
         shutil.rmtree(npk_path)
 
 
 class TestResourceManagement:
-    """测试资源管理"""
+    """Test resource management."""
     
     def test_multiple_instances_same_file(self, temp_dir):
-        """测试多个实例访问同一文件"""
+        """Test multiple instances accessing the same file."""
         npk_path = temp_dir / "shared.npk"
         
-        # 第一个实例写入
+        # First instance writes
         with NumPack(str(npk_path), warn_no_context=False) as npk1:
             npk1.save({'data': np.array([1, 2, 3])})
         
-        # 第二个实例读取
+        # Second instance reads
         with NumPack(str(npk_path), warn_no_context=False) as npk2:
             result = npk2.load('data')
             assert np.array_equal(result, np.array([1, 2, 3]))
     
     def test_lazy_array_multiple_access(self, temp_dir):
-        """测试LazyArray多次访问"""
+        """Test multiple LazyArray accesses."""
         npk_path = temp_dir / "test.npk"
         data = np.arange(1000, dtype=np.float32)
         
@@ -298,15 +298,15 @@ class TestResourceManagement:
             
             lazy = npk.load('data', lazy=True)
             
-            # 多次访问同一LazyArray
+            # Multiple accesses to the same LazyArray
             for _ in range(10):
                 result = lazy[0:10]
                 assert len(result) == 10
     
     @windows_only
     def test_windows_handle_cleanup_stress(self, temp_dir):
-        """Windows句柄清理压力测试"""
-        # 快速创建和销毁多个NumPack实例
+        """Windows handle cleanup stress test."""
+        # Rapidly create and destroy multiple NumPack instances
         for i in range(50):
             npk_path = temp_dir / f"stress_{i}.npk"
             
@@ -315,7 +315,7 @@ class TestResourceManagement:
                 loaded = npk.load('data')
                 assert loaded.shape == (100, 10)
             
-            # 每10次清理一次
+            # Cleanup every 10 iterations
             if i % 10 == 0:
                 time.sleep(0.05)
 

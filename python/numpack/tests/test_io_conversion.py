@@ -1,7 +1,6 @@
-"""
-NumPack IO 模块测试
+"""Tests for the NumPack I/O module.
 
-测试各种数据格式与 NumPack 之间的转换功能。
+This file tests conversions between various data formats and NumPack.
 """
 
 import numpy as np
@@ -10,7 +9,7 @@ import tempfile
 import shutil
 from pathlib import Path
 
-# 导入 io 模块
+# Import I/O helpers
 from numpack import NumPack
 from numpack.io import (
     DependencyError,
@@ -28,11 +27,11 @@ from numpack.io import (
 
 
 class TestUtilityFunctions:
-    """测试工具函数"""
+    """Tests for utility functions."""
     
     def test_get_file_size_file(self, tmp_path):
-        """测试获取文件大小"""
-        # 创建测试文件
+        """Test file size for a file."""
+        # Create a test file
         test_file = tmp_path / "test.bin"
         test_file.write_bytes(b"0" * 1000)
         
@@ -40,8 +39,8 @@ class TestUtilityFunctions:
         assert size == 1000
     
     def test_get_file_size_directory(self, tmp_path):
-        """测试获取目录大小"""
-        # 创建测试目录和文件
+        """Test total size for a directory."""
+        # Create a test directory and files
         sub_dir = tmp_path / "subdir"
         sub_dir.mkdir()
         
@@ -52,8 +51,8 @@ class TestUtilityFunctions:
         assert size == 1000
     
     def test_is_large_file(self, tmp_path):
-        """测试大文件检测"""
-        # 创建小文件
+        """Test large-file detection."""
+        # Create a small file
         small_file = tmp_path / "small.bin"
         small_file.write_bytes(b"0" * 100)
         
@@ -62,14 +61,14 @@ class TestUtilityFunctions:
         assert is_large_file(small_file, threshold=200) == False  # 100 < 200
     
     def test_estimate_chunk_rows(self):
-        """测试分块行数估算"""
-        # 1D 数组
+        """Test chunk row estimation."""
+        # 1D array
         shape_1d = (10000,)
         dtype_f64 = np.dtype('float64')
         rows = estimate_chunk_rows(shape_1d, dtype_f64, 1024 * 1024)  # 1MB
         assert rows > 0
         
-        # 2D 数组
+        # 2D array
         shape_2d = (10000, 100)
         rows = estimate_chunk_rows(shape_2d, dtype_f64, 1024 * 1024)  # 1MB
         assert rows > 0
@@ -77,27 +76,27 @@ class TestUtilityFunctions:
 
 
 class TestNumpyConversion:
-    """测试 NumPy 格式转换"""
+    """Tests for NumPy format conversion."""
     
     def test_from_npy_small(self, tmp_path):
-        """测试从小 npy 文件导入"""
-        # 创建测试数据
+        """Test importing from a small .npy file."""
+        # Create test data
         arr = np.random.rand(100, 10).astype(np.float64)
         npy_path = tmp_path / "test.npy"
         npk_path = tmp_path / "test.npk"
         
         np.save(npy_path, arr)
         
-        # 转换
+        # Convert
         from_numpy(npy_path, npk_path, drop_if_exists=True)
         
-        # 验证
+        # Verify
         with NumPack(npk_path) as npk:
             loaded = npk.load("test")
             np.testing.assert_array_almost_equal(arr, loaded)
     
     def test_from_npy_with_name(self, tmp_path):
-        """测试指定数组名导入"""
+        """Test importing with an explicit array name."""
         arr = np.random.rand(50, 5).astype(np.float32)
         npy_path = tmp_path / "data.npy"
         npk_path = tmp_path / "output.npk"
@@ -111,7 +110,7 @@ class TestNumpyConversion:
             np.testing.assert_array_almost_equal(arr, loaded)
     
     def test_from_npz(self, tmp_path):
-        """测试从 npz 文件导入"""
+        """Test importing from a .npz file."""
         arr1 = np.random.rand(100, 10).astype(np.float64)
         arr2 = np.random.randint(0, 100, (50, 20)).astype(np.int32)
         
@@ -134,24 +133,24 @@ class TestNumpyConversion:
             np.testing.assert_array_equal(arr2, loaded2)
     
     def test_to_npy(self, tmp_path):
-        """测试导出为 npy 文件"""
+        """Test exporting to a .npy file."""
         arr = np.random.rand(100, 10).astype(np.float64)
         npk_path = tmp_path / "test.npk"
         npy_path = tmp_path / "output.npy"
         
-        # 创建 NumPack 文件
+        # Create NumPack file
         with NumPack(npk_path, drop_if_exists=True) as npk:
             npk.save({"data": arr})
         
-        # 导出
+        # Export
         to_numpy(npk_path, npy_path, array_names=["data"])
         
-        # 验证
+        # Verify
         loaded = np.load(npy_path)
         np.testing.assert_array_almost_equal(arr, loaded)
     
     def test_to_npz(self, tmp_path):
-        """测试导出为 npz 文件"""
+        """Test exporting to a .npz file."""
         arr1 = np.random.rand(100, 10).astype(np.float64)
         arr2 = np.random.randint(0, 100, (50, 20)).astype(np.int32)
         
@@ -168,7 +167,7 @@ class TestNumpyConversion:
             np.testing.assert_array_equal(arr2, data["array2"])
     
     def test_roundtrip_npy(self, tmp_path):
-        """测试 npy 往返转换"""
+        """Test round-trip conversion for .npy."""
         original = np.random.rand(200, 50).astype(np.float32)
         
         npy1 = tmp_path / "original.npy"
@@ -184,18 +183,18 @@ class TestNumpyConversion:
 
 
 class TestCsvConversion:
-    """测试 CSV 格式转换"""
+    """Tests for CSV format conversion."""
     
     def test_from_csv_small(self, tmp_path):
-        """测试从小 CSV 文件导入"""
-        # 创建测试 CSV
+        """Test importing from a small CSV file."""
+        # Create test CSV
         arr = np.random.rand(100, 5).astype(np.float64)
         csv_path = tmp_path / "test.csv"
         npk_path = tmp_path / "test.npk"
         
         np.savetxt(csv_path, arr, delimiter=',')
         
-        # pandas 默认会把第一行当做 header，所以需要指定 header=None
+        # pandas treats the first line as a header by default, so pass header=None
         from_csv(csv_path, npk_path, drop_if_exists=True, header=None)
         
         with NumPack(npk_path) as npk:
@@ -203,7 +202,7 @@ class TestCsvConversion:
             np.testing.assert_array_almost_equal(arr, loaded)
     
     def test_from_csv_with_delimiter(self, tmp_path):
-        """测试指定分隔符"""
+        """Test importing with a custom delimiter."""
         arr = np.random.rand(50, 3).astype(np.float64)
         csv_path = tmp_path / "test.csv"
         npk_path = tmp_path / "test.npk"
@@ -217,7 +216,7 @@ class TestCsvConversion:
             np.testing.assert_array_almost_equal(arr, loaded)
     
     def test_to_csv(self, tmp_path):
-        """测试导出为 CSV"""
+        """Test exporting to CSV."""
         arr = np.random.rand(100, 5).astype(np.float64)
         npk_path = tmp_path / "test.npk"
         csv_path = tmp_path / "output.csv"
@@ -231,7 +230,7 @@ class TestCsvConversion:
         np.testing.assert_array_almost_equal(arr, loaded, decimal=8)
     
     def test_roundtrip_csv(self, tmp_path):
-        """测试 CSV 往返转换"""
+        """Test round-trip conversion for CSV."""
         original = np.random.rand(50, 4).astype(np.float64)
         
         csv1 = tmp_path / "original.csv"
@@ -247,10 +246,10 @@ class TestCsvConversion:
 
 
 class TestTxtConversion:
-    """测试 TXT 格式转换"""
+    """Tests for whitespace-delimited TXT conversion."""
     
     def test_from_txt(self, tmp_path):
-        """测试从 TXT 文件导入"""
+        """Test importing from a text file."""
         arr = np.random.rand(50, 3).astype(np.float64)
         txt_path = tmp_path / "test.txt"
         npk_path = tmp_path / "test.npk"
@@ -264,7 +263,7 @@ class TestTxtConversion:
             np.testing.assert_array_almost_equal(arr, loaded)
     
     def test_to_txt(self, tmp_path):
-        """测试导出为 TXT"""
+        """Test exporting to a text file."""
         arr = np.random.rand(50, 3).astype(np.float64)
         npk_path = tmp_path / "test.npk"
         txt_path = tmp_path / "output.txt"
@@ -279,7 +278,7 @@ class TestTxtConversion:
 
 
 class TestDifferentDtypes:
-    """测试不同数据类型"""
+    """Tests for different dtypes."""
     
     @pytest.mark.parametrize("dtype", [
         np.float32, np.float64, 
@@ -287,7 +286,7 @@ class TestDifferentDtypes:
         np.uint8, np.uint16, np.uint32,
     ])
     def test_numpy_roundtrip_dtypes(self, tmp_path, dtype):
-        """测试不同数据类型的往返转换"""
+        """Test round-trip conversion for different dtypes."""
         if np.issubdtype(dtype, np.integer):
             arr = np.random.randint(0, 100, (50, 10)).astype(dtype)
         else:
@@ -307,15 +306,15 @@ class TestDifferentDtypes:
 
 
 class TestErrorHandling:
-    """测试错误处理"""
+    """Tests for error handling."""
     
     def test_file_not_found(self, tmp_path):
-        """测试文件不存在错误"""
+        """Test FileNotFoundError."""
         with pytest.raises(FileNotFoundError):
             from_numpy(tmp_path / "nonexistent.npy", tmp_path / "out.npk")
     
     def test_invalid_format(self, tmp_path):
-        """测试不支持的格式"""
+        """Test unsupported format."""
         test_file = tmp_path / "test.xyz"
         test_file.write_text("test")
         
@@ -323,7 +322,7 @@ class TestErrorHandling:
             from_numpy(test_file, tmp_path / "out.npk")
     
     def test_npy_multiple_arrays_error(self, tmp_path):
-        """测试 npy 格式多数组错误"""
+        """Test error when exporting multiple arrays to .npy."""
         arr1 = np.random.rand(10, 5)
         arr2 = np.random.rand(20, 3)
         
@@ -333,31 +332,31 @@ class TestErrorHandling:
         with NumPack(npk_path, drop_if_exists=True) as npk:
             npk.save({"arr1": arr1, "arr2": arr2})
         
-        with pytest.raises(ValueError, match="只能保存单个数组"):
+        with pytest.raises(ValueError, match=r"can only store one array"):
             to_numpy(npk_path, npy_path)
 
 
 class TestOptionalDependencies:
-    """测试可选依赖检查"""
+    """Tests for optional dependency handling."""
     
     def test_dependency_error_message(self):
-        """测试依赖错误消息"""
-        error = DependencyError("测试消息")
-        assert "测试消息" in str(error)
+        """Test DependencyError message."""
+        error = DependencyError("test message")
+        assert "test message" in str(error)
 
 
-# 可选依赖测试（仅在安装了相应库时运行）
+# Optional dependency tests (run only when the corresponding library is installed)
 
 class TestHdf5Conversion:
-    """测试 HDF5 格式转换（需要 h5py）"""
+    """Tests for HDF5 conversion (requires h5py)."""
     
     @pytest.fixture(autouse=True)
     def check_h5py(self):
-        """检查是否安装了 h5py"""
+        """Check whether h5py is installed."""
         pytest.importorskip("h5py")
     
     def test_from_hdf5(self, tmp_path):
-        """测试从 HDF5 导入"""
+        """Test importing from HDF5."""
         import h5py
         from numpack.io import from_hdf5
         
@@ -375,7 +374,7 @@ class TestHdf5Conversion:
             np.testing.assert_array_almost_equal(arr, loaded)
     
     def test_to_hdf5(self, tmp_path):
-        """测试导出为 HDF5"""
+        """Test exporting to HDF5."""
         import h5py
         from numpack.io import to_hdf5
         
@@ -394,15 +393,15 @@ class TestHdf5Conversion:
 
 
 class TestPandasConversion:
-    """测试 Pandas DataFrame 转换（需要 pandas）"""
+    """Tests for pandas conversion (requires pandas)."""
     
     @pytest.fixture(autouse=True)
     def check_pandas(self):
-        """检查是否安装了 pandas"""
+        """Check whether pandas is installed."""
         pytest.importorskip("pandas")
     
     def test_from_pandas(self, tmp_path):
-        """测试从 DataFrame 导入"""
+        """Test importing from a DataFrame."""
         import pandas as pd
         from numpack.io import from_pandas
         
@@ -420,7 +419,7 @@ class TestPandasConversion:
             np.testing.assert_array_almost_equal(df.values, loaded)
     
     def test_to_pandas(self, tmp_path):
-        """测试导出为 DataFrame"""
+        """Test exporting to a DataFrame."""
         import pandas as pd
         from numpack.io import to_pandas
         
@@ -435,15 +434,15 @@ class TestPandasConversion:
 
 
 class TestParquetConversion:
-    """测试 Parquet 格式转换（需要 pyarrow）"""
+    """Tests for Parquet conversion (requires pyarrow)."""
     
     @pytest.fixture(autouse=True)
     def check_pyarrow(self):
-        """检查是否安装了 pyarrow"""
+        """Check whether pyarrow is installed."""
         pytest.importorskip("pyarrow")
     
     def test_from_parquet(self, tmp_path):
-        """测试从 Parquet 导入"""
+        """Test importing from Parquet."""
         import pyarrow as pa
         import pyarrow.parquet as pq
         from numpack.io import from_parquet
@@ -462,7 +461,7 @@ class TestParquetConversion:
             np.testing.assert_array_almost_equal(arr, loaded)
     
     def test_to_parquet(self, tmp_path):
-        """测试导出为 Parquet"""
+        """Test exporting to Parquet."""
         import pyarrow.parquet as pq
         from numpack.io import to_parquet
         
@@ -481,15 +480,15 @@ class TestParquetConversion:
 
 
 class TestZarrConversion:
-    """测试 Zarr 格式转换（需要 zarr）"""
+    """Tests for Zarr conversion (requires zarr)."""
     
     @pytest.fixture(autouse=True)
     def check_zarr(self):
-        """检查是否安装了 zarr"""
+        """Check whether zarr is installed."""
         pytest.importorskip("zarr")
     
     def test_from_zarr(self, tmp_path):
-        """测试从 Zarr 导入"""
+        """Test importing from Zarr."""
         import zarr
         from numpack.io import from_zarr
         
@@ -510,7 +509,7 @@ class TestZarrConversion:
             np.testing.assert_array_almost_equal(arr, loaded)
     
     def test_to_zarr(self, tmp_path):
-        """测试导出为 Zarr"""
+        """Test exporting to Zarr."""
         import zarr
         from numpack.io import to_zarr
         
@@ -529,15 +528,15 @@ class TestZarrConversion:
 
 
 class TestPytorchConversion:
-    """测试 PyTorch 格式转换（需要 torch）"""
+    """Tests for PyTorch conversion (requires torch)."""
     
     @pytest.fixture(autouse=True)
     def check_torch(self):
-        """检查是否安装了 torch"""
+        """Check whether torch is installed."""
         pytest.importorskip("torch")
     
     def test_from_pytorch(self, tmp_path):
-        """测试从 PyTorch 导入"""
+        """Test importing from PyTorch."""
         import torch
         from numpack.io import from_pytorch
         
@@ -554,7 +553,7 @@ class TestPytorchConversion:
             np.testing.assert_array_almost_equal(tensor.numpy(), loaded)
     
     def test_from_pytorch_dict(self, tmp_path):
-        """测试从 PyTorch 字典导入"""
+        """Test importing from a PyTorch dict."""
         import torch
         from numpack.io import from_pytorch
         
@@ -575,7 +574,7 @@ class TestPytorchConversion:
             assert 'labels' in members
     
     def test_to_pytorch(self, tmp_path):
-        """测试导出为 PyTorch"""
+        """Test exporting to PyTorch."""
         import torch
         from numpack.io import to_pytorch
         

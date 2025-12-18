@@ -18,7 +18,7 @@ from .utils import (
 
 
 # =============================================================================
-# CSV 格式转换
+# CSV format conversion
 # =============================================================================
 
 def from_csv(
@@ -33,32 +33,41 @@ def from_csv(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     **kwargs,
 ) -> None:
-    """从 CSV 文件导入为 NumPack 格式
+    """Import a CSV file into NumPack.
 
-    对于大文件（>1GB），自动使用流式处理。
+    For large files (by default > 1 GB), this function uses pandas chunked I/O
+    when available.
 
     Parameters
     ----------
     input_path : str or Path
-        输入的 CSV 文件路径
+        Path to the input CSV file.
     output_path : str or Path
-        输出的 NumPack 文件路径
+        Output NumPack directory path.
     array_name : str, optional
-        数组名称，默认使用文件名（不含扩展名）
+        Name of the array to store. If None, defaults to the file stem.
     drop_if_exists : bool, optional
-        如果输出文件存在是否删除，默认 False
+        If True, delete the output path first if it already exists.
     dtype : numpy.dtype, optional
-        数据类型，默认自动推断
+        Target dtype. If None, dtype is inferred by the reader.
     delimiter : str, optional
-        分隔符，默认 ','
+        Column delimiter.
     skiprows : int, optional
-        跳过的行数，默认 0
+        Number of rows to skip at the start of the file.
     max_rows : int, optional
-        最大读取行数，默认 None（读取全部）
+        Maximum number of rows to read. If None, reads all rows.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Target chunk size in bytes for streaming conversion.
     **kwargs
-        传递给 numpy.loadtxt 或 pandas.read_csv 的其他参数
+        Additional keyword arguments forwarded to `pandas.read_csv` (preferred) or
+        `numpy.loadtxt` (fallback).
+
+    Raises
+    ------
+    FileNotFoundError
+        If `input_path` does not exist.
+    DependencyError
+        If pandas is required for streaming conversion but is not installed.
 
     Examples
     --------
@@ -69,7 +78,7 @@ def from_csv(
     input_path = Path(input_path)
 
     if not input_path.exists():
-        raise FileNotFoundError(f"文件不存在: {input_path}")
+        raise FileNotFoundError(f"File not found: {input_path}")
 
     if array_name is None:
         array_name = input_path.stem
@@ -77,7 +86,7 @@ def from_csv(
     file_size = get_file_size(input_path)
 
     if file_size > LARGE_FILE_THRESHOLD:
-        # 大文件：使用 pandas 分块读取（如果可用）
+        # Large file: use pandas chunked reads when available
         _from_csv_streaming(
             input_path,
             output_path,
@@ -90,9 +99,9 @@ def from_csv(
             **kwargs,
         )
     else:
-        # 小文件：直接加载
+        # Small file: load directly
         try:
-            # 尝试使用 pandas（更快更灵活）
+            # Prefer pandas when available (faster and more flexible)
             pd = _check_pandas()
             if 'header' not in kwargs:
                 kwargs['header'] = None
@@ -104,10 +113,10 @@ def from_csv(
                 dtype=dtype,
                 **kwargs,
             )
-            # 确保数组是 C-contiguous 的（NumPack 要求）
+            # Ensure the array is C-contiguous (required by NumPack)
             arr = np.ascontiguousarray(df.values)
         except DependencyError:
-            # 回退到 numpy
+            # Fall back to numpy
             arr = np.loadtxt(
                 str(input_path),
                 delimiter=delimiter,
@@ -135,10 +144,10 @@ def _from_csv_streaming(
     chunk_size: int,
     **kwargs,
 ) -> None:
-    """大文件 CSV 流式导入"""
+    """Stream-import a large CSV file."""
     pd = _check_pandas()
 
-    # 计算分块行数（估算每行约 100 字节）
+    # Estimate chunk row count (assume ~100 bytes per row)
     chunk_rows = max(1000, chunk_size // 100)
 
     npk = _open_numpack_for_write(output_path, drop_if_exists)
@@ -157,7 +166,7 @@ def _from_csv_streaming(
         )
 
         for chunk_df in reader:
-            # 确保数组是 C-contiguous 的（NumPack 要求）
+            # Ensure the array is C-contiguous (required by NumPack)
             arr = np.ascontiguousarray(chunk_df.values)
             if dtype is not None:
                 arr = arr.astype(dtype)
@@ -181,28 +190,35 @@ def to_csv(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     **kwargs,
 ) -> None:
-    """从 NumPack 导出为 CSV 格式
+    """Export a NumPack array to CSV.
 
-    对于大文件（>1GB），使用流式读取。
+    For large arrays (by default > 1 GB), this function streams reads from NumPack
+    and writes the output in chunks.
 
     Parameters
     ----------
     input_path : str or Path
-        输入的 NumPack 文件路径
+        Input NumPack directory path.
     output_path : str or Path
-        输出的 CSV 文件路径
+        Output CSV file path.
     array_name : str, optional
-        要导出的数组名，如果为 None 且只有一个数组则使用该数组
+        Name of the array to export. If None, the array is inferred only when the
+        NumPack file contains exactly one array.
     delimiter : str, optional
-        分隔符，默认 ','
+        Column delimiter.
     header : bool, optional
-        是否写入列标题，默认 False
+        If True, write a header line (only meaningful for 2D arrays).
     fmt : str, optional
-        数值格式，默认 '%.18e'
+        Numeric format string passed to `numpy.savetxt`.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming export.
     **kwargs
-        传递给 numpy.savetxt 的其他参数
+        Additional keyword arguments forwarded to `numpy.savetxt`.
+
+    Raises
+    ------
+    ValueError
+        If `array_name` is not provided and the NumPack file contains multiple arrays.
 
     Examples
     --------
@@ -218,7 +234,7 @@ def to_csv(
                 array_name = members[0]
             else:
                 raise ValueError(
-                    f"NumPack 文件包含多个数组 {members}，请指定 array_name 参数"
+                    f"NumPack contains multiple arrays {members}; please provide the array_name argument."
                 )
 
         shape = npk.get_shape(array_name)
@@ -272,12 +288,12 @@ def _to_csv_streaming(
     chunk_size: int,
     **kwargs,
 ) -> None:
-    """流式导出大数组为 CSV 文件"""
+    """Stream-export a large array to a CSV file."""
     batch_rows = estimate_chunk_rows(shape, dtype, chunk_size)
     total_rows = shape[0]
 
     with open(output_path, 'w') as f:
-        # 写入标题
+        # Write header
         if header and len(shape) > 1:
             header_line = delimiter.join([f'col{i}' for i in range(shape[1])])
             f.write(f"# {header_line}\n")
@@ -286,8 +302,8 @@ def _to_csv_streaming(
             end_idx = min(start_idx + batch_rows, total_rows)
             chunk = npk.getitem(array_name, slice(start_idx, end_idx))
 
-            # 写入分块
-            # 2D 数组用 numpy.savetxt 更快（C 实现），避免逐行 Python 循环
+            # Write chunk
+            # numpy.savetxt is faster for 2D arrays (C implementation), avoiding per-row Python loops
             if isinstance(chunk, np.ndarray) and chunk.ndim == 2:
                 np.savetxt(f, chunk, delimiter=delimiter, fmt=fmt)
             else:
@@ -300,7 +316,7 @@ def _to_csv_streaming(
 
 
 # =============================================================================
-# TXT 格式转换（与 CSV 类似，但默认空格分隔）
+# TXT format conversion (similar to CSV, but defaults to whitespace delimiter)
 # =============================================================================
 
 def from_txt(
@@ -314,37 +330,45 @@ def from_txt(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     **kwargs,
 ) -> None:
-    """从 TXT 文件导入为 NumPack 格式
+    """Import a whitespace-delimited text file into NumPack.
 
-    与 from_csv 类似，但默认使用空白字符作为分隔符。
+    This function is equivalent to `from_csv` but uses whitespace as the default
+    delimiter.
 
     Parameters
     ----------
     input_path : str or Path
-        输入的 TXT 文件路径
+        Path to the input text file.
     output_path : str or Path
-        输出的 NumPack 文件路径
+        Output NumPack directory path.
     array_name : str, optional
-        数组名称，默认使用文件名（不含扩展名）
+        Name of the array to store. If None, defaults to the file stem.
     drop_if_exists : bool, optional
-        如果输出文件存在是否删除，默认 False
+        If True, delete the output path first if it already exists.
     dtype : numpy.dtype, optional
-        数据类型，默认自动推断
+        Target dtype.
     delimiter : str, optional
-        分隔符，默认 None（任意空白字符）
+        Delimiter passed through to `from_csv`. If None, whitespace is used.
     skiprows : int, optional
-        跳过的行数，默认 0
+        Number of rows to skip.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming conversion.
     **kwargs
-        传递给 numpy.loadtxt 的其他参数
+        Additional keyword arguments forwarded to the underlying reader.
+
+    Raises
+    ------
+    FileNotFoundError
+        If `input_path` does not exist.
+    DependencyError
+        If pandas is required for streaming conversion but is not installed.
 
     Examples
     --------
     >>> from numpack.io import from_txt
     >>> from_txt('data.txt', 'output.npk')
     """
-    # 使用 from_csv 但默认分隔符为空白
+    # Use from_csv but default delimiter is whitespace
     from_csv(
         input_path,
         output_path,
@@ -368,26 +392,32 @@ def to_txt(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     **kwargs,
 ) -> None:
-    """从 NumPack 导出为 TXT 格式
+    """Export a NumPack array to a whitespace-delimited text file.
 
-    与 to_csv 类似，但默认使用空格作为分隔符。
+    This function is equivalent to `to_csv` but uses a space character as the
+    default delimiter.
 
     Parameters
     ----------
     input_path : str or Path
-        输入的 NumPack 文件路径
+        Input NumPack directory path.
     output_path : str or Path
-        输出的 TXT 文件路径
+        Output text file path.
     array_name : str, optional
-        要导出的数组名
+        Name of the array to export.
     delimiter : str, optional
-        分隔符，默认 ' '（空格）
+        Column delimiter.
     fmt : str, optional
-        数值格式，默认 '%.18e'
+        Numeric format string passed to `numpy.savetxt`.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming export.
     **kwargs
-        传递给 numpy.savetxt 的其他参数
+        Additional keyword arguments forwarded to `numpy.savetxt`.
+
+    Raises
+    ------
+    ValueError
+        If `array_name` is not provided and the NumPack file contains multiple arrays.
 
     Examples
     --------

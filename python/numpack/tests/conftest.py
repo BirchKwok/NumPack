@@ -7,7 +7,7 @@ import gc
 import time
 import numpy as np
 
-# 统一的NumPack支持的所有数据类型定义
+# Unified definition of all dtypes supported by NumPack
 ALL_DTYPES = [
     (np.bool_, [[True, False], [False, True]]),
     (np.uint8, [[0, 255], [128, 64]]),
@@ -25,7 +25,7 @@ ALL_DTYPES = [
     (np.complex128, [[1+2j, 3+4j], [0+0j, -1-2j]])
 ]
 
-# 统一的数组维度定义
+# Unified definition of array dimensions
 ARRAY_DIMS = [
     (1, (100,)),                           # 1 dimension
     (2, (50, 40)),                         # 2 dimension
@@ -34,9 +34,9 @@ ARRAY_DIMS = [
     (5, (10, 8, 6, 4, 2))                  # 5 dimension
 ]
 
-# 辅助函数：创建测试数组
+# Helper: create a test array
 def create_test_array(dtype, shape):
-    """创建测试数组的辅助函数"""
+    """Helper function to create a test array."""
     if dtype == np.bool_:
         return np.random.choice([True, False], size=shape).astype(dtype)
     elif np.issubdtype(dtype, np.integer):
@@ -54,21 +54,21 @@ def create_test_array(dtype, shape):
 def pytest_runtest_teardown(item, nextitem):
     """Cleanup after each test"""
     if os.name == 'nt':
-        # 优化的Windows平台清理 - 减少延迟但保持功能
+        # Optimized Windows cleanup: reduce latency while keeping functionality
         try:
             from numpack import force_cleanup_windows_handles
-            # 只执行一次清理以减少延迟
+            # Run cleanup only once to reduce latency
             force_cleanup_windows_handles()
         except ImportError:
             pass
         
-        # 减少垃圾回收次数和等待时间
-        for _ in range(2):  # 从5次减少到2次
+        # Reduce garbage collection cycles and sleep time
+        for _ in range(2):  # reduced from 5 to 2
             gc.collect()
-            time.sleep(0.002)  # 从10ms减少到2ms
+            time.sleep(0.002)  # reduced from 10ms to 2ms
         
-        # 大幅减少额外等待时间
-        time.sleep(0.005)  # 从100ms减少到5ms
+        # Reduce extra wait time
+        time.sleep(0.005)  # reduced from 100ms to 5ms
     else:
         # Basic cleanup for non-Windows platforms
         gc.collect()
@@ -77,23 +77,23 @@ def pytest_runtest_teardown(item, nextitem):
 def pytest_sessionfinish(session, exitstatus):
     """Final cleanup after entire test session"""
     if os.name == 'nt':
-        # 优化的最终清理 - 保持功能但减少延迟
+        # Optimized final cleanup: keep functionality while reducing latency
         try:
             from numpack import force_cleanup_windows_handles
-            # 减少清理次数
-            for _ in range(2):  # 从3次减少到2次
+            # Reduce cleanup iterations
+            for _ in range(2):  # reduced from 3 to 2
                 force_cleanup_windows_handles()
-                time.sleep(0.01)  # 从50ms减少到10ms
+                time.sleep(0.01)  # reduced from 50ms to 10ms
         except ImportError:
             pass
         
-        # 减少最终垃圾回收次数
-        for _ in range(3):  # 从10次减少到3次
+        # Reduce final garbage collection cycles
+        for _ in range(3):  # reduced from 10 to 3
             gc.collect()
-            time.sleep(0.002)  # 从10ms减少到2ms
+            time.sleep(0.002)  # reduced from 10ms to 2ms
         
-        # 减少最终等待时间
-        time.sleep(0.05)  # 从200ms减少到50ms
+        # Reduce final wait time
+        time.sleep(0.05)  # reduced from 200ms to 50ms
     else:
         # Basic cleanup for non-Windows platforms
-        gc.collect() 
+        gc.collect()

@@ -1,4 +1,4 @@
-"""测试不同场景的drop API功能"""
+"""Tests for drop API functionality in different scenarios."""
 import numpy as np
 import pytest
 import tempfile
@@ -14,11 +14,11 @@ create_test_array = conftest.create_test_array
 
 
 class TestDropScenarios:
-    """测试drop API在各种场景下的正确性"""
+    """Test drop API correctness in various scenarios."""
     
     @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
     def test_drop_single_row_int_index(self, dtype, test_values):
-        """测试删除单行（整数索引）- 所有数据类型"""
+        """Test dropping a single row (integer index) - all data types."""
         test_data = create_test_array(dtype, (10, 10))
         numpack_dir = tempfile.mkdtemp()
         
@@ -27,7 +27,7 @@ class TestDropScenarios:
                 npk.save({'data': test_data})
                 original_shape = npk.get_shape('data')
                 
-                # 删除第5行
+                # Drop row 5
                 npk.drop('data', 5)
                 new_shape = npk.get_shape('data')
                 
@@ -50,7 +50,7 @@ class TestDropScenarios:
     
     @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
     def test_drop_multiple_rows_list_index(self, dtype, test_values):
-        """测试删除多行（列表索引）- 所有数据类型"""
+        """Test dropping multiple rows (list index) - all data types."""
         test_data = create_test_array(dtype, (20, 10))
         numpack_dir = tempfile.mkdtemp()
         
@@ -58,7 +58,7 @@ class TestDropScenarios:
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': test_data})
                 
-                # 删除多行
+                # Drop multiple rows
                 indices_to_drop = [0, 5, 10, 15]
                 npk.drop('data', indices_to_drop)
                 new_shape = npk.get_shape('data')
@@ -81,7 +81,7 @@ class TestDropScenarios:
     
     @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
     def test_drop_multiple_rows_numpy_array_index(self, dtype, test_values):
-        """测试删除多行（numpy数组索引）- 所有数据类型"""
+        """Test dropping multiple rows (numpy array index) - all data types."""
         test_data = create_test_array(dtype, (30, 10))
         numpack_dir = tempfile.mkdtemp()
         
@@ -89,7 +89,7 @@ class TestDropScenarios:
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': test_data})
                 
-                # 使用numpy数组作为索引
+                # Use numpy array as index
                 indices_to_drop = np.array([2, 7, 12, 17, 22])
                 npk.drop('data', indices_to_drop)
                 new_shape = npk.get_shape('data')
@@ -111,7 +111,7 @@ class TestDropScenarios:
                 shutil.rmtree(numpack_dir)
     
     def test_drop_single_array(self):
-        """测试删除单个数组"""
+        """Test dropping a single array."""
         numpack_dir = tempfile.mkdtemp()
         
         try:
@@ -120,7 +120,7 @@ class TestDropScenarios:
                 data2 = np.random.rand(200, 10).astype(np.float32)
                 npk.save({'array1': data1, 'array2': data2})
                 
-                # 删除单个数组
+                # Drop single array
                 npk.drop('array1')
                 members = npk.get_member_list()
                 
@@ -128,7 +128,7 @@ class TestDropScenarios:
                 assert 'array2' in members
                 assert len(members) == 1
                 
-                # 验证array2仍然可以正常加载
+                # Verify array2 can still be loaded normally
                 loaded = npk.load('array2')
                 assert np.allclose(loaded, data2)
         finally:
@@ -136,7 +136,7 @@ class TestDropScenarios:
                 shutil.rmtree(numpack_dir)
     
     def test_drop_multiple_arrays(self):
-        """测试删除多个数组"""
+        """Test dropping multiple arrays."""
         numpack_dir = tempfile.mkdtemp()
         
         try:
@@ -146,7 +146,7 @@ class TestDropScenarios:
                 data3 = np.random.rand(300, 10).astype(np.float32)
                 npk.save({'array1': data1, 'array2': data2, 'array3': data3})
                 
-                # 删除多个数组
+                # Drop multiple arrays
                 npk.drop(['array1', 'array3'])
                 members = npk.get_member_list()
                 
@@ -159,7 +159,7 @@ class TestDropScenarios:
                 shutil.rmtree(numpack_dir)
     
     def test_drop_then_append(self):
-        """测试删除后追加数据"""
+        """Test appending data after drop."""
         test_data = np.arange(1000).reshape(100, 10).astype(np.float32)
         numpack_dir = tempfile.mkdtemp()
         
@@ -167,11 +167,11 @@ class TestDropScenarios:
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': test_data})
                 
-                # 删除最后20行
+                # Drop last 20 rows
                 npk.drop('data', list(range(80, 100)))
                 assert npk.get_shape('data') == (80, 10)
                 
-                # 追加30行新数据
+                # Append 30 new rows
                 new_data = np.ones((30, 10), dtype=np.float32) * 999
                 npk.append({'data': new_data})
                 
@@ -180,16 +180,16 @@ class TestDropScenarios:
                 # 验证数据
                 loaded = npk.load('data')
                 assert loaded.shape == (110, 10)
-                # 前80行应该是原始数据
+                # First 80 rows should be original data
                 assert np.allclose(loaded[:80], test_data[:80])
-                # 后30行应该是新数据
+                # Last 30 rows should be new data
                 assert np.allclose(loaded[80:], new_data)
         finally:
             if os.path.exists(numpack_dir):
                 shutil.rmtree(numpack_dir)
     
     def test_drop_then_replace(self):
-        """测试删除后替换数据"""
+        """Test replacing data after drop."""
         test_data = np.arange(1000).reshape(100, 10).astype(np.float32)
         numpack_dir = tempfile.mkdtemp()
         
@@ -197,11 +197,11 @@ class TestDropScenarios:
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': test_data})
                 
-                # 删除索引 [5, 10, 15]
+                # Drop indices [5, 10, 15]
                 npk.drop('data', [5, 10, 15])
                 assert npk.get_shape('data') == (97, 10)
                 
-                # 替换第1行（逻辑索引）
+                # Replace row 1 (logical index)
                 replacement = np.ones((1, 10), dtype=np.float32) * 888
                 npk.replace({'data': replacement}, 1)
                 
@@ -213,9 +213,9 @@ class TestDropScenarios:
                 shutil.rmtree(numpack_dir)
     
     def test_drop_then_update_compact(self):
-        """测试删除后物理整合
+        """Test physical compaction after drop.
         
-        注意：update操作会物理删除已标记删除的行，创建一个新的紧凑文件
+        Note: update operation physically removes marked-for-deletion rows, creating a new compact file.
         """
         test_data = np.random.rand(1000, 10).astype(np.float32)
         numpack_dir = tempfile.mkdtemp()
@@ -224,20 +224,20 @@ class TestDropScenarios:
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': test_data})
                 
-                # 删除500行
+                # Drop 500 rows
                 indices_to_drop = list(range(0, 500))
                 npk.drop('data', indices_to_drop)
                 shape_after_drop = npk.get_shape('data')
                 assert shape_after_drop == (500, 10)
                 
-                # 获取删除后的数据
+                # Get data after drop
                 data_before_compact = npk.load('data')
                 assert data_before_compact.shape == (500, 10)
                 
-                # 物理整合 - 这会创建一个新的紧凑文件
+                # Physical compaction - this creates a new compact file
                 npk.update('data')
                 
-                # update后立即验证形状
+                # Verify shape immediately after update
                 shape_after_update = npk.get_shape('data')
                 assert shape_after_update == (500, 10)
         finally:
@@ -245,7 +245,7 @@ class TestDropScenarios:
                 shutil.rmtree(numpack_dir)
     
     def test_drop_with_batch_mode(self):
-        """测试batch_mode下的drop操作"""
+        """Test drop operation in batch_mode."""
         test_data = np.arange(500).reshape(50, 10).astype(np.float32)
         numpack_dir = tempfile.mkdtemp()
         
@@ -254,16 +254,16 @@ class TestDropScenarios:
                 npk.save({'data': test_data})
                 
                 with npk.batch_mode():
-                    # 在batch mode中删除
+                    # Drop in batch mode
                     npk.drop('data', [5, 10, 15])
                     assert npk.get_shape('data') == (47, 10)
                     
-                    # 加载数据
+                    # Load data
                     loaded = npk.load('data')
                     expected = np.delete(test_data, [5, 10, 15], axis=0)
                     assert np.allclose(loaded, expected)
                 
-                # batch mode退出后验证
+                # Verify after batch mode exit
                 loaded_after = npk.load('data')
                 assert loaded_after.shape == (47, 10)
         finally:
@@ -271,9 +271,9 @@ class TestDropScenarios:
                 shutil.rmtree(numpack_dir)
     
     def test_drop_all_rows(self):
-        """测试删除所有行
+        """Test dropping all rows.
         
-        注意：当删除所有行时，数组本身会被移除
+        Note: When all rows are dropped, the array itself is removed.
         """
         test_data = np.arange(100).reshape(10, 10).astype(np.float32)
         numpack_dir = tempfile.mkdtemp()
@@ -282,10 +282,10 @@ class TestDropScenarios:
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': test_data})
                 
-                # 删除所有行 - 这会导致数组被完全删除
+                # Drop all rows - this causes the array to be completely removed
                 npk.drop('data', list(range(10)))
                 
-                # 验证数组不再存在
+                # Verify array no longer exists
                 members = npk.get_member_list()
                 assert 'data' not in members
         finally:
@@ -293,7 +293,7 @@ class TestDropScenarios:
                 shutil.rmtree(numpack_dir)
     
     def test_drop_with_tuple_index(self):
-        """测试使用元组索引删除"""
+        """Test dropping with tuple index."""
         test_data = np.arange(100).reshape(10, 10).astype(np.float32)
         numpack_dir = tempfile.mkdtemp()
         
@@ -301,7 +301,7 @@ class TestDropScenarios:
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': test_data})
                 
-                # 使用元组索引
+                # Use tuple index
                 npk.drop('data', (2, 5, 8))
                 
                 assert npk.get_shape('data') == (7, 10)
@@ -314,7 +314,7 @@ class TestDropScenarios:
                 shutil.rmtree(numpack_dir)
     
     def test_drop_consecutive_operations(self):
-        """测试连续多次删除操作"""
+        """Test consecutive drop operations."""
         test_data = np.arange(1000).reshape(100, 10).astype(np.float32)
         numpack_dir = tempfile.mkdtemp()
         
@@ -322,19 +322,19 @@ class TestDropScenarios:
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': test_data})
                 
-                # 第一次删除
+                # First drop
                 npk.drop('data', [0, 1, 2])
                 assert npk.get_shape('data') == (97, 10)
                 
-                # 第二次删除
+                # Second drop
                 npk.drop('data', [5, 10])
                 assert npk.get_shape('data') == (95, 10)
                 
-                # 第三次删除
+                # Third drop
                 npk.drop('data', [20, 30, 40])
                 assert npk.get_shape('data') == (92, 10)
                 
-                # 验证最终结果
+                # Verify final result
                 loaded = npk.load('data')
                 assert loaded.shape == (92, 10)
         finally:
@@ -343,7 +343,7 @@ class TestDropScenarios:
     
     @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
     def test_drop_different_dtypes(self, dtype, test_values):
-        """测试所有数据类型的删除操作"""
+        """Test drop operations for all data types."""
         numpack_dir = tempfile.mkdtemp()
         
         try:
@@ -352,7 +352,7 @@ class TestDropScenarios:
                 test_data = create_test_array(dtype, (10, 10))
                 npk.save({array_name: test_data})
                 
-                # 删除第5行
+                # Drop row 5
                 npk.drop(array_name, 5)
                 
                 # 验证
@@ -372,7 +372,7 @@ class TestDropScenarios:
                 shutil.rmtree(numpack_dir)
     
     def test_drop_lazy_load_consistency(self):
-        """测试删除后lazy加载的一致性"""
+        """Test lazy load consistency after drop."""
         test_data = np.random.rand(1000, 10).astype(np.float32)
         numpack_dir = tempfile.mkdtemp()
         
@@ -380,17 +380,17 @@ class TestDropScenarios:
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': test_data})
                 
-                # 删除一些行
+                # Drop some rows
                 npk.drop('data', [10, 20, 30, 40, 50])
                 
-                # 比较eager和lazy加载
+                # Compare eager and lazy loading
                 eager = npk.load('data', lazy=False)
                 lazy = npk.load('data', lazy=True)
                 
-                # 形状应该一致
+                # Shapes should match
                 assert eager.shape == lazy.shape == (995, 10)
                 
-                # 随机抽样验证数据一致性
+                # Random sampling to verify data consistency
                 indices = [0, 100, 500, 900]
                 for idx in indices:
                     assert np.allclose(eager[idx], lazy[idx])
@@ -399,7 +399,7 @@ class TestDropScenarios:
                 shutil.rmtree(numpack_dir)
     
     def test_drop_empty_list(self):
-        """测试空索引列表删除（不应删除任何内容）"""
+        """Test dropping with empty index list (should not delete anything)."""
         test_data = np.arange(100).reshape(10, 10).astype(np.float32)
         numpack_dir = tempfile.mkdtemp()
         
@@ -407,13 +407,13 @@ class TestDropScenarios:
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': test_data})
                 
-                # 空列表删除
+                # Drop with empty list
                 npk.drop('data', [])
                 
-                # 形状应该不变
+                # Shape should remain unchanged
                 assert npk.get_shape('data') == (10, 10)
                 
-                # 数据应该完全一致
+                # Data should be completely identical
                 loaded = npk.load('data')
                 assert np.allclose(loaded, test_data)
         finally:
@@ -421,18 +421,18 @@ class TestDropScenarios:
                 shutil.rmtree(numpack_dir)
     
     def test_drop_reopen_file(self):
-        """测试删除后重新打开文件"""
+        """Test reopening file after drop."""
         test_data = np.arange(1000).reshape(100, 10).astype(np.float32)
         numpack_dir = tempfile.mkdtemp()
         
         try:
-            # 第一次打开，删除并保存
+            # First open, drop and save
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': test_data})
                 npk.drop('data', list(range(50)))
                 assert npk.get_shape('data') == (50, 10)
             
-            # 重新打开，验证删除是否持久化
+            # Reopen, verify drop is persisted
             with NumPack(numpack_dir) as npk:
                 assert npk.get_shape('data') == (50, 10)
                 loaded = npk.load('data')
@@ -443,8 +443,8 @@ class TestDropScenarios:
                 shutil.rmtree(numpack_dir)
     
     def test_drop_multidimensional_arrays(self):
-        """测试删除多维数组的行"""
-        # 3维数组
+        """Test dropping rows from multidimensional arrays."""
+        # 3D array
         test_data_3d = np.random.rand(50, 20, 10).astype(np.float32)
         numpack_dir = tempfile.mkdtemp()
         
@@ -452,7 +452,7 @@ class TestDropScenarios:
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data_3d': test_data_3d})
                 
-                # 删除第一维的某些索引
+                # Drop some indices from first dimension
                 npk.drop('data_3d', [5, 10, 15])
                 
                 assert npk.get_shape('data_3d') == (47, 20, 10)
@@ -465,7 +465,7 @@ class TestDropScenarios:
                 shutil.rmtree(numpack_dir)
     
     def test_drop_getitem_after_deletion(self):
-        """测试删除后使用getitem访问"""
+        """Test using getitem after deletion."""
         test_data = np.arange(1000).reshape(100, 10).astype(np.float32)
         numpack_dir = tempfile.mkdtemp()
         
@@ -473,11 +473,11 @@ class TestDropScenarios:
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': test_data})
                 
-                # 删除一些行
+                # Drop some rows
                 deleted_indices = [5, 10, 15, 20]
                 npk.drop('data', deleted_indices)
                 
-                # 使用getitem访问
+                # Use getitem to access
                 item_0 = npk.getitem('data', 0)
                 item_5 = npk.getitem('data', 5)
                 
@@ -491,35 +491,35 @@ class TestDropScenarios:
 
 
 class TestDropErrorHandling:
-    """测试drop API的错误处理
+    """Test drop API error handling.
     
-    注意：某些错误处理可能在Rust后端中实现，行为可能与预期不同
+    Note: Some error handling may be implemented in Rust backend; behavior may differ from expectations.
     """
     
     def test_drop_nonexistent_array_silent(self):
-        """测试删除不存在的数组
+        """Test dropping non-existent array.
         
-        注意：当前实现可能会静默忽略不存在的数组，不抛出错误
-        这是一个设计决策，避免在批量操作时因单个数组不存在而中断
+        Note: Current implementation may silently ignore non-existent arrays without raising errors.
+        This is a design decision to avoid interrupting batch operations due to a single missing array.
         """
         numpack_dir = tempfile.mkdtemp()
         
         try:
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
-                # 创建一个数组
+                # Create an array
                 npk.save({'array1': np.random.rand(10, 10).astype(np.float32)})
                 
-                # 尝试删除不存在的数组（可能静默成功）
+                # Try to drop non-existent array (may silently succeed)
                 npk.drop('nonexistent')
                 
-                # 验证原有数组仍然存在
+                # Verify original array still exists
                 assert 'array1' in npk.get_member_list()
         finally:
             if os.path.exists(numpack_dir):
                 shutil.rmtree(numpack_dir)
     
     def test_drop_duplicate_index(self):
-        """测试删除重复索引（应该被去重）"""
+        """Test dropping duplicate indices (should be deduplicated)."""
         test_data = np.arange(100).reshape(10, 10).astype(np.float32)
         numpack_dir = tempfile.mkdtemp()
         
@@ -527,10 +527,10 @@ class TestDropErrorHandling:
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': test_data})
                 
-                # 删除重复索引（应该自动去重）
+                # Drop duplicate indices (should be automatically deduplicated)
                 npk.drop('data', [0, 0, 1, 1, 2])
                 
-                # 应该只删除3行
+                # Should only drop 3 rows
                 shape = npk.get_shape('data')
                 assert shape == (7, 10)
         finally:

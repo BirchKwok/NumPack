@@ -1,4 +1,4 @@
-"""诊断原地操作符问题"""
+"""Diagnose issues related to in-place operators."""
 
 import tempfile
 import numpy as np
@@ -6,7 +6,7 @@ import numpack as npk
 from pathlib import Path
 
 def test_diagnose():
-    """诊断测试"""
+    """Diagnostic test."""
     with tempfile.TemporaryDirectory() as tmp:
         test_dir = Path(tmp) / 'test'
         test_dir.mkdir()

@@ -8,7 +8,7 @@ from .utils import DEFAULT_CHUNK_SIZE, _check_s3fs, _safe_unlink
 
 
 # =============================================================================
-# S3 远程存储支持
+# S3 remote storage support
 # =============================================================================
 
 def from_s3(
@@ -19,24 +19,33 @@ def from_s3(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     **s3_kwargs,
 ) -> None:
-    """从 S3 下载文件并导入为 NumPack 格式
+    """Download an object from S3 and import it into NumPack.
 
-    支持的格式：npy, npz, csv, parquet, feather, hdf5
+    Supported formats include NumPy (``.npy``/``.npz``), CSV/TXT, Parquet,
+    Feather and HDF5.
 
     Parameters
     ----------
     s3_path : str
-        S3 路径，格式为 's3://bucket/path/to/file'
+        S3 URL in the form ``"s3://bucket/path/to/file"``.
     output_path : str or Path
-        输出的 NumPack 文件路径
+        Output NumPack directory path.
     format : str, optional
-        文件格式，默认 'auto'（从扩展名推断）
+        Input format. If ``"auto"``, it is inferred from the file suffix.
     drop_if_exists : bool, optional
-        如果输出文件存在是否删除，默认 False
+        If True, delete the output path first if it already exists.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming conversion.
     **s3_kwargs
-        传递给 s3fs 的其他参数（如 anon=True 用于公开桶）
+        Keyword arguments forwarded to ``s3fs.S3FileSystem`` (for example,
+        ``anon=True`` for public buckets).
+
+    Raises
+    ------
+    DependencyError
+        If the optional dependency ``s3fs`` is not installed.
+    ValueError
+        If `format` is not supported.
 
     Examples
     --------
@@ -46,10 +55,10 @@ def from_s3(
     """
     s3fs = _check_s3fs()
 
-    # 创建 S3 文件系统
+    # Create S3 filesystem
     fs = s3fs.S3FileSystem(**s3_kwargs)
 
-    # 推断格式
+    # Infer format
     if format == 'auto':
         suffix = Path(s3_path).suffix.lower()
         format_map = {
@@ -64,15 +73,15 @@ def from_s3(
         }
         format = format_map.get(suffix, 'numpy')
 
-    # 下载到临时文件并转换
+    # Download into a temporary file and convert
     with tempfile.NamedTemporaryFile(suffix=Path(s3_path).suffix, delete=False) as tmp:
         tmp_path = tmp.name
 
     try:
-        # 流式下载
+        # Download
         fs.get(s3_path, tmp_path)
 
-        # 根据格式调用相应的导入函数
+        # Dispatch to the corresponding import function
         from .csv_io import from_csv, from_txt
         from .feather_io import from_feather
         from .hdf5_io import from_hdf5
@@ -90,11 +99,11 @@ def from_s3(
 
         handler = format_handlers.get(format)
         if handler is None:
-            raise ValueError(f"不支持的格式: {format}")
+            raise ValueError(f"Unsupported format: {format}")
 
         handler(tmp_path, output_path, drop_if_exists=drop_if_exists, chunk_size=chunk_size)
     finally:
-        # 清理临时文件
+        # Clean up temporary file
         _safe_unlink(tmp_path)
 
 
@@ -106,24 +115,32 @@ def to_s3(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     **s3_kwargs,
 ) -> None:
-    """从 NumPack 导出并上传到 S3
+    """Export a NumPack array and upload it to S3.
 
-    支持的格式：npy, npz, csv, parquet, feather, hdf5
+    Supported formats include NumPy (``.npy``/``.npz``), CSV/TXT, Parquet,
+    Feather and HDF5.
 
     Parameters
     ----------
     input_path : str or Path
-        输入的 NumPack 文件路径
+        Input NumPack directory path.
     s3_path : str
-        S3 路径，格式为 's3://bucket/path/to/file'
+        S3 URL in the form ``"s3://bucket/path/to/file"``.
     format : str, optional
-        输出文件格式，默认 'auto'（从扩展名推断）
+        Output format. If ``"auto"``, it is inferred from the file suffix.
     array_name : str, optional
-        要导出的数组名
+        Name of the array to export.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming export.
     **s3_kwargs
-        传递给 s3fs 的其他参数
+        Keyword arguments forwarded to ``s3fs.S3FileSystem``.
+
+    Raises
+    ------
+    DependencyError
+        If the optional dependency ``s3fs`` is not installed.
+    ValueError
+        If `format` is not supported.
 
     Examples
     --------
@@ -132,10 +149,10 @@ def to_s3(
     """
     s3fs = _check_s3fs()
 
-    # 创建 S3 文件系统
+    # Create S3 filesystem
     fs = s3fs.S3FileSystem(**s3_kwargs)
 
-    # 推断格式
+    # Infer format
     if format == 'auto':
         suffix = Path(s3_path).suffix.lower()
         format_map = {
@@ -150,7 +167,7 @@ def to_s3(
         }
         format = format_map.get(suffix, 'numpy')
 
-    # 导出到临时文件
+    # Export into a temporary file
     with tempfile.NamedTemporaryFile(suffix=Path(s3_path).suffix, delete=False) as tmp:
         tmp_path = tmp.name
 
@@ -161,7 +178,7 @@ def to_s3(
         from .numpy_io import to_numpy
         from .parquet_io import to_parquet
 
-        # 根据格式调用相应的导出函数
+        # Dispatch to the corresponding export function
         format_handlers = {
             'numpy': lambda inp, out, **kw: to_numpy(
                 inp,
@@ -183,12 +200,12 @@ def to_s3(
 
         handler = format_handlers.get(format)
         if handler is None:
-            raise ValueError(f"不支持的格式: {format}")
+            raise ValueError(f"Unsupported format: {format}")
 
         handler(input_path, tmp_path)
 
-        # 上传到 S3
+        # Upload to S3
         fs.put(tmp_path, s3_path)
     finally:
-        # 清理临时文件
+        # Clean up temporary file
         _safe_unlink(tmp_path)

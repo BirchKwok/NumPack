@@ -1,4 +1,4 @@
-"""测试NumPack API的线程安全性"""
+"""Tests for NumPack API thread safety."""
 import numpy as np
 import pytest
 import tempfile
@@ -11,43 +11,43 @@ from numpack import NumPack
 
 
 class TestThreadSafety:
-    """测试NumPack在多线程环境下的安全性"""
+    """Test NumPack safety in multi-threaded environments."""
     
     def test_concurrent_reads_same_array(self):
-        """测试多个线程同时读取同一个数组"""
+        """Test multiple threads reading the same array concurrently."""
         test_data = np.random.rand(1000, 10).astype(np.float32)
         numpack_dir = tempfile.mkdtemp()
         num_threads = 10
         
         try:
-            # 先保存数据
+            # Save data first
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': test_data})
             
-            # 多线程读取
+            # Multi-threaded read
             def read_worker(thread_id):
                 with NumPack(numpack_dir) as npk:
                     loaded = npk.load('data')
-                    # 验证数据完整性
+                    # Verify data integrity
                     return np.allclose(loaded, test_data) and loaded.shape == test_data.shape
             
             with ThreadPoolExecutor(max_workers=num_threads) as executor:
                 futures = [executor.submit(read_worker, i) for i in range(num_threads)]
                 results = [f.result() for f in as_completed(futures)]
             
-            # 所有读取都应该成功
+            # All reads should succeed
             assert all(results), "Some threads failed to read correctly"
         finally:
             if os.path.exists(numpack_dir):
                 shutil.rmtree(numpack_dir)
     
     def test_concurrent_reads_different_arrays(self):
-        """测试多个线程读取不同数组"""
+        """Test multiple threads reading different arrays."""
         num_arrays = 20
         numpack_dir = tempfile.mkdtemp()
         
         try:
-            # 创建多个数组
+            # Create multiple arrays
             test_arrays = {}
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 for i in range(num_arrays):
@@ -55,7 +55,7 @@ class TestThreadSafety:
                     test_arrays[array_name] = np.random.rand(100, 10).astype(np.float32)
                 npk.save(test_arrays)
             
-            # 多线程读取不同数组
+            # Multi-threaded read of different arrays
             def read_worker(array_id):
                 array_name = f'array_{array_id}'
                 with NumPack(numpack_dir) as npk:
@@ -73,32 +73,32 @@ class TestThreadSafety:
                 shutil.rmtree(numpack_dir)
     
     def test_concurrent_writes_different_arrays(self):
-        """测试多个线程写入不同数组
+        """Test multiple threads writing different arrays.
         
-        注意：并发写入需要适当的同步机制。
-        在实际应用中，建议使用锁来序列化写入操作。
+        Note: Concurrent writes require proper synchronization.
+        In practice, use locks to serialize write operations.
         """
         num_threads = 10
         numpack_dir = tempfile.mkdtemp()
         
         try:
-            # 初始化空文件
+            # Initialize empty file
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 pass
             
-            # 多线程写入不同数组 - 使用锁来确保线程安全
+            # Multi-threaded write of different arrays - use locks for thread safety
             test_data = {}
             data_lock = threading.Lock()
-            write_lock = threading.Lock()  # 序列化写入操作
+            write_lock = threading.Lock()  # Serialize write operations
             
             def write_worker(thread_id):
                 array_name = f'array_{thread_id}'
                 data = np.random.rand(100, 10).astype(np.float32)
                 
-                with data_lock:  # 保护共享的test_data字典
+                with data_lock:  # Protect shared test_data dict
                     test_data[array_name] = data.copy()
                 
-                # 使用锁来序列化写入操作，避免并发冲突
+                # Use lock to serialize writes and avoid concurrent conflicts
                 with write_lock:
                     with NumPack(numpack_dir) as npk:
                         npk.save({array_name: data})
@@ -110,7 +110,7 @@ class TestThreadSafety:
             
             assert all(results), "Some writes failed"
             
-            # 验证所有数据都正确写入
+            # Verify all data was written correctly
             with NumPack(numpack_dir) as npk:
                 members = npk.get_member_list()
                 assert len(members) == num_threads, f"Expected {num_threads} arrays, got {len(members)}: {members}"
@@ -123,24 +123,24 @@ class TestThreadSafety:
                 shutil.rmtree(numpack_dir)
     
     def test_concurrent_append_same_array(self):
-        """测试多个线程对同一数组进行append操作"""
+        """Test multiple threads appending to the same array."""
         num_threads = 5
         rows_per_thread = 20
         numpack_dir = tempfile.mkdtemp()
         
         try:
-            # 初始化数组
+            # Initialize array
             initial_data = np.random.rand(100, 10).astype(np.float32)
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': initial_data})
             
-            # 多线程append（需要锁来序列化append操作）
+            # Multi-threaded append (requires lock to serialize append operations)
             append_lock = threading.Lock()
             
             def append_worker(thread_id):
                 data = np.ones((rows_per_thread, 10), dtype=np.float32) * thread_id
                 
-                with append_lock:  # 序列化append操作
+                with append_lock:  # Serialize append operations
                     with NumPack(numpack_dir) as npk:
                         npk.append({'data': data})
                 return True
@@ -151,7 +151,7 @@ class TestThreadSafety:
             
             assert all(results), "Some appends failed"
             
-            # 验证最终大小
+            # Verify final size
             with NumPack(numpack_dir) as npk:
                 final_shape = npk.get_shape('data')
                 expected_rows = 100 + num_threads * rows_per_thread
@@ -161,26 +161,26 @@ class TestThreadSafety:
                 shutil.rmtree(numpack_dir)
     
     def test_concurrent_drop_different_rows(self):
-        """测试多个线程删除不同行"""
+        """Test multiple threads dropping different rows."""
         numpack_dir = tempfile.mkdtemp()
         num_threads = 5
         
         try:
-            # 创建足够大的数组
+            # Create sufficiently large array
             initial_data = np.arange(1000).reshape(100, 10).astype(np.float32)
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': initial_data})
             
-            # 多线程删除不同的行（需要锁来序列化）
+            # Multi-threaded drop of different rows (requires lock to serialize)
             drop_lock = threading.Lock()
             
             def drop_worker(thread_id):
-                # 每个线程删除不同的索引范围
+                # Each thread drops a different index range
                 start_idx = thread_id * 10
                 end_idx = start_idx + 5
                 indices = list(range(start_idx, end_idx))
                 
-                with drop_lock:  # 序列化drop操作
+                with drop_lock:  # Serialize drop operations
                     with NumPack(numpack_dir) as npk:
                         npk.drop('data', indices)
                 return True
@@ -191,7 +191,7 @@ class TestThreadSafety:
             
             assert all(results), "Some drops failed"
             
-            # 验证删除结果
+            # Verify drop results
             with NumPack(numpack_dir) as npk:
                 final_shape = npk.get_shape('data')
                 expected_rows = 100 - (num_threads * 5)
@@ -201,25 +201,25 @@ class TestThreadSafety:
                 shutil.rmtree(numpack_dir)
     
     def test_concurrent_replace_operations(self):
-        """测试多个线程进行replace操作"""
+        """Test multiple threads performing replace operations."""
         numpack_dir = tempfile.mkdtemp()
         num_threads = 10
         
         try:
-            # 初始化数组
+            # Initialize array
             initial_data = np.zeros((100, 10), dtype=np.float32)
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': initial_data})
             
-            # 多线程replace不同的行
+            # Multi-threaded replace of different rows
             replace_lock = threading.Lock()
             
             def replace_worker(thread_id):
-                # 每个线程替换不同的行
+                # Each thread replaces a different row
                 index = thread_id
                 replacement = np.ones((1, 10), dtype=np.float32) * (thread_id + 1)
                 
-                with replace_lock:  # 序列化replace操作
+                with replace_lock:  # Serialize replace operations
                     with NumPack(numpack_dir) as npk:
                         npk.replace({'data': replacement}, index)
                 return True
@@ -230,7 +230,7 @@ class TestThreadSafety:
             
             assert all(results), "Some replaces failed"
             
-            # 验证替换结果
+            # Verify replace results
             with NumPack(numpack_dir) as npk:
                 loaded = npk.load('data')
                 for i in range(num_threads):
@@ -241,12 +241,12 @@ class TestThreadSafety:
                 shutil.rmtree(numpack_dir)
     
     def test_concurrent_mixed_operations(self):
-        """测试混合并发操作（读、写、更新）"""
+        """Test mixed concurrent operations (read, write, update)."""
         numpack_dir = tempfile.mkdtemp()
         num_operations = 30
         
         try:
-            # 初始化多个数组
+            # Initialize multiple arrays
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 for i in range(10):
                     data = np.random.rand(100, 10).astype(np.float32)
@@ -277,7 +277,7 @@ class TestThreadSafety:
                 futures = [executor.submit(mixed_worker, i) for i in range(num_operations)]
                 results = [f.result() for f in as_completed(futures)]
             
-            # 所有操作都应该成功
+            # All operations should succeed
             for op_type, success in results:
                 assert success, f"Operation {op_type} failed"
         finally:
@@ -285,21 +285,21 @@ class TestThreadSafety:
                 shutil.rmtree(numpack_dir)
     
     def test_concurrent_lazy_load(self):
-        """测试多线程lazy加载"""
+        """Test multi-threaded lazy loading."""
         numpack_dir = tempfile.mkdtemp()
         num_threads = 10
         
         try:
-            # 创建测试数据
+            # Create test data
             test_data = np.random.rand(1000, 10).astype(np.float32)
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': test_data})
             
-            # 多线程lazy加载
+            # Multi-threaded lazy load
             def lazy_load_worker(thread_id):
                 with NumPack(numpack_dir) as npk:
                     lazy_array = npk.load('data', lazy=True)
-                    # 访问一些数据
+                    # Access some data
                     row = lazy_array[thread_id % 100]
                     return row.shape == (10,)
             
@@ -313,22 +313,22 @@ class TestThreadSafety:
                 shutil.rmtree(numpack_dir)
     
     def test_concurrent_batch_mode(self):
-        """测试多线程使用batch_mode"""
+        """Test multi-threaded use of batch_mode."""
         numpack_dir = tempfile.mkdtemp()
         
         try:
-            # 初始化数据
+            # Initialize data
             test_data = np.random.rand(100, 10).astype(np.float32)
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': test_data})
             
-            # 注意：batch_mode本身不是线程安全的，每个线程应该有自己的NumPack实例
+            # Note: batch_mode itself is not thread-safe; each thread should have its own NumPack instance
             def batch_mode_worker(thread_id):
                 try:
                     with NumPack(numpack_dir) as npk:
                         with npk.batch_mode():
                             loaded = npk.load('data')
-                            # 简单验证
+                            # Simple verification
                             return loaded.shape == (100, 10)
                 except Exception as e:
                     return False
@@ -343,20 +343,20 @@ class TestThreadSafety:
                 shutil.rmtree(numpack_dir)
     
     def test_concurrent_getitem(self):
-        """测试多线程使用getitem访问"""
+        """Test multi-threaded getitem access."""
         numpack_dir = tempfile.mkdtemp()
         num_threads = 10
         
         try:
-            # 创建测试数据
+            # Create test data
             test_data = np.arange(1000).reshape(100, 10).astype(np.float32)
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': test_data})
             
-            # 多线程getitem
+            # Multi-threaded getitem
             def getitem_worker(thread_id):
                 with NumPack(numpack_dir) as npk:
-                    # 访问不同的索引
+                    # Access different indices
                     indices = [thread_id, (thread_id + 10) % 100]
                     items = npk.getitem('data', indices)
                     return items.shape == (2, 10)
@@ -371,25 +371,25 @@ class TestThreadSafety:
                 shutil.rmtree(numpack_dir)
     
     def test_thread_safety_with_context_manager(self):
-        """测试使用context manager时的线程安全性"""
+        """Test thread safety when using context manager."""
         numpack_dir = tempfile.mkdtemp()
         num_threads = 10
         
         try:
-            # 初始化
+            # Initialize
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 initial_data = np.random.rand(100, 10).astype(np.float32)
                 npk.save({'data': initial_data})
             
-            # 多线程使用context manager
+            # Multi-threaded use of context manager
             def context_worker(thread_id):
                 try:
                     with NumPack(numpack_dir) as npk:
-                        # 读取
+                        # Read
                         loaded = npk.load('data')
-                        # 获取形状
+                        # Get shape
                         shape = npk.get_shape('data')
-                        # 验证
+                        # Verify
                         return shape == (100, 10) and loaded.shape == shape
                 except Exception as e:
                     return False
@@ -404,20 +404,20 @@ class TestThreadSafety:
                 shutil.rmtree(numpack_dir)
     
     def test_multiple_numpack_instances_same_file(self):
-        """测试多个NumPack实例同时访问同一文件"""
+        """Test multiple NumPack instances accessing the same file simultaneously."""
         numpack_dir = tempfile.mkdtemp()
         num_instances = 5
         
         try:
-            # 初始化数据
+            # Initialize data
             test_data = np.random.rand(100, 10).astype(np.float32)
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': test_data})
             
-            # 多个实例同时读取
+            # Multiple instances reading simultaneously
             def instance_worker(instance_id):
                 try:
-                    # 每个线程创建自己的NumPack实例
+                    # Each thread creates its own NumPack instance
                     with NumPack(numpack_dir) as npk:
                         loaded = npk.load('data')
                         return np.allclose(loaded, test_data)
@@ -434,17 +434,17 @@ class TestThreadSafety:
                 shutil.rmtree(numpack_dir)
     
     def test_concurrent_stream_load(self):
-        """测试多线程使用stream_load"""
+        """Test multi-threaded use of stream_load."""
         numpack_dir = tempfile.mkdtemp()
         num_threads = 5
         
         try:
-            # 创建测试数据
+            # Create test data
             test_data = np.arange(1000).reshape(100, 10).astype(np.float32)
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': test_data})
             
-            # 多线程stream_load
+            # Multi-threaded stream_load
             def stream_load_worker(thread_id):
                 try:
                     with NumPack(numpack_dir) as npk:
@@ -466,21 +466,21 @@ class TestThreadSafety:
 
 
 class TestThreadSafetyStress:
-    """压力测试线程安全性"""
+    """Stress test thread safety."""
     
     def test_high_concurrency_reads(self):
-        """高并发读取压力测试"""
+        """High concurrency read stress test."""
         numpack_dir = tempfile.mkdtemp()
         num_threads = 50
         iterations_per_thread = 10
         
         try:
-            # 创建测试数据
+            # Create test data
             test_data = np.random.rand(1000, 10).astype(np.float32)
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': test_data})
             
-            # 高并发读取
+            # High concurrency reads
             def stress_read_worker(thread_id):
                 success_count = 0
                 for i in range(iterations_per_thread):
@@ -497,7 +497,7 @@ class TestThreadSafetyStress:
                 futures = [executor.submit(stress_read_worker, i) for i in range(num_threads)]
                 results = [f.result() for f in as_completed(futures)]
             
-            # 至少大部分操作应该成功
+            # At least most operations should succeed
             total_operations = num_threads * iterations_per_thread
             successful_operations = sum(results)
             success_rate = successful_operations / total_operations
@@ -508,16 +508,16 @@ class TestThreadSafetyStress:
                 shutil.rmtree(numpack_dir)
     
     def test_rapid_open_close(self):
-        """快速打开关闭压力测试"""
+        """Rapid open-close stress test."""
         numpack_dir = tempfile.mkdtemp()
         num_threads = 20
         
         try:
-            # 初始化数据
+            # Initialize data
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': np.random.rand(100, 10).astype(np.float32)})
             
-            # 快速打开关闭
+            # Rapid open-close
             def rapid_open_close_worker(thread_id):
                 success_count = 0
                 for i in range(5):
@@ -534,8 +534,8 @@ class TestThreadSafetyStress:
                 futures = [executor.submit(rapid_open_close_worker, i) for i in range(num_threads)]
                 results = [f.result() for f in as_completed(futures)]
             
-            # 大部分操作应该成功
-            assert sum(results) >= num_threads * 4  # 至少80%成功
+            # Most operations should succeed
+            assert sum(results) >= num_threads * 4  # At least 80% success
         finally:
             if os.path.exists(numpack_dir):
                 shutil.rmtree(numpack_dir)

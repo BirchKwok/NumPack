@@ -17,7 +17,7 @@ from .utils import (
 
 
 # =============================================================================
-# Parquet 格式转换
+# Parquet format conversion
 # =============================================================================
 
 def from_parquet(
@@ -28,24 +28,30 @@ def from_parquet(
     drop_if_exists: bool = False,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
 ) -> None:
-    """从 Parquet 文件导入为 NumPack 格式
+    """Import a Parquet file into NumPack.
 
-    对于大文件（>1GB），自动使用流式处理。
+    Large Parquet files (by default > 1 GB) are imported by iterating record
+    batches and streaming the result into NumPack.
 
     Parameters
     ----------
     input_path : str or Path
-        输入的 Parquet 文件路径
+        Path to the input Parquet file.
     output_path : str or Path
-        输出的 NumPack 文件路径
+        Output NumPack directory path.
     array_name : str, optional
-        数组名称，默认使用文件名（不含扩展名）
+        Name of the output array. If None, defaults to the file stem.
     columns : list of str, optional
-        要读取的列名列表，默认读取全部
+        Columns to read. If None, reads all columns.
     drop_if_exists : bool, optional
-        如果输出文件存在是否删除，默认 False
+        If True, delete the output path first if it already exists.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming conversion.
+
+    Raises
+    ------
+    DependencyError
+        If the optional dependency ``pyarrow`` is not installed.
 
     Examples
     --------
@@ -61,7 +67,7 @@ def from_parquet(
     if array_name is None:
         array_name = input_path.stem
 
-    # 获取文件元信息
+    # Read Parquet metadata
     parquet_file = pq.ParquetFile(str(input_path))
     file_size = get_file_size(input_path)
 
@@ -69,10 +75,10 @@ def from_parquet(
 
     try:
         if file_size > LARGE_FILE_THRESHOLD:
-            # 大文件：按行组流式读取
+            # Large file: stream record batches
             _from_parquet_streaming(npk, parquet_file, array_name, columns)
         else:
-            # 小文件：直接加载
+            # Small file: load directly
             table = pq.read_table(str(input_path), columns=columns)
             arr = np.ascontiguousarray(table.to_pandas().values)
             npk.save({array_name: arr})
@@ -86,7 +92,7 @@ def _from_parquet_streaming(
     array_name: str,
     columns: Optional[List[str]],
 ) -> None:
-    """流式导入 Parquet 文件"""
+    """Stream-import a Parquet file."""
     first_batch = True
 
     for batch in parquet_file.iter_batches(columns=columns):
@@ -107,24 +113,30 @@ def to_parquet(
     row_group_size: int = 100000,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
 ) -> None:
-    """从 NumPack 导出为 Parquet 格式
-
-    对于大数组（>1GB），使用流式读取和分批写入。
+    """Export a NumPack array to Parquet.
 
     Parameters
     ----------
     input_path : str or Path
-        输入的 NumPack 文件路径
+        Input NumPack directory path.
     output_path : str or Path
-        输出的 Parquet 文件路径
+        Output Parquet file path.
     array_name : str, optional
-        要导出的数组名
+        Name of the array to export. If None, the array is inferred only when
+        the NumPack file contains exactly one array.
     compression : str, optional
-        压缩算法，默认 'snappy'
+        Parquet compression codec.
     row_group_size : int, optional
-        行组大小，默认 100000
+        Parquet row group size used for non-streaming writes.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming export.
+
+    Raises
+    ------
+    DependencyError
+        If the optional dependency ``pyarrow`` is not installed.
+    ValueError
+        If `array_name` is not provided and the NumPack file contains multiple arrays.
 
     Examples
     --------
@@ -144,7 +156,7 @@ def to_parquet(
                 array_name = members[0]
             else:
                 raise ValueError(
-                    f"NumPack 文件包含多个数组 {members}，请指定 array_name 参数"
+                    f"NumPack contains multiple arrays {members}; please provide the array_name argument."
                 )
 
         shape = npk.get_shape(array_name)
@@ -153,7 +165,7 @@ def to_parquet(
         estimated_size = int(np.prod(shape)) * dtype.itemsize
 
         if estimated_size > LARGE_FILE_THRESHOLD and len(shape) > 0:
-            # 大数组：流式写入
+            # Large array: streamed writes
             _to_parquet_streaming(
                 npk,
                 output_path,
@@ -165,13 +177,13 @@ def to_parquet(
                 chunk_size,
             )
         else:
-            # 小数组：直接写入
+            # Small array: write directly
             arr = npk.load(array_name)
-            # 转换为 PyArrow Table
+            # Convert to a PyArrow Table
             if arr.ndim == 1:
                 table = pa.table({'data': arr})
             else:
-                # 多维数组转换为列
+                # Convert a multi-dimensional array into columns
                 columns = (
                     {f'col{i}': arr[:, i] for i in range(arr.shape[1])}
                     if arr.ndim == 2
@@ -199,7 +211,7 @@ def _to_parquet_streaming(
     row_group_size: int,
     chunk_size: int,
 ) -> None:
-    """流式导出大数组到 Parquet"""
+    """Stream-export a large array to Parquet."""
     _check_pyarrow()
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -214,7 +226,7 @@ def _to_parquet_streaming(
             end_idx = min(start_idx + batch_rows, total_rows)
             chunk = npk.getitem(array_name, slice(start_idx, end_idx))
 
-            # 转换为 Table
+            # Convert to a Table
             if chunk.ndim == 1:
                 table = pa.table({'data': chunk})
             else:

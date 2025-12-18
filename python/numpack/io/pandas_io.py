@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 # =============================================================================
-# Pandas DataFrame 转换
+# Pandas DataFrame conversion
 # =============================================================================
 
 def from_pandas(
@@ -29,22 +29,27 @@ def from_pandas(
     drop_if_exists: bool = False,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
 ) -> None:
-    """从 Pandas DataFrame 导入为 NumPack 格式
+    """Import a pandas DataFrame into NumPack.
 
-    对于大 DataFrame（>1GB），使用流式写入。
+    Large DataFrames (by default > 1 GB) are streamed into NumPack in chunks.
 
     Parameters
     ----------
     df : pandas.DataFrame
-        输入的 DataFrame
+        Input DataFrame.
     output_path : str or Path
-        输出的 NumPack 文件路径
+        Output NumPack directory path.
     array_name : str, optional
-        数组名称，默认 'data'
+        Name of the output array.
     drop_if_exists : bool, optional
-        如果输出文件存在是否删除，默认 False
+        If True, delete the output path first if it already exists.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming write.
+
+    Raises
+    ------
+    DependencyError
+        If the optional dependency ``pandas`` is not installed.
 
     Examples
     --------
@@ -62,7 +67,7 @@ def from_pandas(
 
     try:
         if estimated_size > LARGE_FILE_THRESHOLD:
-            # 大 DataFrame：分块写入
+            # Large DataFrame: chunked writes
             _save_array_streaming(npk, array_name, arr, chunk_size)
         else:
             npk.save({array_name: arr})
@@ -75,21 +80,29 @@ def to_pandas(
     array_name: Optional[str] = None,
     columns: Optional[List[str]] = None,
 ) -> "pd.DataFrame":
-    """从 NumPack 导出为 Pandas DataFrame
+    """Export a NumPack array as a pandas DataFrame.
 
     Parameters
     ----------
     input_path : str or Path
-        输入的 NumPack 文件路径
+        Input NumPack directory path.
     array_name : str, optional
-        要导出的数组名
+        Name of the array to export. If None, the array is inferred only when
+        the NumPack file contains exactly one array.
     columns : list of str, optional
-        列名列表，如果为 None 则自动生成
+        Column names. If None and the array is 2D, column names are generated.
 
     Returns
     -------
     pandas.DataFrame
-        转换后的 DataFrame
+        A DataFrame view of the exported array.
+
+    Raises
+    ------
+    DependencyError
+        If the optional dependency ``pandas`` is not installed.
+    ValueError
+        If `array_name` is not provided and the NumPack file contains multiple arrays.
 
     Examples
     --------
@@ -107,7 +120,7 @@ def to_pandas(
                 array_name = members[0]
             else:
                 raise ValueError(
-                    f"NumPack 文件包含多个数组 {members}，请指定 array_name 参数"
+                    f"NumPack contains multiple arrays {members}; please provide the array_name argument."
                 )
 
         arr = npk.load(array_name)

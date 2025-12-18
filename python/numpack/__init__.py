@@ -41,10 +41,14 @@ except ImportError as e:
 
 
 class NumPack:
-    """NumPack - High-performance array storage library (Rust backend only)
-    
-    Uses high-performance Rust backend implementation to provide consistent 
-    optimal performance across all platforms.
+    """High-performance array storage backed by the Rust implementation.
+
+    This class provides a Python interface to the NumPack on-disk format.
+
+    Notes
+    -----
+    - The storage backend is provided by the Rust extension module.
+    - Files are not opened automatically. Call `open` or use a context manager.
     """
     
     def __init__(
@@ -55,20 +59,27 @@ class NumPack:
         warn_no_context: bool = None,
         force_gc_on_close: bool = False
     ):
-        """Initialize NumPack object
-        
-        The file is NOT automatically opened. Users must:
-        1. Manually call the open() method
-        2. Use context manager (with statement)
-        
-        Parameters:
-            filename (Union[str, Path]): The name of the NumPack file
-            drop_if_exists (bool): Whether to drop the file if it already exists
-            strict_context_mode (bool): If True, requires usage within 'with' statement
-            warn_no_context (bool): If True, warns when not using context manager
-            force_gc_on_close (bool): Force garbage collection on close. Default False 
-                                    for best performance. Set to True only if your 
-                                    application has strict memory constraints.
+        """Create a `NumPack` handle.
+
+        The underlying file is **not** opened automatically. You must either:
+
+        - Call `open` explicitly, or
+        - Use `NumPack` as a context manager.
+
+        Parameters
+        ----------
+        filename : str or Path
+            NumPack directory path.
+        drop_if_exists : bool, optional
+            If True, delete the path first if it already exists.
+        strict_context_mode : bool, optional
+            If True, disallow calling mutating APIs outside of a ``with`` block.
+        warn_no_context : bool, optional
+            If True, emit a warning when not using a context manager (defaults to
+            True on Windows).
+        force_gc_on_close : bool, optional
+            If True, run garbage collection on close. Default False for best
+            performance.
         """
         self._backend_type = _BACKEND_TYPE  # Always "rust"
         self._strict_context_mode = strict_context_mode
@@ -105,21 +116,17 @@ class NumPack:
         self._npk = None
     
     def open(self) -> None:
-        """Manually open NumPack file
-        
-        If the file is already open, this method does nothing.
-        If the file has been closed, this method reopens it.
-        
-        Example:
-            ```python
-            npk = NumPack('data.npk')
-            npk.open()  # Manually open
-            npk.save({'array': data})
-            npk.close()  # Manually close
-            npk.open()  # Reopen
-            data = npk.load('array')
-            npk.close()
-            ```
+        """Open the NumPack file.
+
+        Calling `open` is idempotent. If the file is already opened, this is a
+        no-op. If the file has been closed, this reopens it.
+
+        Examples
+        --------
+        >>> npk = NumPack('data.npk')
+        >>> npk.open()
+        >>> npk.save({'array': data})
+        >>> npk.close()
         """
         if self._opened and not self._closed:
             # File is already open and not closed, no operation needed
@@ -163,10 +170,20 @@ class NumPack:
             )
 
     def save(self, arrays: Dict[str, np.ndarray]) -> None:
-        """Save arrays to NumPack file
-        
-        Parameters:
-            arrays (Dict[str, np.ndarray]): Dictionary mapping array names to numpy arrays
+        """Save arrays to the NumPack file.
+
+        Parameters
+        ----------
+        arrays : dict[str, numpy.ndarray]
+            Mapping from array name to data.
+
+        Raises
+        ------
+        ValueError
+            If `arrays` is not a dict.
+        RuntimeError
+            If the NumPack instance is not opened or (when enabled) not used
+            under a context manager.
         """
         self._check_context_mode()
         
@@ -199,14 +216,26 @@ class NumPack:
         self._npk.save(arrays, None)
 
     def load(self, array_name: str, lazy: bool = False) -> Union[np.ndarray, LazyArray]:
-        """Load array from NumPack file
-        
-        Parameters:
-            array_name (str): The name of the array to load
-            lazy (bool): Whether to load the array in lazy mode (memory mapped)
-        
-        Returns:
-            Union[np.ndarray, LazyArray]: The loaded array
+        """Load an array from the NumPack file.
+
+        Parameters
+        ----------
+        array_name : str
+            Array name.
+        lazy : bool, optional
+            If True, return a `LazyArray` (memory-mapped) instead of loading data
+            eagerly.
+
+        Returns
+        -------
+        numpy.ndarray or LazyArray
+            The loaded array.
+
+        Raises
+        ------
+        RuntimeError
+            If the NumPack instance is not opened or (when enabled) not used
+            under a context manager.
         """
         self._check_context_mode()
         
@@ -225,11 +254,22 @@ class NumPack:
         return self._npk.load(array_name, lazy=lazy)
 
     def replace(self, arrays: Dict[str, np.ndarray], indexes: Union[List[int], int, np.ndarray, slice]) -> None:
-        """Replace array values at specified indexes
-        
-        Parameters:
-            arrays (Dict[str, np.ndarray]): Dictionary mapping array names to new values
-            indexes (Union[List[int], int, np.ndarray, slice]): Row indexes to replace
+        """Replace values at specific row indexes.
+
+        Parameters
+        ----------
+        arrays : dict[str, numpy.ndarray]
+            Mapping from array name to replacement values.
+        indexes : int or list[int] or numpy.ndarray or slice
+            Row indexes to replace.
+
+        Raises
+        ------
+        ValueError
+            If `arrays` is not a dict or `indexes` has an unsupported type.
+        RuntimeError
+            If the NumPack instance is not opened or (when enabled) not used
+            under a context manager.
         """
         self._check_context_mode()
         
@@ -247,10 +287,20 @@ class NumPack:
         self._npk.replace(arrays, indexes)
 
     def append(self, arrays: Dict[str, np.ndarray]) -> None:
-        """Append new rows to existing arrays
-        
-        Parameters:
-            arrays (Dict[str, np.ndarray]): Dictionary mapping array names to rows to append
+        """Append rows to existing arrays.
+
+        Parameters
+        ----------
+        arrays : dict[str, numpy.ndarray]
+            Mapping from array name to the rows to append.
+
+        Raises
+        ------
+        ValueError
+            If `arrays` is not a dict.
+        RuntimeError
+            If the NumPack instance is not opened or (when enabled) not used
+            under a context manager.
         """
         self._check_context_mode()
         
@@ -270,12 +320,22 @@ class NumPack:
                 self._batch_context._dirty_arrays.discard(name)
 
     def drop(self, array_name: Union[str, List[str]], indexes: Optional[Union[List[int], int, np.ndarray]] = None) -> None:
-        """Drop arrays or specific rows from NumPack file
-        
-        Parameters:
-            array_name (Union[str, List[str]]): The name(s) of the array(s) to drop
-            indexes (Optional[Union[List[int], int, np.ndarray]]): Row indexes to drop. 
-                    If None, drops entire arrays
+        """Drop arrays or rows from a NumPack file.
+
+        Parameters
+        ----------
+        array_name : str or list[str]
+            Array name(s) to drop.
+        indexes : int or list[int] or numpy.ndarray or slice, optional
+            Row indexes to drop. If None, drops entire arrays.
+
+        Raises
+        ------
+        ValueError
+            If `indexes` has an unsupported type.
+        RuntimeError
+            If the NumPack instance is not opened or (when enabled) not used
+            under a context manager.
         """
         self._check_context_mode()
         
@@ -307,15 +367,25 @@ class NumPack:
                 self._batch_context._dirty_arrays.discard(name)
 
     def getitem(self, array_name: str, indexes: Union[List[int], int, np.ndarray, slice]) -> np.ndarray:
-        """Random access to specified rows from NumPack file
-        
-        Parameters:
-            array_name (str): The name of the array to access
-            indexes (Union[List[int], int, np.ndarray]): Row indexes to access (integers, 
-                    lists, slices, or numpy arrays)
+        """Return a subset of rows using random access.
 
-        Returns:
-            np.ndarray: The specified row data
+        Parameters
+        ----------
+        array_name : str
+            Array name.
+        indexes : int or list[int] or numpy.ndarray or slice
+            Row indexes to access.
+
+        Returns
+        -------
+        numpy.ndarray
+            The selected rows.
+
+        Raises
+        ------
+        RuntimeError
+            If the NumPack instance is not opened or (when enabled) not used
+            under a context manager.
         """
         self._check_context_mode()
         
@@ -330,112 +400,140 @@ class NumPack:
         return self._npk.getitem(array_name, indexes)
     
     def get_shape(self, array_name: str) -> Tuple[int, int]:
-        """Get the shape of specified array
-        
-        Parameters:
-            array_name (str): The name of the array
-        
-        Returns:
-            Tuple[int, int]: The shape of the array (rows, columns)
+        """Return the shape of an array.
+
+        Parameters
+        ----------
+        array_name : str
+            Array name.
+
+        Returns
+        -------
+        tuple[int, int]
+            Shape of the array.
+
+        Raises
+        ------
+        RuntimeError
+            If the NumPack instance is not opened or (when enabled) not used
+            under a context manager.
         """
         self._check_context_mode()
         return self._npk.get_shape(array_name)
     
     def get_member_list(self) -> List[str]:
-        """Get the list of all array names
-        
-        Returns:
-            List[str]: List containing all array names
+        """Return the list of array names in the file.
+
+        Returns
+        -------
+        list[str]
+            All array names.
+
+        Raises
+        ------
+        RuntimeError
+            If the NumPack instance is not opened or (when enabled) not used
+            under a context manager.
         """
         self._check_context_mode()
         return self._npk.get_member_list()
     
     def get_modify_time(self, array_name: str) -> Optional[int]:
-        """Get the last modification time of specified array
-        
-        Parameters:
-            array_name (str): The name of the array
-        
-        Returns:
-            Optional[int]: Modification timestamp, or None if array doesn't exist
+        """Return the last modification time of an array.
+
+        Parameters
+        ----------
+        array_name : str
+            Array name.
+
+        Returns
+        -------
+        int or None
+            Modification timestamp, or None if the array does not exist.
+
+        Raises
+        ------
+        RuntimeError
+            If the NumPack instance is not opened or (when enabled) not used
+            under a context manager.
         """
         self._check_context_mode()
         return self._npk.get_modify_time(array_name)
     
     def reset(self) -> None:
-        """Clear all arrays from NumPack file"""
+        """Remove all arrays from the NumPack file."""
         self._check_context_mode()
         self._npk.reset()
     
     def update(self, array_name: str) -> None:
-        """Physically compact array by removing logically deleted rows
-        
-        This method creates a new array file containing only the non-deleted rows,
-        then replaces the original file. It's useful for reclaiming disk space after
-        many delete operations.
-        
-        The compaction is done in batches (batch size: 100,000 rows) to handle
-        large arrays efficiently.
-        
-        Parameters:
-            array_name (str): The name of the array to compact
-            
-        Example:
-            ```python
-            # Delete some rows (logical deletion)
-            npk.drop('my_array', indexes=[0, 1, 2])
-            
-            # Physically compact the array to reclaim space
-            npk.update('my_array')
-            ```
-        
-        Note:
-            - This operation modifies the physical file on disk
-            - After compaction, the deletion bitmap is removed
-            - If no rows were deleted, the operation is a no-op
+        """Physically compact an array by removing logically deleted rows.
+
+        This operation rewrites the underlying array file and removes the
+        deletion bitmap. It can be used to reclaim disk space after many delete
+        operations.
+
+        Parameters
+        ----------
+        array_name : str
+            Name of the array to compact.
+
+        Notes
+        -----
+        - This operation modifies the physical data on disk.
+        - If no rows were deleted, this is a no-op.
+
+        Examples
+        --------
+        >>> npk.drop('my_array', indexes=[0, 1, 2])
+        >>> npk.update('my_array')
         """
         self._check_context_mode()
         self._npk.update(array_name)
 
     def clone(self, source_name: str, target_name: str) -> None:
-        """Clone an existing array to a new array
-        
-        This method creates a complete copy of the source array, including its data 
-        and metadata. The cloned array is independent of the original and can be 
-        modified separately.
-        
-        Parameters:
-            source_name (str): Name of the source array to clone
-            target_name (str): Name for the cloned array
-            
-        Example:
-            ```python
-            # Clone an existing array
-            npk.clone('original_array', 'cloned_array')
-            
-            # The cloned array can now be modified independently
-            data = npk.load('cloned_array')
-            data *= 2  # Modify the clone
-            npk.save({'cloned_array': data})
-            
-            # Original array remains unchanged
-            original = npk.load('original_array')
-            ```
-        
-        Raises:
-            KeyError: If source array doesn't exist
-            ValueError: If target array already exists
-        
-        Note:
-            - Both data and metadata are fully copied
-            - The clone is independent of the original
-            - This operation requires memory for the array data
+        """Clone an existing array to a new array name.
+
+        The cloned array is independent of the original and can be modified
+        separately.
+
+        Parameters
+        ----------
+        source_name : str
+            Source array name.
+        target_name : str
+            Target array name.
+
+        Raises
+        ------
+        KeyError
+            If `source_name` does not exist.
+        ValueError
+            If `target_name` already exists.
+
+        Examples
+        --------
+        >>> npk.clone('original_array', 'cloned_array')
+        >>> data = npk.load('cloned_array')
+        >>> data *= 2
+        >>> npk.save({'cloned_array': data})
         """
         self._check_context_mode()
         self._npk.clone(source_name, target_name)
 
     def get_metadata(self) -> Dict[str, Any]:
-        """Get the metadata of NumPack file"""
+        """Return the file metadata.
+
+        Returns
+        -------
+        dict
+            Metadata dictionary returned by the backend.
+
+        Raises
+        ------
+        RuntimeError
+            If the NumPack instance is not opened or (when enabled) not used
+            under a context manager.
+        """
         self._check_context_mode()
         return self._npk.get_metadata()
     
@@ -448,14 +546,27 @@ class NumPack:
         return iter(self.get_member_list())
     
     def stream_load(self, array_name: str, buffer_size: Union[int, None] = None) -> Iterator[np.ndarray]:
-        """Stream array data in batches
-        
-        Parameters:
-            array_name (str): The name of the array to stream
-            buffer_size (Union[int, None]): Number of rows per batch. If None, loads one row at a time
-        
-        Returns:
-            Iterator[np.ndarray]: Iterator yielding batches of rows
+        """Iterate over an array in batches.
+
+        Parameters
+        ----------
+        array_name : str
+            Array name.
+        buffer_size : int or None, optional
+            Number of rows per batch. If None, yields one row per batch.
+
+        Returns
+        -------
+        iterator of numpy.ndarray
+            Iterator yielding batches.
+
+        Raises
+        ------
+        ValueError
+            If `buffer_size` is not None and <= 0.
+        RuntimeError
+            If the NumPack instance is not opened or (when enabled) not used
+            under a context manager.
         """
         self._check_context_mode()
         
@@ -467,37 +578,38 @@ class NumPack:
         return self._npk.stream_load(array_name, effective_buffer_size)
 
     def has_array(self, array_name: str) -> bool:
-        """Check if array exists in the file
-        
-        Parameters:
-            array_name (str): Name of the array to check
-            
-        Returns:
-            bool: True if array exists, False otherwise
-        """
+        """Return True if an array exists in the file."""
         self._check_context_mode()
         return array_name in self._npk.get_member_list()
 
     @property 
     def backend_type(self) -> str:
-        """Get the current backend type (always 'rust')"""
+        """Backend identifier string.
+
+        Notes
+        -----
+        The current implementation always uses the Rust backend.
+        """
         return self._backend_type
     
     @property
     def is_opened(self) -> bool:
-        """Check if file is currently opened"""
+        """Whether the NumPack instance is currently opened."""
         return self._opened and not self._closed
     
     @property
     def is_closed(self) -> bool:
-        """Check if file is currently closed"""
+        """Whether the NumPack instance is currently closed."""
         return self._closed or not self._opened
         
     def get_io_stats(self) -> Dict[str, Any]:
-        """Get I/O performance statistics (internal monitoring)
-        
-        Returns:
-            Dict[str, Any]: Performance statistics data
+        """Return I/O statistics, if available.
+
+        Returns
+        -------
+        dict
+            Backend statistics payload. The Rust backend currently does not
+            expose detailed per-call statistics via this API.
         """
         # Rust backend performance statistics
         return {
@@ -506,96 +618,64 @@ class NumPack:
         }
 
     def batch_mode(self, memory_limit=None):
-        """Batch Mode - In-memory caching for frequent operations
-        
-        **Strategy**: Cache modified arrays in memory, write to disk on exit
-        
-        How it works:
-        - load(): First time reads from file, then returns from memory cache
-        - save(): Updates memory cache only (no disk I/O)
-        - On exit: Flushes all cached changes to disk in one batch
-        
-        **Performance**: 25-37x speedup (depends on operation count)
-        
-        **Comparison with writable_batch_mode**:
-        ┌──────────────────────┬─────────────────┬──────────────────────┐
-        │ Feature              │ batch_mode      │ writable_batch_mode  │
-        ├──────────────────────┼─────────────────┼──────────────────────┤
-        │ Storage              │ Memory cache    │ File mmap mapping    │
-        │ Memory usage         │ Array size      │ ~0 (virtual only)    │
-        │ Shape changes        │ Supported       │ Not supported        │
-        │ Best for             │ Small arrays    │ Large arrays         │
-        │ Array size           │ < 100MB         │ > 100MB              │
-        └──────────────────────┴─────────────────┴──────────────────────┘
-        
-        Parameters:
-            memory_limit (int, optional): Memory limit in MB. If set, switches to 
-                                        streaming mode when limit is exceeded.
-        
-        Example:
-            >>> # Good for: small arrays, frequent read/write, shape changes
-            >>> with npk.batch_mode():
-            ...     for i in range(100):
-            ...         a = npk.load('array')    # From cache after first load
-            ...         a *= 4.1                 # Modify in memory
-            ...         npk.save({'array': a})   # Update cache only
-            ...     # All changes written to disk here
-        
-        Returns:
-            BatchModeContext: Batch processing context manager
+        """Enable in-memory caching for batch operations.
+
+        In batch mode, repeated `load` / `save` operations are accelerated by
+        caching arrays in memory and flushing changes to disk when the context
+        exits.
+
+        Parameters
+        ----------
+        memory_limit : int, optional
+            Soft memory limit (in MB). If provided, the context may switch to a
+            more conservative strategy when the cache grows beyond the limit.
+
+        Returns
+        -------
+        BatchModeContext
+            Context manager controlling the batch cache lifecycle.
+
+        Notes
+        -----
+        Compared to `writable_batch_mode`:
+
+        - `batch_mode` caches full arrays in memory (supports shape changes).
+        - `writable_batch_mode` uses memory mapping (near-zero RAM, but cannot
+          change array shapes).
+
+        Examples
+        --------
+        >>> with npk.batch_mode():
+        ...     a = npk.load('array')
+        ...     a *= 4.1
+        ...     npk.save({'array': a})
         """
         return BatchModeContext(self, memory_limit=memory_limit)
     
     def writable_batch_mode(self):
-        """Writable Batch Mode - Zero-copy direct file modification
-        
-        **Strategy**: Memory-map files directly, modify in-place with zero copies
-        
-        How it works:
-        - load(): Returns a numpy array VIEW of the mmap'd file (zero-copy)
-        - Modifications: Written directly to the file-mapped memory
-        - save(): No-op (changes already in file)
-        - On exit: Flushes mmap to ensure persistence
-        
-        **Performance**: 67-174x speedup (better than batch_mode for large arrays)
-        
-        **Comparison with batch_mode**:
-        ┌──────────────────────┬─────────────────┬──────────────────────┐
-        │ Feature              │ batch_mode      │ writable_batch_mode  │
-        ├──────────────────────┼─────────────────┼──────────────────────┤
-        │ Storage              │ Memory cache    │ File mmap mapping    │
-        │ Memory usage         │ Array size      │ ~0 (virtual only)    │
-        │ Shape changes        │ Supported       │ Not supported        │
-        │ Best for             │ Small arrays    │ Large arrays         │
-        │ Array size           │ < 100MB         │ > 100MB              │
-        └──────────────────────┴─────────────────┴──────────────────────┘
-        
-        Advantages:
-        - Zero memory overhead (virtual memory only)
-        - Supports arbitrarily large arrays (TB-scale)
-        - Better performance for large arrays
-        - OS automatically manages dirty pages
-        
-        Limitations:
-        - Cannot change array shape (no append/reshape)
-        - Requires filesystem mmap support
-        
-        Technical Detail:
-            The returned numpy.ndarray is a VIEW (arr.flags['OWNDATA'] == False)
-            that directly maps to the file. Modifications are written to the 
-            file-mapped memory, not to a separate copy.
-        
-        Example:
-            >>> # Good for: large arrays, memory-constrained, value-only changes
-            >>> with npk.writable_batch_mode() as wb:
-            ...     for i in range(100):
-            ...         a = wb.load('array')  # mmap view (zero-copy)
-            ...         a *= 4.1              # Direct file modification
-            ...         wb.save({'array': a}) # Optional (no-op)
-            ...     # mmap flushed to disk here
-        
-        Returns:
-            WritableBatchMode: Writable batch processing context manager
+        """Enable zero-copy, in-place updates via memory mapping.
+
+        This mode returns writable `numpy.ndarray` views backed directly by the
+        array data files. In-place modifications are written to the mapped
+        region and flushed on exit.
+
+        Returns
+        -------
+        WritableBatchMode
+            Context manager providing `load`/`save` methods backed by `mmap`.
+
+        Notes
+        -----
+        - Best for large arrays and memory-constrained workflows.
+        - Array shape changes are not supported (append/reshape would require a
+          different file layout).
+
+        Examples
+        --------
+        >>> with npk.writable_batch_mode() as wb:
+        ...     a = wb.load('array')
+        ...     a *= 4.1
+        ...     wb.save({'array': a})
         """
         from .writable_array import WritableBatchMode
         return WritableBatchMode(self)
@@ -619,15 +699,15 @@ class NumPack:
             self._memory_cache.clear()
     
     def close(self, force_gc: Optional[bool] = None) -> None:
-        """Explicitly close NumPack instance and release all resources
-        
-        【Performance Optimized】Fast close - ensures metadata flush with no extra GC overhead
-        
-        After calling close(), the file can be reopened by calling open().
-        Multiple calls to close() are safe (idempotent).
-        
-        Parameters:
-            force_gc (Optional[bool]): Force garbage collection. Default False for best performance.
+        """Close the NumPack instance and release resources.
+
+        Calling `close` is idempotent. After closing, the instance can be
+        reopened by calling `open`.
+
+        Parameters
+        ----------
+        force_gc : bool, optional
+            If True, force a garbage collection pass after closing.
         """
         if self._closed or not self._opened:
             return  # Already closed or not opened, no operation needed
@@ -668,11 +748,14 @@ class NumPack:
         self.close()
     
     def __enter__(self):
-        """Context manager entry point
-        
-        Example:
-            with NumPack('data.npk') as npk:
-                npk.save({'array': data})
+        """Enter the context manager.
+
+        The file is opened automatically if it is not already opened.
+
+        Returns
+        -------
+        NumPack
+            The opened instance.
         """
         # If file is not opened or closed, automatically open
         if not self._opened or self._closed:
@@ -682,10 +765,9 @@ class NumPack:
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit point
-        
-        Guarantees cleanup even if exceptions occur.
-        Exceptions (if any) are re-raised after cleanup.
+        """Exit the context manager.
+
+        This always closes the file. Exceptions (if any) are not suppressed.
         """
         try:
             self.close()
@@ -715,24 +797,21 @@ class NumPack:
 
 # Backward compatible no-op function (Rust backend manages memory automatically)
 def force_cleanup_windows_handles():
-    """Force cleanup of Windows handles - Rust backend manages automatically.
-    
-    This function is kept for backward compatibility with old code.
+    """Force cleanup of Windows file handles.
+
+    Notes
+    -----
+    This function is kept for backward compatibility. With the Rust backend,
+    most resource cleanup is handled automatically.
     """
     import gc
     gc.collect()
     return True
 
 class BatchModeContext:
-    """Batch mode context manager (Optimized v2.0)
-    
-    Manages in-memory caching of arrays for batch operations.
-    All cached changes are written to disk on exit.
-    
-    Optimizations:
-    - Zero-copy caching: Detects in-place modifications
-    - Smart dirty tracking: Only flushes modified arrays
-    - Performance monitoring: Tracks cache efficiency
+    """Context manager implementing `NumPack.batch_mode`.
+
+    This context enables in-memory caching and batches disk writes until exit.
     """
     
     def __init__(self, numpack_instance: NumPack, memory_limit=None):
@@ -745,7 +824,7 @@ class BatchModeContext:
         self._cache_misses = 0
     
     def __enter__(self):
-        """Enter batch mode - enable optimized memory caching"""
+        """Enter batch mode and enable caching."""
         self.npk._cache_enabled = True
         # 设置batch context引用，让save方法可以访问脏标记
         self.npk._batch_context = self
@@ -754,7 +833,7 @@ class BatchModeContext:
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Exit batch mode - flush only modified arrays"""
+        """Exit batch mode and flush cached changes."""
         try:
             # 优化：只刷新修改过的数组（脏数组）
             self._flush_dirty_arrays()
@@ -850,10 +929,13 @@ __all__ = [
 
 # Backend information query
 def get_backend_info():
-    """Get information about the current backend
-    
-    Returns:
-        Dict: Dictionary containing backend type, platform, version, etc.
+    """Return information about the active backend.
+
+    Returns
+    -------
+    dict
+        Dictionary containing backend type, platform, version, and platform
+        flags.
     """
     info = {
         'backend_type': _BACKEND_TYPE,

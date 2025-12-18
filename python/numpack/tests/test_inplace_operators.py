@@ -1,4 +1,4 @@
-"""测试 LazyArray 的原地操作符支持"""
+"""Tests for LazyArray in-place operator support."""
 
 import pytest
 import numpy as np
@@ -14,11 +14,11 @@ create_test_array = conftest.create_test_array
 
 
 class TestInPlaceOperators:
-    """测试 LazyArray 原地操作符"""
+    """Tests for LazyArray in-place operators."""
     
     @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
     def test_imul(self, tmp_path, dtype, test_values):
-        """测试 *= 操作符（所有数据类型）"""
+        """Test the *= operator (all dtypes)."""
         test_dir = tmp_path / f"test_imul_{dtype.__name__}"
         test_dir.mkdir(exist_ok=True)
         
@@ -28,7 +28,7 @@ class TestInPlaceOperators:
             a = pack.load('array', lazy=True)
             original = a.copy()
             
-            # 根据类型选择标量
+            # Select a scalar based on dtype
             if dtype == np.bool_:
                 scalar = True
             elif np.issubdtype(dtype, np.integer):
@@ -38,10 +38,10 @@ class TestInPlaceOperators:
             
             a *= scalar
             
-            # 结果应该是 numpy 数组
+            # The result should be a NumPy array
             assert isinstance(a, np.ndarray)
             
-            # 验证结果值
+            # Verify values
             expected = original * scalar
             if dtype == np.bool_:
                 np.testing.assert_array_equal(a, expected)
@@ -50,7 +50,7 @@ class TestInPlaceOperators:
     
     @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
     def test_iadd(self, tmp_path, dtype, test_values):
-        """测试 += 操作符（所有数据类型）"""
+        """Test the += operator (all dtypes)."""
         test_dir = tmp_path / f"test_iadd_{dtype.__name__}"
         test_dir.mkdir(exist_ok=True)
         
@@ -60,7 +60,7 @@ class TestInPlaceOperators:
             a = pack.load('array', lazy=True)
             original = a.copy()
             
-            # 根据类型选择标量
+            # Select a scalar based on dtype
             if dtype == np.bool_:
                 scalar = True
             elif np.issubdtype(dtype, np.integer):
@@ -79,7 +79,7 @@ class TestInPlaceOperators:
     
     @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
     def test_isub(self, tmp_path, dtype, test_values):
-        """测试 -= 操作符（所有数据类型）"""
+        """Test the -= operator (all dtypes)."""
         if dtype == np.bool_:
             pytest.skip("In-place subtraction not supported for boolean types in numpy")
 
@@ -92,7 +92,7 @@ class TestInPlaceOperators:
             a = pack.load('array', lazy=True)
             original = a.copy()
             
-            # 根据类型选择标量
+            # Select a scalar based on dtype
             if dtype == np.bool_:
                 scalar = True
             elif np.issubdtype(dtype, np.integer):
@@ -111,7 +111,7 @@ class TestInPlaceOperators:
     
     @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
     def test_itruediv(self, tmp_path, dtype, test_values):
-        """测试 /= 操作符（仅浮点和复数类型）"""
+        """Test the /= operator (floating and complex types only)."""
         if np.issubdtype(dtype, (np.integer, np.bool_)):
             pytest.skip("True division not applicable for integer/bool types")
         
@@ -132,7 +132,7 @@ class TestInPlaceOperators:
     
     @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
     def test_ifloordiv(self, tmp_path, dtype, test_values):
-        """测试 //= 操作符（仅整数类型）"""
+        """Test the //= operator (integer types only)."""
         if not np.issubdtype(dtype, np.integer):
             pytest.skip("Floor division only applicable for integer types")
         
@@ -153,7 +153,7 @@ class TestInPlaceOperators:
     
     @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
     def test_imod(self, tmp_path, dtype, test_values):
-        """测试 %= 操作符（仅整数类型）"""
+        """Test the %= operator (integer types only)."""
         if not np.issubdtype(dtype, np.integer):
             pytest.skip("Modulo only applicable for integer types")
         
@@ -174,7 +174,7 @@ class TestInPlaceOperators:
     
     @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
     def test_ipow(self, tmp_path, dtype, test_values):
-        """测试 **= 操作符（数值类型）"""
+        """Test the **= operator (numeric types)."""
         if dtype == np.bool_:
             pytest.skip("Power operation not applicable for bool type")
         
@@ -198,7 +198,7 @@ class TestInPlaceOperators:
     
     @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
     def test_chained_operations(self, tmp_path, dtype, test_values):
-        """测试连续的原地操作（仅浮点类型）"""
+        """Test chained in-place operations (floating point only)."""
         if np.issubdtype(dtype, (np.integer, np.bool_)):
             pytest.skip("Chained operations with division only applicable for floating point types")
         
@@ -221,7 +221,7 @@ class TestInPlaceOperators:
     
     @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
     def test_original_lazyarray_unchanged(self, tmp_path, dtype, test_values):
-        """验证原始 LazyArray 不受影响（所有数据类型）"""
+        """Verify the original LazyArray remains unchanged (all dtypes)."""
         test_dir = tmp_path / f"test_unchanged_{dtype.__name__}"
         test_dir.mkdir(exist_ok=True)
         
@@ -229,11 +229,11 @@ class TestInPlaceOperators:
         with npk.NumPack(test_dir) as pack:
             pack.save({'array': data})
             
-            # 第一次加载
+            # First load
             a = pack.load('array', lazy=True)
             original_data = np.array(a)
             
-            # 应用原地操作
+            # Apply in-place operation
             if dtype == np.bool_:
                 a |= True
             elif np.issubdtype(dtype, np.integer):
@@ -241,7 +241,7 @@ class TestInPlaceOperators:
             else:
                 a *= 2.0
             
-            # 重新加载，验证文件中的数据没有改变
+            # Reload and verify data in the file has not changed
             b = pack.load('array', lazy=True)
             reloaded_data = np.array(b)
             

@@ -18,7 +18,7 @@ from .utils import (
 
 
 # =============================================================================
-# NumPy 格式转换 (npy/npz)
+# NumPy format conversion (npy/npz)
 # =============================================================================
 
 def from_numpy(
@@ -28,34 +28,43 @@ def from_numpy(
     drop_if_exists: bool = False,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
 ) -> None:
-    """从 NumPy npy/npz 文件导入为 NumPack 格式
+    """Import a NumPy ``.npy``/``.npz`` file into NumPack.
 
-    对于大文件（>1GB），自动使用内存映射和流式写入。
+    For large files (by default > 1 GB), this function uses NumPy memory mapping
+    and streams data into NumPack in chunks.
 
     Parameters
     ----------
     input_path : str or Path
-        输入的 .npy 或 .npz 文件路径
+        Path to the input ``.npy`` or ``.npz`` file.
     output_path : str or Path
-        输出的 NumPack 文件路径
+        Output NumPack directory path.
     array_name : str, optional
-        数组名称。对于 .npy 文件，默认使用文件名（不含扩展名）。
-        对于 .npz 文件，忽略此参数，使用 npz 内的数组名。
+        Array name used for ``.npy`` input. If None, defaults to the file stem.
+        For ``.npz`` input, this parameter is ignored and the keys inside the
+        archive are used as array names.
     drop_if_exists : bool, optional
-        如果输出文件存在是否删除，默认 False
+        If True, delete the output path first if it already exists.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming write.
+
+    Raises
+    ------
+    FileNotFoundError
+        If `input_path` does not exist.
+    ValueError
+        If `input_path` suffix is not one of ``.npy`` or ``.npz``.
 
     Examples
     --------
     >>> from numpack.io import from_numpy
     >>> from_numpy('data.npy', 'output.npk')
-    >>> from_numpy('data.npz', 'output.npk')  # 保留所有数组名
+    >>> from_numpy('data.npz', 'output.npk')
     """
     input_path = Path(input_path)
 
     if not input_path.exists():
-        raise FileNotFoundError(f"文件不存在: {input_path}")
+        raise FileNotFoundError(f"File not found: {input_path}")
 
     suffix = input_path.suffix.lower()
 
@@ -64,7 +73,7 @@ def from_numpy(
     elif suffix == '.npz':
         _from_npz(input_path, output_path, drop_if_exists, chunk_size)
     else:
-        raise ValueError(f"不支持的文件格式: {suffix}，支持 .npy 和 .npz")
+        raise ValueError(f"Unsupported file format: {suffix}. Supported: .npy and .npz")
 
 
 def _from_npy(
@@ -74,17 +83,17 @@ def _from_npy(
     drop_if_exists: bool,
     chunk_size: int,
 ) -> None:
-    """从单个 .npy 文件导入"""
+    """Import from a single ``.npy`` file."""
     if array_name is None:
         array_name = input_path.stem
 
     file_size = get_file_size(input_path)
 
     if file_size > LARGE_FILE_THRESHOLD:
-        # 大文件：使用内存映射流式写入
+        # Large file: memory-map and stream writes
         _from_npy_streaming(input_path, output_path, array_name, drop_if_exists, chunk_size)
     else:
-        # 小文件：直接加载
+        # Small file: load directly
         arr = np.load(str(input_path))
         npk = _open_numpack_for_write(output_path, drop_if_exists)
         try:
@@ -100,19 +109,19 @@ def _from_npy_streaming(
     drop_if_exists: bool,
     chunk_size: int,
 ) -> None:
-    """大文件 npy 流式导入"""
-    # 使用内存映射加载
+    """Stream-import a large ``.npy`` file."""
+    # Load with memory mapping
     arr_mmap = np.load(str(input_path), mmap_mode='r')
     shape = arr_mmap.shape
     dtype = arr_mmap.dtype
 
-    # 计算分块行数
+    # Compute chunk row count
     batch_rows = estimate_chunk_rows(shape, dtype, chunk_size)
     total_rows = shape[0]
 
     npk = _open_numpack_for_write(output_path, drop_if_exists)
     try:
-        # 分块写入
+        # Write in chunks
         for start_idx in range(0, total_rows, batch_rows):
             end_idx = min(start_idx + batch_rows, total_rows)
             chunk = np.ascontiguousarray(arr_mmap[start_idx:end_idx])
@@ -132,24 +141,24 @@ def _from_npz(
     drop_if_exists: bool,
     chunk_size: int,
 ) -> None:
-    """从 .npz 文件导入"""
-    # 检查文件大小
+    """Import from a ``.npz`` file."""
+    # Check file size
     file_size = get_file_size(input_path)
 
     npk = _open_numpack_for_write(output_path, drop_if_exists)
     try:
         if file_size > LARGE_FILE_THRESHOLD:
-            # 大文件：逐个数组加载
+            # Large file: load arrays one by one
             with np.load(str(input_path), mmap_mode='r') as npz:
                 for name in npz.files:
                     arr = npz[name]
-                    # 对于大数组，流式写入
+                    # For large arrays, stream writes
                     if arr.nbytes > LARGE_FILE_THRESHOLD:
                         _save_array_streaming(npk, name, arr, chunk_size)
                     else:
                         npk.save({name: np.array(arr)})
         else:
-            # 小文件：直接加载
+            # Small file: load directly
             with np.load(str(input_path)) as npz:
                 arrays = {name: npz[name] for name in npz.files}
                 npk.save(arrays)
@@ -164,23 +173,30 @@ def to_numpy(
     compressed: bool = True,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
 ) -> None:
-    """从 NumPack 导出为 NumPy npy/npz 格式
+    """Export NumPack arrays to NumPy ``.npy``/``.npz``.
 
-    对于大文件（>1GB），使用流式读取。
+    For large arrays (by default > 1 GB), this function streams reads from NumPack
+    and writes the output in chunks.
 
     Parameters
     ----------
     input_path : str or Path
-        输入的 NumPack 文件路径
+        Input NumPack directory path.
     output_path : str or Path
-        输出的 .npy 或 .npz 文件路径
+        Output ``.npy`` or ``.npz`` file path.
     array_names : list of str, optional
-        要导出的数组名列表。如果为 None，导出所有数组。
-        如果只有一个数组且输出为 .npy，则直接保存该数组。
+        Names of arrays to export. If None, exports all arrays.
+        If the output suffix is ``.npy``, exactly one array must be selected.
     compressed : bool, optional
-        对于 .npz 文件，是否压缩，默认 True
+        Whether to compress the ``.npz`` file (uses ``numpy.savez_compressed``).
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming read/write.
+
+    Raises
+    ------
+    ValueError
+        If `output_path` suffix is not one of ``.npy`` or ``.npz``, or if ``.npy``
+        is requested with multiple arrays.
 
     Examples
     --------
@@ -199,14 +215,14 @@ def to_numpy(
         if suffix == '.npy':
             if len(array_names) != 1:
                 raise ValueError(
-                    f".npy 格式只能保存单个数组，但指定了 {len(array_names)} 个数组。"
-                    "请使用 .npz 格式或只指定一个数组名。"
+                    f"The .npy format can only store one array, but {len(array_names)} arrays were provided. "
+                    "Use .npz or provide exactly one array name."
                 )
             _to_npy(npk, output_path, array_names[0], chunk_size)
         elif suffix == '.npz':
             _to_npz(npk, output_path, array_names, compressed, chunk_size)
         else:
-            raise ValueError(f"不支持的文件格式: {suffix}，支持 .npy 和 .npz")
+            raise ValueError(f"Unsupported file format: {suffix}. Supported: .npy and .npz")
     finally:
         npk.close()
 
@@ -217,19 +233,19 @@ def _to_npy(
     array_name: str,
     chunk_size: int,
 ) -> None:
-    """导出单个数组为 .npy 文件"""
+    """Export a single array to a ``.npy`` file."""
     shape = npk.get_shape(array_name)
 
-    # 估算大小
+    # Estimate size
     arr_sample = npk.getitem(array_name, [0])
     dtype = arr_sample.dtype
     estimated_size = int(np.prod(shape)) * dtype.itemsize
 
     if estimated_size > LARGE_FILE_THRESHOLD:
-        # 大数组：流式读取并写入
+        # Large array: stream reads and writes
         _to_npy_streaming(npk, output_path, array_name, shape, dtype, chunk_size)
     else:
-        # 小数组：直接加载
+        # Small array: load directly
         arr = npk.load(array_name)
         np.save(str(output_path), arr)
 
@@ -242,28 +258,28 @@ def _to_npy_streaming(
     dtype: np.dtype,
     chunk_size: int,
 ) -> None:
-    """流式导出大数组为 .npy 文件"""
+    """Stream-export a large array to a ``.npy`` file."""
     batch_rows = estimate_chunk_rows(shape, dtype, chunk_size)
     total_rows = shape[0]
 
-    # 创建输出文件（预分配空间）
-    # 使用 numpy 的 format 模块创建正确的 npy 文件头
+    # Create output file (pre-allocate space)
+    # Use NumPy's format module to create a proper .npy header
     from numpy.lib import format as npy_format
 
     with open(output_path, 'wb') as f:
-        # 写入 npy 文件头
+        # Write .npy header
         npy_format.write_array_header_1_0(
             f, {'descr': dtype.str, 'fortran_order': False, 'shape': shape}
         )
         header_size = f.tell()
 
-    # 使用内存映射写入数据
+    # Write data via memory mapping
     total_bytes = int(np.prod(shape)) * dtype.itemsize
     with open(output_path, 'r+b') as f:
-        f.seek(0, 2)  # 移动到文件末尾
-        f.truncate(header_size + total_bytes)  # 扩展文件
+        f.seek(0, 2)  # Seek to end
+        f.truncate(header_size + total_bytes)  # Extend file
 
-    # 内存映射写入
+    # Memory-mapped write
     arr_out = np.memmap(output_path, dtype=dtype, mode='r+', offset=header_size, shape=shape)
 
     try:
@@ -283,9 +299,9 @@ def _to_npz(
     compressed: bool,
     chunk_size: int,
 ) -> None:
-    """导出多个数组为 .npz 文件"""
-    # NPZ 格式不支持真正的流式写入，需要先收集所有数据
-    # 对于大数据集，建议使用其他格式（如 HDF5 或 Zarr）
+    """Export multiple arrays to a ``.npz`` file."""
+    # The NPZ format does not support true streaming writes; data must be collected.
+    # For large datasets, consider using other formats (for example, HDF5 or Zarr).
 
     arrays = {}
     for name in array_names:
@@ -296,9 +312,9 @@ def _to_npz(
 
         if estimated_size > LARGE_FILE_THRESHOLD:
             warnings.warn(
-                f"数组 '{name}' 较大（>{estimated_size / 1e9:.1f}GB），"
-                "NPZ 格式需要将所有数据加载到内存。"
-                "对于大数据集，建议使用 to_hdf5 或 to_zarr。",
+                f"Array '{name}' is large (>{estimated_size / 1e9:.1f}GB). "
+                "The NPZ format loads all data into memory. "
+                "For large datasets, consider using to_hdf5 or to_zarr.",
                 UserWarning,
             )
 

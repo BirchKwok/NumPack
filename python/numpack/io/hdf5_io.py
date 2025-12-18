@@ -17,7 +17,7 @@ from .utils import (
 
 
 # =============================================================================
-# HDF5 格式转换
+# HDF5 format conversion
 # =============================================================================
 
 def from_hdf5(
@@ -28,24 +28,31 @@ def from_hdf5(
     drop_if_exists: bool = False,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
 ) -> None:
-    """从 HDF5 文件导入为 NumPack 格式
+    """Import datasets from an HDF5 file into NumPack.
 
-    对于大数据集（>1GB），自动使用流式处理。
+    Large datasets (by default > 1 GB) are imported using batched reads and
+    streamed into NumPack.
 
     Parameters
     ----------
     input_path : str or Path
-        输入的 HDF5 文件路径
+        Path to the input HDF5 file.
     output_path : str or Path
-        输出的 NumPack 文件路径
+        Output NumPack directory path.
     dataset_names : list of str, optional
-        要导入的数据集名列表。如果为 None，导入组内所有数据集。
+        Names of datasets to import. If None, all datasets under `group` are
+        imported.
     group : str, optional
-        HDF5 组路径，默认 '/'（根组）
+        HDF5 group path.
     drop_if_exists : bool, optional
-        如果输出文件存在是否删除，默认 False
+        If True, delete the output path first if it already exists.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming conversion.
+
+    Raises
+    ------
+    DependencyError
+        If the optional dependency ``h5py`` is not installed.
 
     Examples
     --------
@@ -63,7 +70,7 @@ def from_hdf5(
             grp = h5f[group]
 
             if dataset_names is None:
-                # 获取组内所有数据集
+                # Collect all datasets under the group
                 dataset_names = [
                     name
                     for name in grp.keys()
@@ -73,7 +80,7 @@ def from_hdf5(
             for name in dataset_names:
                 dataset = grp[name]
                 if not isinstance(dataset, h5py.Dataset):
-                    warnings.warn(f"跳过非数据集对象: {name}")
+                    warnings.warn(f"Skipping non-dataset object: {name}")
                     continue
 
                 shape = dataset.shape
@@ -81,10 +88,10 @@ def from_hdf5(
                 estimated_size = int(np.prod(shape)) * dtype.itemsize
 
                 if estimated_size > LARGE_FILE_THRESHOLD and len(shape) > 0:
-                    # 大数据集：流式读取
+                    # Large dataset: streamed reads
                     _from_hdf5_dataset_streaming(npk, dataset, name, chunk_size)
                 else:
-                    # 小数据集：直接加载
+                    # Small dataset: load directly
                     arr = dataset[...]
                     npk.save({name: arr})
     finally:
@@ -97,7 +104,7 @@ def _from_hdf5_dataset_streaming(
     array_name: str,
     chunk_size: int,
 ) -> None:
-    """流式导入 HDF5 数据集"""
+    """Stream-import an HDF5 dataset."""
     shape = dataset.shape
     dtype = dataset.dtype
     batch_rows = estimate_chunk_rows(shape, dtype, chunk_size)
@@ -122,26 +129,33 @@ def to_hdf5(
     compression_opts: Optional[int] = 4,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
 ) -> None:
-    """从 NumPack 导出为 HDF5 格式
+    """Export NumPack arrays to an HDF5 file.
 
-    对于大数组（>1GB），使用流式读取和分块写入。
+    Large arrays (by default > 1 GB) are exported via streamed reads from
+    NumPack and chunked writes to HDF5.
 
     Parameters
     ----------
     input_path : str or Path
-        输入的 NumPack 文件路径
+        Input NumPack directory path.
     output_path : str or Path
-        输出的 HDF5 文件路径
+        Output HDF5 file path.
     array_names : list of str, optional
-        要导出的数组名列表。如果为 None，导出所有数组。
+        Names of arrays to export. If None, exports all arrays.
     group : str, optional
-        HDF5 组路径，默认 '/'（根组）
-    compression : str, optional
-        压缩算法，默认 'gzip'。设为 None 禁用压缩。
+        HDF5 group path to write into.
+    compression : str or None, optional
+        Compression codec name (for example, ``"gzip"``). Use None to disable
+        compression.
     compression_opts : int, optional
-        压缩级别（0-9），默认 4
+        Compression level/options.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming export.
+
+    Raises
+    ------
+    DependencyError
+        If the optional dependency ``h5py`` is not installed.
 
     Examples
     --------
@@ -158,7 +172,7 @@ def to_hdf5(
             array_names = npk.get_member_list()
 
         with h5py.File(str(output_path), 'w') as h5f:
-            # 创建组（如果需要）
+            # Create the group (if needed)
             if group != '/':
                 grp = h5f.require_group(group)
             else:
@@ -170,14 +184,14 @@ def to_hdf5(
                 dtype = arr_sample.dtype
                 estimated_size = int(np.prod(shape)) * dtype.itemsize
 
-                # 计算 HDF5 分块大小
+                # Compute HDF5 chunk shape
                 if len(shape) > 0:
                     batch_rows = estimate_chunk_rows(shape, dtype, chunk_size)
                     chunks = (min(batch_rows, shape[0]),) + shape[1:]
                 else:
                     chunks = None
 
-                # 创建数据集
+                # Create dataset
                 ds = grp.create_dataset(
                     name,
                     shape=shape,
@@ -188,10 +202,10 @@ def to_hdf5(
                 )
 
                 if estimated_size > LARGE_FILE_THRESHOLD and len(shape) > 0:
-                    # 大数组：流式写入
+                    # Large array: streamed writes
                     _to_hdf5_dataset_streaming(npk, ds, name, shape, dtype, chunk_size)
                 else:
-                    # 小数组：直接写入
+                    # Small array: write directly
                     ds[...] = npk.load(name)
     finally:
         npk.close()
@@ -205,7 +219,7 @@ def _to_hdf5_dataset_streaming(
     dtype: np.dtype,
     chunk_size: int,
 ) -> None:
-    """流式导出大数组到 HDF5 数据集"""
+    """Stream-export a large array to an HDF5 dataset."""
     batch_rows = estimate_chunk_rows(shape, dtype, chunk_size)
     total_rows = shape[0]
 

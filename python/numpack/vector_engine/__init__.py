@@ -1,25 +1,36 @@
-"""Vector Engine module for high-performance vector similarity computation.
+"""Vector similarity engines backed by the Rust SIMD implementation.
 
-This module provides two main classes:
-- VectorSearch: Pure in-memory vector similarity computation with SIMD acceleration
-- StreamingVectorSearch: Memory-efficient streaming vector search from NumPack files
+This module exposes two public classes:
 
-Example:
-    >>> from numpack.vector_engine import VectorSearch, StreamingVectorSearch
-    >>> import numpy as np
-    >>>
-    >>> # In-memory search
-    >>> engine = VectorSearch()
-    >>> query = np.random.randn(128).astype(np.float32)
-    >>> candidates = np.random.randn(10000, 128).astype(np.float32)
-    >>> indices, scores = engine.top_k_search(query, candidates, 'cosine', k=10)
-    >>>
-    >>> # Streaming search from file (memory-efficient)
-    >>> streaming = StreamingVectorSearch()
-    >>> with NumPack('vectors.npk') as npk:
-    ...     indices, scores = streaming.streaming_top_k_from_file(
-    ...         query, str(npk._filename), 'embeddings', 'cosine', k=10
-    ...     )
+- `VectorSearch`: In-memory vector similarity / distance computation.
+- `StreamingVectorSearch`: Streaming Top-K search directly from a NumPack file.
+
+Notes
+-----
+The implementations are provided by the Rust extension module and are exposed in
+Python as thin wrappers.
+
+Examples
+--------
+In-memory Top-K search:
+
+>>> from numpack.vector_engine import VectorSearch
+>>> import numpy as np
+>>> engine = VectorSearch()
+>>> query = np.random.randn(128).astype(np.float32)
+>>> candidates = np.random.randn(10000, 128).astype(np.float32)
+>>> indices, scores = engine.top_k_search(query, candidates, 'cosine', k=10)
+
+Streaming Top-K search from a NumPack file:
+
+>>> from numpack import NumPack
+>>> from numpack.vector_engine import StreamingVectorSearch
+>>> streaming = StreamingVectorSearch()
+>>> query = np.random.randn(128).astype(np.float32)
+>>> with NumPack('vectors.npk') as npk:
+...     indices, scores = streaming.streaming_top_k_from_file(
+...         query, str(npk._filename), 'embeddings', 'cosine', k=10
+...     )
 """
 
 from typing import Tuple, Union, Literal, overload
@@ -35,7 +46,6 @@ except ImportError:
     _VectorSearch = None
     _StreamingVectorSearch = None
 
-
 # Type aliases
 MetricType = Literal[
     'dot', 'dot_product', 'dotproduct',
@@ -50,75 +60,45 @@ MetricType = Literal[
 
 
 class VectorSearch:
-    """High-performance in-memory vector similarity computation.
-    
-    VectorSearch provides SIMD-accelerated (AVX2, AVX-512, NEON, SVE) vector 
-    similarity computation for datasets that fit in memory.
-    
-    Supported data types:
-        - float64 (f64): Double precision floating point
-        - float32 (f32): Single precision floating point
-        - float16 (f16): Half precision floating point
-        - int8 (i8): 8-bit signed integers
-        - int16 (i16): 16-bit signed integers
-        - int32 (i32): 32-bit signed integers
-        - int64 (i64): 64-bit signed integers
-        - uint8 (u8): 8-bit unsigned integers (binary vectors for hamming/jaccard)
-        - uint16 (u16): 16-bit unsigned integers
-        - uint32 (u32): 32-bit unsigned integers
-        - uint64 (u64): 64-bit unsigned integers
-    
-    Mixed dtype support:
-        Query and candidates can have different dtypes. When dtypes differ,
-        both are automatically converted to float64 for computation.
-    
-    Supported metrics:
-        - Similarity (higher is better):
-            - 'dot', 'dot_product', 'dotproduct': Dot product
-            - 'cos', 'cosine', 'cosine_similarity': Cosine similarity
-            - 'inner', 'inner_product': Inner product
-        - Distance (lower is better):
-            - 'l2', 'euclidean', 'l2_distance': L2/Euclidean distance
-            - 'l2sq', 'l2_squared', 'squared_euclidean': Squared L2 distance
-            - 'hamming': Hamming distance (uint8 only)
-            - 'jaccard': Jaccard distance (uint8 only)
-            - 'kl', 'kl_divergence': Kullback-Leibler divergence
-            - 'js', 'js_divergence': Jensen-Shannon divergence
-    
-    Example:
-        >>> engine = VectorSearch()
-        >>> print(engine.capabilities())  # Show SIMD features
-        >>>
-        >>> # Single pair computation
-        >>> a = np.array([1.0, 2.0, 3.0], dtype=np.float32)
-        >>> b = np.array([4.0, 5.0, 6.0], dtype=np.float32)
-        >>> score = engine.compute_metric(a, b, 'cosine')
-        >>>
-        >>> # Batch computation
-        >>> query = np.random.randn(128).astype(np.float32)
-        >>> candidates = np.random.randn(10000, 128).astype(np.float32)
-        >>> scores = engine.batch_compute(query, candidates, 'cosine')
-        >>>
-        >>> # Top-K search
-        >>> indices, scores = engine.top_k_search(query, candidates, 'cosine', k=10)
-    
-    Note:
-        For large datasets that don't fit in memory, use StreamingVectorSearch instead.
+    """In-memory vector similarity / distance computation.
+
+    This class is backed by the Rust SIMD implementation (AVX2/AVX-512/NEON/SVE
+    depending on the CPU). Use it when the candidate matrix fits in memory.
+
+    Notes
+    -----
+    - **Mixed dtypes**: if `query` and `candidates` dtypes differ, both are
+      converted to `float64` for computation.
+    - **Metric direction**:
+
+      - Similarity metrics: higher is better (e.g. cosine, dot).
+      - Distance metrics: lower is better (e.g. L2).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from numpack.vector_engine import VectorSearch
+    >>> engine = VectorSearch()
+    >>> query = np.random.randn(128).astype(np.float32)
+    >>> candidates = np.random.randn(10000, 128).astype(np.float32)
+    >>> indices, scores = engine.top_k_search(query, candidates, 'cosine', k=10)
     """
-    
+
     def __new__(cls) -> 'VectorSearch':
         if _VectorSearch is None:
             raise ImportError("Rust backend not available")
         return _VectorSearch()
-    
+
     def capabilities(self) -> str:
-        """Get SIMD capabilities information.
-        
-        Returns:
-            str: A string describing detected SIMD features (e.g., "CPU: AVX2, AVX-512")
+        """Return detected SIMD capabilities.
+
+        Returns
+        -------
+        str
+            Human-readable SIMD feature summary (for example, ``"CPU: AVX2"``).
         """
         ...
-    
+
     def compute_metric(
         self,
         a: NDArray,
@@ -126,45 +106,61 @@ class VectorSearch:
         metric: MetricType
     ) -> float:
         """Compute the metric value between two vectors.
-        
-        Args:
-            a: First vector (1D numpy array)
-            b: Second vector (1D numpy array, same dtype and length as a)
-            metric: Metric type string
-        
-        Returns:
-            float: The computed metric value
-        
-        Raises:
-            TypeError: If dtype is not supported or a/b dtypes don't match
-            ValueError: If the metric is unknown or dimensions don't match
+
+        Parameters
+        ----------
+        a : numpy.ndarray
+            First vector (1D).
+        b : numpy.ndarray
+            Second vector (1D). Must have the same length as `a`.
+        metric : MetricType
+            Metric identifier (for example, ``"cosine"``, ``"dot"``, ``"l2"``).
+
+        Returns
+        -------
+        float
+            The computed metric value.
+
+        Raises
+        ------
+        TypeError
+            If dtypes are not supported.
+        ValueError
+            If `metric` is unknown or the dimensions do not match.
         """
         ...
-    
+
     def batch_compute(
         self,
         query: NDArray,
         candidates: NDArray,
         metric: MetricType
     ) -> NDArray[np.float64]:
-        """Batch compute metrics between a query vector and multiple candidates.
-        
-        Uses parallel computation for large batches (>= 500 candidates).
-        
-        Args:
-            query: Query vector (1D numpy array)
-            candidates: Candidate vectors matrix (2D numpy array, shape: [N, D])
-            metric: Metric type string
-        
-        Returns:
-            numpy.ndarray: Metric values array (1D, shape: [N], dtype: float64)
-        
-        Raises:
-            TypeError: If dtype is not supported or dtypes don't match
-            ValueError: If metric is unknown or dimensions don't match
+        """Compute metric values between one query and many candidates.
+
+        Parameters
+        ----------
+        query : numpy.ndarray
+            Query vector (1D).
+        candidates : numpy.ndarray
+            Candidate matrix (2D, shape ``(n_candidates, dim)``).
+        metric : MetricType
+            Metric identifier.
+
+        Returns
+        -------
+        numpy.ndarray
+            Metric values, shape ``(n_candidates,)``, dtype ``float64``.
+
+        Raises
+        ------
+        TypeError
+            If dtypes are not supported.
+        ValueError
+            If `metric` is unknown or the dimensions do not match.
         """
         ...
-    
+
     def top_k_search(
         self,
         query: NDArray,
@@ -172,28 +168,40 @@ class VectorSearch:
         metric: MetricType,
         k: int
     ) -> Tuple[NDArray[np.uint64], NDArray[np.float64]]:
-        """Top-K search: Find the k most similar/closest vectors.
-        
-        Args:
-            query: Query vector (1D numpy array)
-            candidates: Candidate vectors matrix (2D numpy array)
-            metric: Metric type string
-            k: Number of results to return
-        
-        Returns:
-            tuple: (indices, scores)
-                - indices: Array of candidate indices (uint64, shape: [k])
-                - scores: Array of metric scores (float64, shape: [k])
-                
-                For similarity metrics: returns k highest scores
-                For distance metrics: returns k lowest scores
-        
-        Raises:
-            TypeError: If dtype is not supported or dtypes don't match
-            ValueError: If metric is unknown or dimensions don't match
+        """Return the Top-K candidates for a single query.
+
+        Parameters
+        ----------
+        query : numpy.ndarray
+            Query vector (1D).
+        candidates : numpy.ndarray
+            Candidate matrix (2D, shape ``(n_candidates, dim)``).
+        metric : MetricType
+            Metric identifier.
+        k : int
+            Number of results to return.
+
+        Returns
+        -------
+        indices : numpy.ndarray
+            Indices of the selected candidates, shape ``(k,)``, dtype ``uint64``.
+        scores : numpy.ndarray
+            Corresponding metric values, shape ``(k,)``, dtype ``float64``.
+
+        Notes
+        -----
+        - For similarity metrics, this returns the **largest** `k` scores.
+        - For distance metrics, this returns the **smallest** `k` scores.
+
+        Raises
+        ------
+        TypeError
+            If dtypes are not supported.
+        ValueError
+            If `metric` is unknown or the dimensions do not match.
         """
         ...
-    
+
     def multi_query_top_k(
         self,
         queries: NDArray,
@@ -201,31 +209,37 @@ class VectorSearch:
         metric: MetricType,
         k: int
     ) -> Tuple[NDArray[np.uint64], NDArray[np.float64]]:
-        """Batch multi-query Top-K search (optimized for multiple queries).
-        
-        This method processes multiple queries in a single FFI call, significantly
-        reducing Python-Rust boundary overhead compared to calling top_k_search repeatedly.
-        
-        Performance: ~30-50% faster than calling top_k_search in a loop.
-        
-        Args:
-            queries: Multiple query vectors (2D numpy array, shape: [N, D])
-            candidates: Candidate vectors matrix (2D numpy array, shape: [M, D])
-            metric: Metric type string ('cosine', 'dot', 'l2', etc.)
-            k: Number of top results to return per query
-        
-        Returns:
-            tuple: (all_indices, all_scores)
-                - all_indices: 1D array of shape [N*k], can reshape to [N, k]
-                - all_scores: 1D array of shape [N*k], can reshape to [N, k]
-        
-        Example:
-            >>> indices, scores = engine.multi_query_top_k(queries, candidates, 'cosine', k=10)
-            >>> indices = indices.reshape(len(queries), k)
-            >>> scores = scores.reshape(len(queries), k)
+        """Top-K search for multiple queries in one call.
+
+        Compared to calling `top_k_search` in a Python loop, this method reduces
+        Python-to-Rust overhead by performing the computation in a single FFI call.
+
+        Parameters
+        ----------
+        queries : numpy.ndarray
+            Query matrix (2D, shape ``(n_queries, dim)``).
+        candidates : numpy.ndarray
+            Candidate matrix (2D, shape ``(n_candidates, dim)``).
+        metric : MetricType
+            Metric identifier.
+        k : int
+            Number of results to return per query.
+
+        Returns
+        -------
+        indices : numpy.ndarray
+            Flattened indices, shape ``(n_queries * k,)``, dtype ``uint64``.
+        scores : numpy.ndarray
+            Flattened scores, shape ``(n_queries * k,)``, dtype ``float64``.
+
+        Examples
+        --------
+        >>> indices, scores = engine.multi_query_top_k(queries, candidates, 'cosine', k=10)
+        >>> indices = indices.reshape(len(queries), 10)
+        >>> scores = scores.reshape(len(queries), 10)
         """
         ...
-    
+
     def segmented_top_k_search(
         self,
         query: NDArray,
@@ -237,108 +251,99 @@ class VectorSearch:
         k: int,
         is_similarity: bool
     ) -> Tuple[NDArray[np.uint64], NDArray[np.float64]]:
-        """Segmented Top-K search: Process large datasets in segments with incremental merging.
-        
-        This method is designed for streaming/segmented processing of large candidate sets.
-        It computes scores for a batch of candidates and merges results with the current top-k
-        in a single FFI call, eliminating intermediate Python array allocation.
-        
-        Args:
-            query: Query vector (1D numpy array)
-            candidates: Candidate vectors batch (2D numpy array)
-            metric: Metric type string
-            global_offset: Starting global index for this batch
-            current_indices: Current top-k indices (can be empty)
-            current_scores: Current top-k scores (can be empty)
-            k: Number of top results to maintain
-            is_similarity: True = higher is better, False = lower is better
-        
-        Returns:
-            tuple: (new_indices, new_scores) - Updated top-k results
-        
-        Example:
-            >>> engine = VectorSearch()
-            >>> query = np.random.randn(128).astype(np.float32)
-            >>> current_indices = np.array([], dtype=np.uint64)
-            >>> current_scores = np.array([], dtype=np.float64)
-            >>>
-            >>> for batch_idx, candidates_batch in enumerate(data_batches):
-            ...     global_offset = batch_idx * batch_size
-            ...     current_indices, current_scores = engine.segmented_top_k_search(
-            ...         query, candidates_batch, 'cosine', global_offset,
-            ...         current_indices, current_scores, k=10, is_similarity=True
-            ...     )
+        """Incrementally update Top-K results for a batch of candidates.
+
+        This method is intended for segmented processing where you stream candidate
+        vectors in batches and want to merge each batch into a running Top-K.
+
+        Parameters
+        ----------
+        query : numpy.ndarray
+            Query vector (1D).
+        candidates : numpy.ndarray
+            Candidate batch (2D, shape ``(batch, dim)``).
+        metric : MetricType
+            Metric identifier.
+        global_offset : int
+            Global starting index corresponding to row 0 of `candidates`.
+        current_indices : numpy.ndarray
+            Current Top-K indices (can be empty), dtype ``uint64``.
+        current_scores : numpy.ndarray
+            Current Top-K scores (can be empty), dtype ``float64``.
+        k : int
+            Number of results to keep.
+        is_similarity : bool
+            If True, larger scores are better; if False, smaller scores are better.
+
+        Returns
+        -------
+        indices : numpy.ndarray
+            Updated indices, shape ``(k,)``, dtype ``uint64``.
+        scores : numpy.ndarray
+            Updated scores, shape ``(k,)``, dtype ``float64``.
+
+        Examples
+        --------
+        >>> engine = VectorSearch()
+        >>> query = np.random.randn(128).astype(np.float32)
+        >>> current_indices = np.array([], dtype=np.uint64)
+        >>> current_scores = np.array([], dtype=np.float64)
+        >>> for batch_idx, candidates_batch in enumerate(data_batches):
+        ...     current_indices, current_scores = engine.segmented_top_k_search(
+        ...         query,
+        ...         candidates_batch,
+        ...         'cosine',
+        ...         global_offset=batch_idx * batch_size,
+        ...         current_indices=current_indices,
+        ...         current_scores=current_scores,
+        ...         k=10,
+        ...         is_similarity=True,
+        ...     )
         """
         ...
 
 
 class StreamingVectorSearch:
-    """Memory-efficient streaming vector search from NumPack files.
-    
-    StreamingVectorSearch is designed for large datasets that don't fit in memory.
-    It reads data directly from NumPack files using memory mapping, processing
-    data in batches with a single FFI call for the entire search operation.
-    
-    Performance characteristics:
-        - ~10-30x faster than Python-based streaming
-        - Zero-copy mmap file access
-        - No intermediate Python array allocation per batch
-        - Single FFI call for entire search
-    
-    Supported data types (query vectors):
-        - float64 (f64): Double precision floating point
-        - float32 (f32): Single precision floating point
-        - float16 (f16): Half precision floating point (converted to f32)
-        - int8 (i8): 8-bit signed integers (converted to f64)
-        - int16 (i16): 16-bit signed integers (converted to f64)
-        - int32 (i32): 32-bit signed integers (converted to f64)
-        - int64 (i64): 64-bit signed integers (converted to f64)
-        - uint8 (u8): 8-bit unsigned integers (converted to f64)
-        - uint16 (u16): 16-bit unsigned integers (converted to f64)
-        - uint32 (u32): 32-bit unsigned integers (converted to f64)
-        - uint64 (u64): 64-bit unsigned integers (converted to f64)
-    
-    Note: 
-        - For streaming from files, query vectors are automatically converted to 
-          match the file's data type (usually float32).
-        - Integer and float16 query vectors are converted to float32 for file operations.
-    
-    Example:
-        >>> from numpack import NumPack
-        >>> from numpack.vector_engine import StreamingVectorSearch
-        >>> import numpy as np
-        >>>
-        >>> streaming = StreamingVectorSearch()
-        >>> query = np.random.randn(128).astype(np.float32)
-        >>>
-        >>> with NumPack('vectors.npk') as npk:
-        ...     # Top-K search from file
-        ...     indices, scores = streaming.streaming_top_k_from_file(
-        ...         query, str(npk._filename), 'embeddings', 'cosine', k=10, batch_size=10000
-        ...     )
-        ...     
-        ...     # Compute all scores from file
-        ...     all_scores = streaming.streaming_batch_compute(
-        ...         query, str(npk._filename), 'embeddings', 'cosine', batch_size=10000
-        ...     )
-    
-    Note:
-        For in-memory operations where all data fits in memory, use VectorSearch instead.
+    """Streaming vector search directly from NumPack files.
+
+    This engine is intended for large candidate sets that do not fit in memory.
+    Candidates are read from the NumPack data file via memory mapping and processed
+    in batches inside Rust.
+
+    Notes
+    -----
+    - Query vectors are validated on the Python side, then passed into the Rust
+      implementation.
+    - For in-memory data, prefer `VectorSearch`.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from numpack import NumPack
+    >>> from numpack.vector_engine import StreamingVectorSearch
+    >>> streaming = StreamingVectorSearch()
+    >>> query = np.random.randn(128).astype(np.float32)
+    >>> with NumPack('vectors.npk') as npk:
+    ...     indices, scores = streaming.streaming_top_k_from_file(
+    ...         query, str(npk._filename), 'embeddings', 'cosine', k=10
+    ...     )
     """
-    
+
     def __new__(cls) -> 'StreamingVectorSearch':
         if _StreamingVectorSearch is None:
             raise ImportError("Rust backend not available")
         return _StreamingVectorSearch()
-    
+
     def capabilities(self) -> str:
-        """Get SIMD capabilities information.
-        
-        Returns:
-            str: A string describing detected SIMD features (e.g., "CPU: AVX2, AVX-512")
+        """Return detected SIMD capabilities.
+
+        Returns
+        -------
+        str
+            Human-readable SIMD feature summary.
         """
         ...
-    
+
     def streaming_top_k_from_file(
         self,
         query: NDArray[np.floating],
@@ -348,32 +353,39 @@ class StreamingVectorSearch:
         k: int,
         batch_size: int = 10000
     ) -> Tuple[NDArray[np.uint64], NDArray[np.float64]]:
-        """Streaming Top-K search directly from NumPack file.
-        
-        This is a highly optimized streaming search that:
-        1. Reads candidates directly from NumPack file using memory mapping
-        2. Processes data in batches entirely within Rust
-        3. Maintains global Top-K using efficient partial sort
-        
-        Args:
-            query: Query vector (1D numpy array, float32 or float64)
-            npk_dir: NumPack directory path (string)
-            array_name: Name of candidates array in NumPack file
-            metric: Metric type string ('cosine', 'dot', 'l2', etc.)
-            k: Number of top results to return
-            batch_size: Number of rows to process per batch (default: 10000)
-        
-        Returns:
-            tuple: (indices, scores)
-                - indices: Global indices of top-k candidates (uint64)
-                - scores: Corresponding metric scores (float64)
-        
-        Raises:
-            TypeError: If query dtype is not float32 or float64
-            ValueError: If array not found or dimensions don't match
+        """Streaming Top-K search from a NumPack file.
+
+        Parameters
+        ----------
+        query : numpy.ndarray
+            Query vector (1D). Must be a floating dtype supported by the backend.
+        npk_dir : str
+            Path to the NumPack directory.
+        array_name : str
+            Name of the candidate array stored in the file.
+        metric : MetricType
+            Metric identifier.
+        k : int
+            Number of results to return.
+        batch_size : int, optional
+            Number of rows processed per batch.
+
+        Returns
+        -------
+        indices : numpy.ndarray
+            Global indices of the Top-K candidates, dtype ``uint64``.
+        scores : numpy.ndarray
+            Corresponding metric values, dtype ``float64``.
+
+        Raises
+        ------
+        TypeError
+            If `query` dtype is not supported.
+        ValueError
+            If the array does not exist or the dimensions do not match.
         """
         ...
-    
+
     def streaming_batch_compute(
         self,
         query: NDArray[np.floating],
@@ -382,27 +394,36 @@ class StreamingVectorSearch:
         metric: MetricType,
         batch_size: int = 10000
     ) -> NDArray[np.float64]:
-        """Streaming batch compute directly from NumPack file.
-        
-        Computes metric values between query and all candidates without loading
-        all data into Python memory.
-        
-        Args:
-            query: Query vector (1D numpy array, float32 or float64)
-            npk_dir: NumPack directory path (string)
-            array_name: Name of candidates array in NumPack file
-            metric: Metric type string ('cosine', 'dot', 'l2', etc.)
-            batch_size: Number of rows to process per batch (default: 10000)
-        
-        Returns:
-            numpy.ndarray: All computed metric values (1D array of float64)
-        
-        Raises:
-            TypeError: If query dtype is not float32 or float64
-            ValueError: If array not found or dimensions don't match
+        """Compute metric values against all candidates in a NumPack file.
+
+        Parameters
+        ----------
+        query : numpy.ndarray
+            Query vector (1D).
+        npk_dir : str
+            Path to the NumPack directory.
+        array_name : str
+            Name of the candidate array stored in the file.
+        metric : MetricType
+            Metric identifier.
+        batch_size : int, optional
+            Number of rows processed per batch.
+
+        Returns
+        -------
+        numpy.ndarray
+            Metric values for all candidates, shape ``(n_candidates,)``, dtype
+            ``float64``.
+
+        Raises
+        ------
+        TypeError
+            If `query` dtype is not supported.
+        ValueError
+            If the array does not exist or the dimensions do not match.
         """
         ...
-    
+
     def streaming_multi_query_top_k(
         self,
         queries: NDArray[np.floating],
@@ -412,36 +433,46 @@ class StreamingVectorSearch:
         k: int,
         batch_size: int = 10000
     ) -> Tuple[NDArray[np.uint64], NDArray[np.float64]]:
-        """Batch multi-query Top-K search from file (optimized for multiple queries).
-        
-        This method opens the file once and executes multiple queries, amortizing
-        the file open and metadata loading overhead across all queries.
-        
-        Performance: ~2x faster than calling streaming_top_k_from_file repeatedly.
-        
-        Args:
-            queries: Multiple query vectors (2D numpy array, shape: [N, D], float32)
-            npk_dir: NumPack directory path (string)
-            array_name: Name of candidates array in NumPack file
-            metric: Metric type string ('cosine', 'dot', 'l2', etc.)
-            k: Number of top results to return per query
-            batch_size: Number of rows to process per batch (default: 10000)
-        
-        Returns:
-            tuple: (all_indices, all_scores)
-                - all_indices: 1D array of shape [N*k], can reshape to [N, k]
-                - all_scores: 1D array of shape [N*k], can reshape to [N, k]
-        
-        Raises:
-            TypeError: If queries dtype is not float32
-            ValueError: If array not found or dimensions don't match
-        
-        Example:
-            >>> indices, scores = streaming.streaming_multi_query_top_k(
-            ...     queries, str(npk_path), 'candidates', 'cosine', k=10
-            ... )
-            >>> indices = indices.reshape(len(queries), k)
-            >>> scores = scores.reshape(len(queries), k)
+        """Top-K search for multiple queries against a NumPack file.
+
+        The file is opened once and reused for all queries.
+
+        Parameters
+        ----------
+        queries : numpy.ndarray
+            Query matrix (2D, shape ``(n_queries, dim)``).
+        npk_dir : str
+            Path to the NumPack directory.
+        array_name : str
+            Name of the candidate array stored in the file.
+        metric : MetricType
+            Metric identifier.
+        k : int
+            Number of results to return per query.
+        batch_size : int, optional
+            Number of rows processed per batch.
+
+        Returns
+        -------
+        indices : numpy.ndarray
+            Flattened indices, shape ``(n_queries * k,)``, dtype ``uint64``.
+        scores : numpy.ndarray
+            Flattened scores, shape ``(n_queries * k,)``, dtype ``float64``.
+
+        Raises
+        ------
+        TypeError
+            If `queries` dtype is not supported.
+        ValueError
+            If the array does not exist or the dimensions do not match.
+
+        Examples
+        --------
+        >>> indices, scores = streaming.streaming_multi_query_top_k(
+        ...     queries, str(npk_path), 'candidates', 'cosine', k=10
+        ... )
+        >>> indices = indices.reshape(len(queries), 10)
+        >>> scores = scores.reshape(len(queries), 10)
         """
         ...
 

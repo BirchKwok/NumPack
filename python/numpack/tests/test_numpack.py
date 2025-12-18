@@ -6,7 +6,7 @@ from numpack import NumPack
 import sys
 from pathlib import Path
 
-# 导入conftest中的常量
+# Import constants from conftest
 sys.path.insert(0, str(Path(__file__).parent))
 import conftest
 ALL_DTYPES = conftest.ALL_DTYPES
@@ -23,7 +23,7 @@ def temp_dir():
 def numpack(temp_dir):
     """Create a NumPack instance fixture"""
     npk = NumPack(temp_dir)
-    npk.open()  # 手动打开文件
+    npk.open()  # Open explicitly
     npk.reset()
     return npk
 
@@ -39,12 +39,12 @@ def test_basic_save_load(numpack, dtype, test_values, ndim, shape):
     array2 = create_test_array(dtype, shape)
     arrays = {'array1': array1, 'array2': array2}
     
-    # 保存和加载数据
+    # Save and load
     numpack.save(arrays)
     arr1 = numpack.load('array1')
     arr2 = numpack.load('array2')
     
-    # 验证数据
+    # Verify
     assert np.array_equal(array1, arr1)
     assert np.array_equal(array2, arr2)
     assert array1.dtype == arr1.dtype
@@ -52,7 +52,7 @@ def test_basic_save_load(numpack, dtype, test_values, ndim, shape):
     assert array1.shape == arr1.shape
     assert array2.shape == arr2.shape
 
-# mmap_mode 功能已移除，上述测试用例不再适用
+# mmap_mode support has been removed; the test case above no longer applies
 
 @pytest.mark.parametrize("dtype,test_values", ALL_DTYPES)
 @pytest.mark.parametrize("ndim,shape", ARRAY_DIMS)
@@ -195,12 +195,12 @@ def test_append_operations(numpack, dtype, test_values, ndim, shape):
     array = create_test_array(dtype, shape)
     append_data = create_test_array(dtype, shape)
     
-    # 保存和追加数据
+    # Save and append
     numpack.save({'array': array})
     numpack.append({'array': append_data})
     loaded = numpack.load('array')
     
-    # 验证结果
+    # Verify
     assert loaded.dtype == dtype
     assert loaded.shape[0] == 2 * shape[0]  # The first dimension should double
     assert np.array_equal(array, loaded[:shape[0]])
@@ -264,7 +264,7 @@ def test_stream_load(numpack, dtype, test_values, ndim, shape):
     """Test stream_load functionality"""
     array = create_test_array(dtype, shape)
     
-    # 保存数据
+    # Save
     numpack.save({'array': array})
     
     # Test with buffer_size=None

@@ -1,31 +1,32 @@
-"""
-NumPack IO Module - 数据格式转换工具
+"""NumPack I/O helpers for converting common data formats.
 
-提供从常见数据科学格式（npy, npz, zarr, hdf5, parquet, feather, pandas, 
-csv, txt, pytorch 等）导入为 NumPack 格式，以及从 NumPack 导出为这些格式的功能。
+ This module provides import/export utilities between NumPack and common
+ data-science storage formats (NumPy ``.npy``/``.npz``, Zarr, HDF5, Parquet,
+ Feather, Pandas, CSV/TXT, PyTorch).
 
-特性：
-- 延迟依赖检查：使用时才检查是否安装相关库
-- 大文件流式处理：超过 1GB 的文件自动使用分块流式处理
-- 高性能：利用并行 I/O 和内存映射优化
+ Notes
+ -----
+ - Optional dependencies are imported lazily and validated only when needed.
+ - Large files (by default > 1 GB) are handled using streaming/batched I/O.
+ - Implementations use parallel I/O and memory mapping where applicable.
 
-Examples
---------
-从 NumPy 文件导入：
+ Examples
+ --------
+ Import from a NumPy file:
 
->>> from numpack.io import from_numpy
->>> from_numpy('data.npy', 'output.npk')
+ >>> from numpack.io import from_numpy
+ >>> from_numpy('data.npy', 'output.npk')
 
-导出为 HDF5：
+ Export to HDF5:
 
->>> from numpack.io import to_hdf5
->>> to_hdf5('input.npk', 'output.h5')
+ >>> from numpack.io import to_hdf5
+ >>> to_hdf5('input.npk', 'output.h5')
 
-流式转换大文件：
+ Stream conversion for a large CSV:
 
->>> from numpack.io import from_csv
->>> from_csv('large_data.csv', 'output.npk')  # 自动检测并使用流式处理
-"""
+ >>> from numpack.io import from_csv
+ >>> from_csv('large_data.csv', 'output.npk')
+ """
 
 from __future__ import annotations
 
@@ -53,44 +54,44 @@ if TYPE_CHECKING:
     import pyarrow as pa
     import torch
 
-# 大文件阈值：1GB
+# Large file threshold: 1GB
 LARGE_FILE_THRESHOLD = 1 * 1024 * 1024 * 1024  # 1GB in bytes
 
-# 默认分块大小：100MB（行数会根据数据类型自动计算）
+# Default chunk size: 100MB (row count is computed based on dtype)
 DEFAULT_CHUNK_SIZE = 100 * 1024 * 1024  # 100MB in bytes
 
-# 默认批处理行数（用于流式处理）
+# Default batch rows (used for streaming)
 DEFAULT_BATCH_ROWS = 100000
 
 
 # =============================================================================
-# 依赖检查工具
+# Dependency checking utilities
 # =============================================================================
 
 class DependencyError(ImportError):
-    """可选依赖未安装时抛出的异常"""
+    """Raised when an optional dependency is not installed."""
     pass
 
 
 def _check_dependency(module_name: str, package_name: Optional[str] = None) -> Any:
-    """检查并导入可选依赖
+    """Validate and import an optional dependency.
     
     Parameters
     ----------
     module_name : str
-        要导入的模块名
+        Module name to import.
     package_name : str, optional
-        pip 安装时的包名（如果与模块名不同）
+        Package name for pip installation (if different from module name).
     
     Returns
     -------
     module
-        导入的模块
+        Imported module.
     
     Raises
     ------
     DependencyError
-        如果依赖未安装
+        If the dependency is not installed.
     """
     import importlib
     
@@ -101,62 +102,63 @@ def _check_dependency(module_name: str, package_name: Optional[str] = None) -> A
         return importlib.import_module(module_name)
     except ImportError:
         raise DependencyError(
-            f"需要安装 '{package_name}' 才能使用此功能。\n"
-            f"请运行: pip install {package_name}"
+            f"The optional dependency '{package_name}' is required to use this feature.\n"
+            f"Please run: pip install {package_name}"
         )
 
 
 def _check_h5py():
-    """检查并导入 h5py"""
+    """Validate and import h5py."""
     return _check_dependency('h5py')
 
 
 def _check_zarr():
-    """检查并导入 zarr"""
+    """Validate and import zarr."""
     return _check_dependency('zarr')
 
 
 def _check_pyarrow():
-    """检查并导入 pyarrow"""
+    """Validate and import pyarrow."""
     return _check_dependency('pyarrow')
 
 
 def _check_pandas():
-    """检查并导入 pandas"""
+    """Validate and import pandas."""
     return _check_dependency('pandas')
 
 
 def _check_torch():
-    """检查并导入 torch (PyTorch)"""
+    """Validate and import torch (PyTorch)."""
     return _check_dependency('torch', 'torch')
 
 
 def _check_s3fs():
-    """检查并导入 s3fs"""
+    """Validate and import s3fs."""
     return _check_dependency('s3fs')
 
 
 def _check_boto3():
-    """检查并导入 boto3"""
+    """Validate and import boto3."""
     return _check_dependency('boto3')
 
 
 # =============================================================================
-# 文件大小和流式处理工具
+# File size and streaming utilities
 # =============================================================================
 
 def get_file_size(path: Union[str, Path]) -> int:
-    """获取文件大小（字节）
+    """Get file size in bytes.
     
     Parameters
     ----------
     path : str or Path
-        文件路径
+        File path.
     
     Returns
     -------
     int
-        文件大小（字节），如果是目录则返回目录总大小
+        File size in bytes. If `path` is a directory, returns the total size of
+        all files under it.
     """
     path = Path(path)
     if path.is_file():
@@ -171,19 +173,19 @@ def get_file_size(path: Union[str, Path]) -> int:
 
 
 def is_large_file(path: Union[str, Path], threshold: int = LARGE_FILE_THRESHOLD) -> bool:
-    """检查文件是否为大文件（需要流式处理）
+    """Check whether a file is considered large (requiring streaming I/O).
     
     Parameters
     ----------
     path : str or Path
-        文件路径
+        File path.
     threshold : int, optional
-        大文件阈值（字节），默认 1GB
+        Large-file threshold in bytes. Defaults to 1GB.
     
     Returns
     -------
     bool
-        如果文件大于阈值返回 True
+        True if the file size exceeds `threshold`.
     """
     return get_file_size(path) > threshold
 
@@ -193,45 +195,45 @@ def estimate_chunk_rows(
     dtype: np.dtype, 
     target_chunk_bytes: int = DEFAULT_CHUNK_SIZE
 ) -> int:
-    """估算每个分块应包含的行数
+    """Estimate how many rows a chunk should contain.
     
     Parameters
     ----------
     shape : tuple
-        数组形状
+        Array shape.
     dtype : numpy.dtype
-        数据类型
+        Array dtype.
     target_chunk_bytes : int, optional
-        目标分块大小（字节），默认 100MB
+        Target chunk size in bytes. Defaults to 100MB.
     
     Returns
     -------
     int
-        建议的每批处理行数
+        Suggested number of rows per batch.
     """
     if len(shape) == 0:
         return 1
     
-    # 计算每行的字节数
+    # Compute bytes per row
     row_elements = int(np.prod(shape[1:])) if len(shape) > 1 else 1
     bytes_per_row = row_elements * dtype.itemsize
     
     if bytes_per_row == 0:
         return DEFAULT_BATCH_ROWS
     
-    # 计算目标行数
+    # Compute target row count
     target_rows = max(1, target_chunk_bytes // bytes_per_row)
     
-    # 限制在合理范围内
+    # Clamp to a reasonable range
     return min(target_rows, shape[0], DEFAULT_BATCH_ROWS * 10)
 
 
 # =============================================================================
-# NumPack 工具函数
+# NumPack helper functions
 # =============================================================================
 
 def _get_numpack_class():
-    """获取 NumPack 类"""
+    """Get the NumPack class."""
     from numpack import NumPack
     return NumPack
 
@@ -240,19 +242,19 @@ def _open_numpack_for_write(
     output_path: Union[str, Path], 
     drop_if_exists: bool = False
 ) -> Any:
-    """打开 NumPack 文件用于写入
+    """Open a NumPack file for writing.
     
     Parameters
     ----------
     output_path : str or Path
-        输出路径
+        Output path.
     drop_if_exists : bool, optional
-        如果文件存在是否删除，默认 False
+        If True, delete the existing output directory first.
     
     Returns
     -------
     NumPack
-        NumPack 实例
+        NumPack instance.
     """
     NumPack = _get_numpack_class()
     npk = NumPack(str(output_path), drop_if_exists=drop_if_exists)
@@ -261,17 +263,17 @@ def _open_numpack_for_write(
 
 
 def _open_numpack_for_read(input_path: Union[str, Path]) -> Any:
-    """打开 NumPack 文件用于读取
+    """Open a NumPack file for reading.
     
     Parameters
     ----------
     input_path : str or Path
-        输入路径
+        Input path.
     
     Returns
     -------
     NumPack
-        NumPack 实例
+        NumPack instance.
     """
     NumPack = _get_numpack_class()
     npk = NumPack(str(input_path))
@@ -280,7 +282,7 @@ def _open_numpack_for_read(input_path: Union[str, Path]) -> Any:
 
 
 # =============================================================================
-# NumPy 格式转换 (npy/npz)
+# NumPy format conversion (npy/npz)
 # =============================================================================
 
 def from_numpy(
@@ -290,34 +292,36 @@ def from_numpy(
     drop_if_exists: bool = False,
     chunk_size: int = DEFAULT_CHUNK_SIZE
 ) -> None:
-    """从 NumPy npy/npz 文件导入为 NumPack 格式
+    """Import a NumPy ``.npy``/``.npz`` file into NumPack.
     
-    对于大文件（>1GB），自动使用内存映射和流式写入。
+    For large files (by default > 1 GB), this function uses memory mapping and
+    chunked streaming writes.
     
     Parameters
     ----------
     input_path : str or Path
-        输入的 .npy 或 .npz 文件路径
+        Path to the input ``.npy`` or ``.npz`` file.
     output_path : str or Path
-        输出的 NumPack 文件路径
+        Output NumPack directory path.
     array_name : str, optional
-        数组名称。对于 .npy 文件，默认使用文件名（不含扩展名）。
-        对于 .npz 文件，忽略此参数，使用 npz 内的数组名。
+        Array name for ``.npy`` input. If None, defaults to the file stem.
+        For ``.npz`` input, this parameter is ignored and the keys inside the
+        archive are used as array names.
     drop_if_exists : bool, optional
-        如果输出文件存在是否删除，默认 False
+        If True, delete the output path first if it already exists.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming conversion.
     
     Examples
     --------
     >>> from numpack.io import from_numpy
     >>> from_numpy('data.npy', 'output.npk')
-    >>> from_numpy('data.npz', 'output.npk')  # 保留所有数组名
+    >>> from_numpy('data.npz', 'output.npk')  # keep all array names
     """
     input_path = Path(input_path)
     
     if not input_path.exists():
-        raise FileNotFoundError(f"文件不存在: {input_path}")
+        raise FileNotFoundError(f"File not found: {input_path}")
     
     suffix = input_path.suffix.lower()
     
@@ -326,7 +330,7 @@ def from_numpy(
     elif suffix == '.npz':
         _from_npz(input_path, output_path, drop_if_exists, chunk_size)
     else:
-        raise ValueError(f"不支持的文件格式: {suffix}，支持 .npy 和 .npz")
+        raise ValueError(f"Unsupported file format: {suffix}. Supported: .npy and .npz")
 
 
 def _from_npy(
@@ -336,17 +340,17 @@ def _from_npy(
     drop_if_exists: bool,
     chunk_size: int
 ) -> None:
-    """从单个 .npy 文件导入"""
+    """Import from a single ``.npy`` file."""
     if array_name is None:
         array_name = input_path.stem
     
     file_size = get_file_size(input_path)
     
     if file_size > LARGE_FILE_THRESHOLD:
-        # 大文件：使用内存映射流式写入
+        # Large file: memory-map and stream writes
         _from_npy_streaming(input_path, output_path, array_name, drop_if_exists, chunk_size)
     else:
-        # 小文件：直接加载
+        # Small file: load directly
         arr = np.load(str(input_path))
         npk = _open_numpack_for_write(output_path, drop_if_exists)
         try:
@@ -362,22 +366,22 @@ def _from_npy_streaming(
     drop_if_exists: bool,
     chunk_size: int
 ) -> None:
-    """大文件 npy 流式导入"""
-    # 使用内存映射加载
+    """Stream-import a large ``.npy`` file."""
+    # Load with memory mapping
     arr_mmap = np.load(str(input_path), mmap_mode='r')
     shape = arr_mmap.shape
     dtype = arr_mmap.dtype
     
-    # 计算分块行数
+    # Compute chunk row count
     batch_rows = estimate_chunk_rows(shape, dtype, chunk_size)
     total_rows = shape[0]
     
     npk = _open_numpack_for_write(output_path, drop_if_exists)
     try:
-        # 分块写入
+        # Write in chunks
         for start_idx in range(0, total_rows, batch_rows):
             end_idx = min(start_idx + batch_rows, total_rows)
-            chunk = np.array(arr_mmap[start_idx:end_idx])  # 复制到内存
+            chunk = np.array(arr_mmap[start_idx:end_idx])  # copy into memory
             
             if start_idx == 0:
                 npk.save({array_name: chunk})
@@ -394,24 +398,24 @@ def _from_npz(
     drop_if_exists: bool,
     chunk_size: int
 ) -> None:
-    """从 .npz 文件导入"""
-    # 检查文件大小
+    """Import from a ``.npz`` file."""
+    # Check file size
     file_size = get_file_size(input_path)
     
     npk = _open_numpack_for_write(output_path, drop_if_exists)
     try:
         if file_size > LARGE_FILE_THRESHOLD:
-            # 大文件：逐个数组加载
+            # Large file: load arrays one by one
             with np.load(str(input_path), mmap_mode='r') as npz:
                 for name in npz.files:
                     arr = npz[name]
-                    # 对于大数组，流式写入
+                    # For large arrays, stream writes
                     if arr.nbytes > LARGE_FILE_THRESHOLD:
                         _save_array_streaming(npk, name, arr, chunk_size)
                     else:
                         npk.save({name: np.array(arr)})
         else:
-            # 小文件：直接加载
+            # Small file: load directly
             with np.load(str(input_path)) as npz:
                 arrays = {name: npz[name] for name in npz.files}
                 npk.save(arrays)
@@ -425,7 +429,7 @@ def _save_array_streaming(
     arr: np.ndarray, 
     chunk_size: int
 ) -> None:
-    """流式保存大数组到 NumPack"""
+    """Stream-save a large array to NumPack."""
     shape = arr.shape
     dtype = arr.dtype
     batch_rows = estimate_chunk_rows(shape, dtype, chunk_size)
@@ -448,23 +452,24 @@ def to_numpy(
     compressed: bool = True,
     chunk_size: int = DEFAULT_CHUNK_SIZE
 ) -> None:
-    """从 NumPack 导出为 NumPy npy/npz 格式
+    """Export NumPack arrays to NumPy ``.npy``/``.npz``.
     
-    对于大文件（>1GB），使用流式读取。
+    For large arrays (by default > 1 GB), this function streams reads from NumPack
+    and writes the output in chunks.
     
     Parameters
     ----------
     input_path : str or Path
-        输入的 NumPack 文件路径
+        Input NumPack directory path.
     output_path : str or Path
-        输出的 .npy 或 .npz 文件路径
+        Output ``.npy`` or ``.npz`` file path.
     array_names : list of str, optional
-        要导出的数组名列表。如果为 None，导出所有数组。
-        如果只有一个数组且输出为 .npy，则直接保存该数组。
+        Names of arrays to export. If None, exports all arrays.
+        If output is ``.npy``, exactly one array must be selected.
     compressed : bool, optional
-        对于 .npz 文件，是否压缩，默认 True
+        Whether to compress the ``.npz`` output.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming export.
     
     Examples
     --------
@@ -483,14 +488,14 @@ def to_numpy(
         if suffix == '.npy':
             if len(array_names) != 1:
                 raise ValueError(
-                    f".npy 格式只能保存单个数组，但指定了 {len(array_names)} 个数组。"
-                    "请使用 .npz 格式或只指定一个数组名。"
+                    f"The .npy format can only store one array, but {len(array_names)} arrays were provided. "
+                    "Use .npz or provide exactly one array name."
                 )
             _to_npy(npk, output_path, array_names[0], chunk_size)
         elif suffix == '.npz':
             _to_npz(npk, output_path, array_names, compressed, chunk_size)
         else:
-            raise ValueError(f"不支持的文件格式: {suffix}，支持 .npy 和 .npz")
+            raise ValueError(f"Unsupported file format: {suffix}. Supported: .npy and .npz")
     finally:
         npk.close()
 
@@ -501,19 +506,19 @@ def _to_npy(
     array_name: str, 
     chunk_size: int
 ) -> None:
-    """导出单个数组为 .npy 文件"""
+    """Export a single array to a ``.npy`` file."""
     shape = npk.get_shape(array_name)
     
-    # 估算大小
+    # Estimate size
     arr_sample = npk.getitem(array_name, [0])
     dtype = arr_sample.dtype
     estimated_size = int(np.prod(shape)) * dtype.itemsize
     
     if estimated_size > LARGE_FILE_THRESHOLD:
-        # 大数组：流式读取并写入
+        # Large array: stream reads and writes
         _to_npy_streaming(npk, output_path, array_name, shape, dtype, chunk_size)
     else:
-        # 小数组：直接加载
+        # Small array: load directly
         arr = npk.load(array_name)
         np.save(str(output_path), arr)
 
@@ -526,26 +531,26 @@ def _to_npy_streaming(
     dtype: np.dtype,
     chunk_size: int
 ) -> None:
-    """流式导出大数组为 .npy 文件"""
+    """Stream-export a large array to a ``.npy`` file."""
     batch_rows = estimate_chunk_rows(shape, dtype, chunk_size)
     total_rows = shape[0]
     
-    # 创建输出文件（预分配空间）
-    # 使用 numpy 的 format 模块创建正确的 npy 文件头
+    # Create output file (pre-allocate space)
+    # Use NumPy's format module to create a proper .npy header
     from numpy.lib import format as npy_format
     
     with open(output_path, 'wb') as f:
-        # 写入 npy 文件头
+        # Write .npy header
         npy_format.write_array_header_1_0(f, {'descr': dtype.str, 'fortran_order': False, 'shape': shape})
         header_size = f.tell()
     
-    # 使用内存映射写入数据
+    # Write data via memory mapping
     total_bytes = int(np.prod(shape)) * dtype.itemsize
     with open(output_path, 'r+b') as f:
-        f.seek(0, 2)  # 移动到文件末尾
-        f.truncate(header_size + total_bytes)  # 扩展文件
+        f.seek(0, 2)  # Seek to end
+        f.truncate(header_size + total_bytes)  # Extend file
     
-    # 内存映射写入
+    # Memory-mapped write
     arr_out = np.memmap(output_path, dtype=dtype, mode='r+', offset=header_size, shape=shape)
     
     try:
@@ -565,9 +570,9 @@ def _to_npz(
     compressed: bool,
     chunk_size: int
 ) -> None:
-    """导出多个数组为 .npz 文件"""
-    # NPZ 格式不支持真正的流式写入，需要先收集所有数据
-    # 对于大数据集，建议使用其他格式（如 HDF5 或 Zarr）
+    """Export multiple arrays to a ``.npz`` file."""
+    # The NPZ format does not support true streaming writes; data must be collected.
+    # For large datasets, consider using other formats (for example, HDF5 or Zarr).
     
     arrays = {}
     for name in array_names:
@@ -578,9 +583,9 @@ def _to_npz(
         
         if estimated_size > LARGE_FILE_THRESHOLD:
             warnings.warn(
-                f"数组 '{name}' 较大（>{estimated_size / 1e9:.1f}GB），"
-                "NPZ 格式需要将所有数据加载到内存。"
-                "对于大数据集，建议使用 to_hdf5 或 to_zarr。",
+                f"Array '{name}' is large (>{estimated_size / 1e9:.1f}GB). "
+                "The NPZ format loads all data into memory. "
+                "For large datasets, consider using to_hdf5 or to_zarr.",
                 UserWarning
             )
         
@@ -593,7 +598,7 @@ def _to_npz(
 
 
 # =============================================================================
-# CSV 格式转换
+# CSV format conversion
 # =============================================================================
 
 def from_csv(
@@ -608,32 +613,32 @@ def from_csv(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     **kwargs
 ) -> None:
-    """从 CSV 文件导入为 NumPack 格式
+    """Import a CSV file into NumPack.
     
-    对于大文件（>1GB），自动使用流式处理。
+    For large files (by default > 1 GB), this function uses streaming I/O.
     
     Parameters
     ----------
     input_path : str or Path
-        输入的 CSV 文件路径
+        Path to the input CSV file.
     output_path : str or Path
-        输出的 NumPack 文件路径
+        Output NumPack directory path.
     array_name : str, optional
-        数组名称，默认使用文件名（不含扩展名）
+        Name of the output array. If None, defaults to the file stem.
     drop_if_exists : bool, optional
-        如果输出文件存在是否删除，默认 False
+        If True, delete the output path first if it already exists.
     dtype : numpy.dtype, optional
-        数据类型，默认自动推断
+        Target dtype. If None, dtype is inferred.
     delimiter : str, optional
-        分隔符，默认 ','
+        Column delimiter.
     skiprows : int, optional
-        跳过的行数，默认 0
+        Number of rows to skip.
     max_rows : int, optional
-        最大读取行数，默认 None（读取全部）
+        Maximum number of rows to read. If None, reads all rows.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming conversion.
     **kwargs
-        传递给 numpy.loadtxt 或 pandas.read_csv 的其他参数
+        Additional keyword arguments forwarded to `numpy.loadtxt` or `pandas.read_csv`.
     
     Examples
     --------
@@ -644,7 +649,7 @@ def from_csv(
     input_path = Path(input_path)
     
     if not input_path.exists():
-        raise FileNotFoundError(f"文件不存在: {input_path}")
+        raise FileNotFoundError(f"File not found: {input_path}")
     
     if array_name is None:
         array_name = input_path.stem
@@ -652,15 +657,15 @@ def from_csv(
     file_size = get_file_size(input_path)
     
     if file_size > LARGE_FILE_THRESHOLD:
-        # 大文件：使用 pandas 分块读取（如果可用）
+        # Large file: use pandas chunked reads (when available)
         _from_csv_streaming(
             input_path, output_path, array_name, drop_if_exists,
             dtype, delimiter, skiprows, chunk_size, **kwargs
         )
     else:
-        # 小文件：直接加载
+        # Small file: load directly
         try:
-            # 尝试使用 pandas（更快更灵活）
+            # Prefer pandas when available (faster and more flexible)
             pd = _check_pandas()
             if 'header' not in kwargs:
                 kwargs['header'] = None
@@ -672,10 +677,10 @@ def from_csv(
                 dtype=dtype,
                 **kwargs
             )
-            # 确保数组是 C-contiguous 的（NumPack 要求）
+            # Ensure the array is C-contiguous (required by NumPack)
             arr = np.ascontiguousarray(df.values)
         except DependencyError:
-            # 回退到 numpy
+            # Fall back to numpy
             arr = np.loadtxt(
                 str(input_path),
                 delimiter=delimiter,
@@ -703,10 +708,10 @@ def _from_csv_streaming(
     chunk_size: int,
     **kwargs
 ) -> None:
-    """大文件 CSV 流式导入"""
+    """Stream-import a large CSV file."""
     pd = _check_pandas()
     
-    # 计算分块行数（估算每行约 100 字节）
+    # Estimate chunk row count (assume ~100 bytes per row)
     chunk_rows = max(1000, chunk_size // 100)
     
     npk = _open_numpack_for_write(output_path, drop_if_exists)
@@ -725,7 +730,7 @@ def _from_csv_streaming(
         )
         
         for chunk_df in reader:
-            # 确保数组是 C-contiguous 的（NumPack 要求）
+            # Ensure the array is C-contiguous (required by NumPack)
             arr = np.ascontiguousarray(chunk_df.values)
             if dtype is not None:
                 arr = arr.astype(dtype)
@@ -749,28 +754,30 @@ def to_csv(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     **kwargs
 ) -> None:
-    """从 NumPack 导出为 CSV 格式
+    """Export a NumPack array to CSV.
     
-    对于大文件（>1GB），使用流式读取。
+    For large arrays (by default > 1 GB), this function streams reads from NumPack
+    and writes the output in chunks.
     
     Parameters
     ----------
     input_path : str or Path
-        输入的 NumPack 文件路径
+        Input NumPack directory path.
     output_path : str or Path
-        输出的 CSV 文件路径
+        Output CSV file path.
     array_name : str, optional
-        要导出的数组名，如果为 None 且只有一个数组则使用该数组
+        Name of the array to export. If None and the NumPack file contains exactly
+        one array, that array is used.
     delimiter : str, optional
-        分隔符，默认 ','
+        Column delimiter.
     header : bool, optional
-        是否写入列标题，默认 False
+        Whether to write a header line.
     fmt : str, optional
-        数值格式，默认 '%.18e'
+        Numeric format string.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming export.
     **kwargs
-        传递给 numpy.savetxt 的其他参数
+        Additional keyword arguments forwarded to `numpy.savetxt`.
     
     Examples
     --------
@@ -786,7 +793,7 @@ def to_csv(
                 array_name = members[0]
             else:
                 raise ValueError(
-                    f"NumPack 文件包含多个数组 {members}，请指定 array_name 参数"
+                    f"NumPack contains multiple arrays {members}; please provide the array_name argument."
                 )
         
         shape = npk.get_shape(array_name)
@@ -818,12 +825,12 @@ def _to_csv_streaming(
     chunk_size: int,
     **kwargs
 ) -> None:
-    """流式导出大数组为 CSV 文件"""
+    """Stream-export a large array to a CSV file."""
     batch_rows = estimate_chunk_rows(shape, dtype, chunk_size)
     total_rows = shape[0]
     
     with open(output_path, 'w') as f:
-        # 写入标题
+        # Write header
         if header and len(shape) > 1:
             header_line = delimiter.join([f'col{i}' for i in range(shape[1])])
             f.write(f"# {header_line}\n")
@@ -832,7 +839,7 @@ def _to_csv_streaming(
             end_idx = min(start_idx + batch_rows, total_rows)
             chunk = npk.getitem(array_name, slice(start_idx, end_idx))
             
-            # 写入分块
+            # Write chunk
             if isinstance(chunk, np.ndarray) and chunk.ndim == 2:
                 np.savetxt(f, chunk, delimiter=delimiter, fmt=fmt)
             else:
@@ -845,7 +852,7 @@ def _to_csv_streaming(
 
 
 # =============================================================================
-# TXT 格式转换（与 CSV 类似，但默认空格分隔）
+# TXT format conversion (similar to CSV, but defaults to whitespace delimiter)
 # =============================================================================
 
 def from_txt(
@@ -859,37 +866,37 @@ def from_txt(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     **kwargs
 ) -> None:
-    """从 TXT 文件导入为 NumPack 格式
+    """Import a whitespace-delimited text file into NumPack.
     
-    与 from_csv 类似，但默认使用空白字符作为分隔符。
+    This is equivalent to `from_csv` but uses whitespace as the default delimiter.
     
     Parameters
     ----------
     input_path : str or Path
-        输入的 TXT 文件路径
+        Path to the input text file.
     output_path : str or Path
-        输出的 NumPack 文件路径
+        Output NumPack directory path.
     array_name : str, optional
-        数组名称，默认使用文件名（不含扩展名）
+        Name of the output array. If None, defaults to the file stem.
     drop_if_exists : bool, optional
-        如果输出文件存在是否删除，默认 False
+        If True, delete the output path first if it already exists.
     dtype : numpy.dtype, optional
-        数据类型，默认自动推断
+        Target dtype.
     delimiter : str, optional
-        分隔符，默认 None（任意空白字符）
+        Delimiter forwarded to `from_csv`. If None, whitespace is used.
     skiprows : int, optional
-        跳过的行数，默认 0
+        Number of rows to skip.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming conversion.
     **kwargs
-        传递给 numpy.loadtxt 的其他参数
+        Additional keyword arguments forwarded to the underlying reader.
     
     Examples
     --------
     >>> from numpack.io import from_txt
     >>> from_txt('data.txt', 'output.npk')
     """
-    # 使用 from_csv 但默认分隔符为空白
+    # Use from_csv but default delimiter is whitespace
     from_csv(
         input_path, output_path, array_name, drop_if_exists,
         dtype, delimiter if delimiter else ' ', skiprows, None, chunk_size,
@@ -906,26 +913,26 @@ def to_txt(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     **kwargs
 ) -> None:
-    """从 NumPack 导出为 TXT 格式
+    """Export a NumPack array to a whitespace-delimited text file.
     
-    与 to_csv 类似，但默认使用空格作为分隔符。
+    This is equivalent to `to_csv` but uses a space character as the default delimiter.
     
     Parameters
     ----------
     input_path : str or Path
-        输入的 NumPack 文件路径
+        Input NumPack directory path.
     output_path : str or Path
-        输出的 TXT 文件路径
+        Output text file path.
     array_name : str, optional
-        要导出的数组名
+        Name of the array to export.
     delimiter : str, optional
-        分隔符，默认 ' '（空格）
+        Column delimiter.
     fmt : str, optional
-        数值格式，默认 '%.18e'
+        Numeric format string.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming export.
     **kwargs
-        传递给 numpy.savetxt 的其他参数
+        Additional keyword arguments forwarded to `numpy.savetxt`.
     
     Examples
     --------
@@ -936,7 +943,7 @@ def to_txt(
 
 
 # =============================================================================
-# HDF5 格式转换
+# HDF5 format conversion
 # =============================================================================
 
 def from_hdf5(
@@ -947,24 +954,24 @@ def from_hdf5(
     drop_if_exists: bool = False,
     chunk_size: int = DEFAULT_CHUNK_SIZE
 ) -> None:
-    """从 HDF5 文件导入为 NumPack 格式
+    """Import datasets from an HDF5 file into NumPack.
     
-    对于大数据集（>1GB），自动使用流式处理。
+    For large datasets (by default > 1 GB), this function uses streamed reads.
     
     Parameters
     ----------
     input_path : str or Path
-        输入的 HDF5 文件路径
+        Path to the input HDF5 file.
     output_path : str or Path
-        输出的 NumPack 文件路径
+        Output NumPack directory path.
     dataset_names : list of str, optional
-        要导入的数据集名列表。如果为 None，导入组内所有数据集。
+        Names of datasets to import. If None, imports all datasets under `group`.
     group : str, optional
-        HDF5 组路径，默认 '/'（根组）
+        HDF5 group path.
     drop_if_exists : bool, optional
-        如果输出文件存在是否删除，默认 False
+        If True, delete the output path first if it already exists.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming conversion.
     
     Examples
     --------
@@ -982,14 +989,14 @@ def from_hdf5(
             grp = h5f[group]
             
             if dataset_names is None:
-                # 获取组内所有数据集
+                # Collect all datasets under the group
                 dataset_names = [name for name in grp.keys() 
                                if isinstance(grp[name], h5py.Dataset)]
             
             for name in dataset_names:
                 dataset = grp[name]
                 if not isinstance(dataset, h5py.Dataset):
-                    warnings.warn(f"跳过非数据集对象: {name}")
+                    warnings.warn(f"Skipping non-dataset object: {name}")
                     continue
                 
                 shape = dataset.shape
@@ -997,10 +1004,10 @@ def from_hdf5(
                 estimated_size = int(np.prod(shape)) * dtype.itemsize
                 
                 if estimated_size > LARGE_FILE_THRESHOLD and len(shape) > 0:
-                    # 大数据集：流式读取
+                    # Large dataset: streamed reads
                     _from_hdf5_dataset_streaming(npk, dataset, name, chunk_size)
                 else:
-                    # 小数据集：直接加载
+                    # Small dataset: load directly
                     arr = dataset[...]
                     npk.save({name: arr})
     finally:
@@ -1013,7 +1020,7 @@ def _from_hdf5_dataset_streaming(
     array_name: str,
     chunk_size: int
 ) -> None:
-    """流式导入 HDF5 数据集"""
+    """Stream-import an HDF5 dataset."""
     shape = dataset.shape
     dtype = dataset.dtype
     batch_rows = estimate_chunk_rows(shape, dtype, chunk_size)
@@ -1038,26 +1045,27 @@ def to_hdf5(
     compression_opts: Optional[int] = 4,
     chunk_size: int = DEFAULT_CHUNK_SIZE
 ) -> None:
-    """从 NumPack 导出为 HDF5 格式
+    """Export NumPack arrays to an HDF5 file.
     
-    对于大数组（>1GB），使用流式读取和分块写入。
+    For large arrays (by default > 1 GB), this function uses streamed reads and
+    chunked writes.
     
     Parameters
     ----------
     input_path : str or Path
-        输入的 NumPack 文件路径
+        Input NumPack directory path.
     output_path : str or Path
-        输出的 HDF5 文件路径
+        Output HDF5 file path.
     array_names : list of str, optional
-        要导出的数组名列表。如果为 None，导出所有数组。
+        Names of arrays to export. If None, exports all arrays.
     group : str, optional
-        HDF5 组路径，默认 '/'（根组）
+        HDF5 group path.
     compression : str, optional
-        压缩算法，默认 'gzip'。设为 None 禁用压缩。
+        Compression codec (for example, ``"gzip"``). Use None to disable.
     compression_opts : int, optional
-        压缩级别（0-9），默认 4
+        Compression level/options.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming export.
     
     Examples
     --------
@@ -1074,7 +1082,7 @@ def to_hdf5(
             array_names = npk.get_member_list()
         
         with h5py.File(str(output_path), 'w') as h5f:
-            # 创建组（如果需要）
+            # Create the group (if needed)
             if group != '/':
                 grp = h5f.require_group(group)
             else:
@@ -1086,14 +1094,14 @@ def to_hdf5(
                 dtype = arr_sample.dtype
                 estimated_size = int(np.prod(shape)) * dtype.itemsize
                 
-                # 计算 HDF5 分块大小
+                # Compute HDF5 chunk shape
                 if len(shape) > 0:
                     batch_rows = estimate_chunk_rows(shape, dtype, chunk_size)
                     chunks = (min(batch_rows, shape[0]),) + shape[1:]
                 else:
                     chunks = None
                 
-                # 创建数据集
+                # Create dataset
                 ds = grp.create_dataset(
                     name, 
                     shape=shape, 
@@ -1104,10 +1112,10 @@ def to_hdf5(
                 )
                 
                 if estimated_size > LARGE_FILE_THRESHOLD and len(shape) > 0:
-                    # 大数组：流式写入
+                    # Large array: streamed writes
                     _to_hdf5_dataset_streaming(npk, ds, name, shape, dtype, chunk_size)
                 else:
-                    # 小数组：直接写入
+                    # Small array: write directly
                     ds[...] = npk.load(name)
     finally:
         npk.close()
@@ -1121,7 +1129,7 @@ def _to_hdf5_dataset_streaming(
     dtype: np.dtype,
     chunk_size: int
 ) -> None:
-    """流式导出大数组到 HDF5 数据集"""
+    """Stream-export a large array to an HDF5 dataset."""
     batch_rows = estimate_chunk_rows(shape, dtype, chunk_size)
     total_rows = shape[0]
     
@@ -1132,7 +1140,7 @@ def _to_hdf5_dataset_streaming(
 
 
 # =============================================================================
-# Zarr 格式转换
+# Zarr format conversion
 # =============================================================================
 
 def from_zarr(
@@ -1143,24 +1151,25 @@ def from_zarr(
     drop_if_exists: bool = False,
     chunk_size: int = DEFAULT_CHUNK_SIZE
 ) -> None:
-    """从 Zarr 存储导入为 NumPack 格式
+    """Import arrays from a Zarr store into NumPack.
     
-    Zarr 原生支持分块存储，对于大数据集自动使用流式处理。
+    Zarr stores are chunked natively. Large arrays are imported in batches and
+    streamed into NumPack.
     
     Parameters
     ----------
     input_path : str or Path
-        输入的 Zarr 存储路径（目录或 .zarr 文件）
+        Path to the input Zarr store.
     output_path : str or Path
-        输出的 NumPack 文件路径
+        Output NumPack directory path.
     array_names : list of str, optional
-        要导入的数组名列表。如果为 None，导入组内所有数组。
+        Names of arrays to import. If None, imports all arrays under `group`.
     group : str, optional
-        Zarr 组路径，默认 '/'（根组）
+        Zarr group path.
     drop_if_exists : bool, optional
-        如果输出文件存在是否删除，默认 False
+        If True, delete the output path first if it already exists.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming conversion.
     
     Examples
     --------
@@ -1178,7 +1187,7 @@ def from_zarr(
             store = store[group]
         
         if array_names is None:
-            # 获取所有数组
+            # Collect all arrays
             array_names = [name for name in store.array_keys()]
         
         for name in array_names:
@@ -1188,10 +1197,10 @@ def from_zarr(
             estimated_size = int(np.prod(shape)) * dtype.itemsize
             
             if estimated_size > LARGE_FILE_THRESHOLD and len(shape) > 0:
-                # 大数组：流式读取
+                # Large array: streamed reads
                 _from_zarr_array_streaming(npk, arr, name, chunk_size)
             else:
-                # 小数组：直接加载
+                # Small array: load directly
                 npk.save({name: arr[...]})
     finally:
         npk.close()
@@ -1203,7 +1212,7 @@ def _from_zarr_array_streaming(
     array_name: str,
     chunk_size: int
 ) -> None:
-    """流式导入 Zarr 数组"""
+    """Stream-import a Zarr array."""
     shape = zarr_arr.shape
     dtype = zarr_arr.dtype
     batch_rows = estimate_chunk_rows(shape, dtype, chunk_size)
@@ -1227,24 +1236,25 @@ def to_zarr(
     compressor: Optional[str] = 'default',
     chunk_size: int = DEFAULT_CHUNK_SIZE
 ) -> None:
-    """从 NumPack 导出为 Zarr 格式
+    """Export NumPack arrays to a Zarr store.
     
-    Zarr 原生支持分块存储，适合大数据集。
+    Zarr stores are chunked natively and are well-suited for large datasets.
     
     Parameters
     ----------
     input_path : str or Path
-        输入的 NumPack 文件路径
+        Input NumPack directory path.
     output_path : str or Path
-        输出的 Zarr 存储路径
+        Output Zarr store path.
     array_names : list of str, optional
-        要导出的数组名列表。如果为 None，导出所有数组。
+        Names of arrays to export. If None, exports all arrays.
     group : str, optional
-        Zarr 组路径，默认 '/'（根组）
+        Zarr group path.
     compressor : str or None, optional
-        压缩器，默认 'default'（使用 Blosc）。设为 None 禁用压缩。
+        Compressor configuration. The default value attempts to use Blosc.
+        Use None to disable compression.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming export.
     
     Examples
     --------
@@ -1259,12 +1269,12 @@ def to_zarr(
         if array_names is None:
             array_names = npk.get_member_list()
         
-        # 创建 Zarr 存储
+        # Create Zarr store
         store = zarr.open(str(output_path), mode='w')
         if group != '/':
             store = store.require_group(group)
         
-        # 配置压缩器
+        # Configure compressor
         if compressor == 'default':
             try:
                 from zarr.codecs import BloscCodec, BloscCname, BloscShuffle
@@ -1282,14 +1292,14 @@ def to_zarr(
             dtype = arr_sample.dtype
             estimated_size = int(np.prod(shape)) * dtype.itemsize
             
-            # 计算分块大小
+            # Compute chunk shape
             if len(shape) > 0:
                 batch_rows = estimate_chunk_rows(shape, dtype, chunk_size)
                 chunks = (min(batch_rows, shape[0]),) + shape[1:]
             else:
                 chunks = shape
             
-            # 创建 Zarr 数组
+            # Create Zarr array
             if hasattr(store, 'create_array'):
                 zarr_arr = store.create_array(
                     name,
@@ -1309,10 +1319,10 @@ def to_zarr(
                 )
             
             if estimated_size > LARGE_FILE_THRESHOLD and len(shape) > 0:
-                # 大数组：流式写入
+                # Large array: streamed writes
                 _to_zarr_array_streaming(npk, zarr_arr, name, shape, dtype, chunk_size)
             else:
-                # 小数组：直接写入
+                # Small array: write directly
                 zarr_arr[...] = npk.load(name)
     finally:
         npk.close()
@@ -1326,7 +1336,7 @@ def _to_zarr_array_streaming(
     dtype: np.dtype,
     chunk_size: int
 ) -> None:
-    """流式导出大数组到 Zarr"""
+    """Stream-export a large array to Zarr."""
     batch_rows = estimate_chunk_rows(shape, dtype, chunk_size)
     total_rows = shape[0]
     
@@ -1337,7 +1347,7 @@ def _to_zarr_array_streaming(
 
 
 # =============================================================================
-# Parquet 格式转换
+# Parquet format conversion
 # =============================================================================
 
 def from_parquet(
@@ -1348,24 +1358,25 @@ def from_parquet(
     drop_if_exists: bool = False,
     chunk_size: int = DEFAULT_CHUNK_SIZE
 ) -> None:
-    """从 Parquet 文件导入为 NumPack 格式
+    """Import a Parquet file into NumPack.
     
-    对于大文件（>1GB），自动使用流式处理。
+    Large Parquet files (by default > 1 GB) are imported by iterating record
+    batches and streaming the result into NumPack.
     
     Parameters
     ----------
     input_path : str or Path
-        输入的 Parquet 文件路径
+        Path to the input Parquet file.
     output_path : str or Path
-        输出的 NumPack 文件路径
+        Output NumPack directory path.
     array_name : str, optional
-        数组名称，默认使用文件名（不含扩展名）
+        Name of the output array. If None, defaults to the file stem.
     columns : list of str, optional
-        要读取的列名列表，默认读取全部
+        Columns to read. If None, reads all columns.
     drop_if_exists : bool, optional
-        如果输出文件存在是否删除，默认 False
+        If True, delete the output path first if it already exists.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming conversion.
     
     Examples
     --------
@@ -1381,7 +1392,7 @@ def from_parquet(
     if array_name is None:
         array_name = input_path.stem
     
-    # 获取文件元信息
+    # Read Parquet metadata
     parquet_file = pq.ParquetFile(str(input_path))
     metadata = parquet_file.metadata
     file_size = get_file_size(input_path)
@@ -1390,10 +1401,10 @@ def from_parquet(
     
     try:
         if file_size > LARGE_FILE_THRESHOLD:
-            # 大文件：按行组流式读取
+            # Large file: stream record batches
             _from_parquet_streaming(npk, parquet_file, array_name, columns)
         else:
-            # 小文件：直接加载
+            # Small file: load directly
             table = pq.read_table(str(input_path), columns=columns)
             arr = np.ascontiguousarray(table.to_pandas().values)
             npk.save({array_name: arr})
@@ -1407,7 +1418,7 @@ def _from_parquet_streaming(
     array_name: str,
     columns: Optional[List[str]]
 ) -> None:
-    """流式导入 Parquet 文件"""
+    """Stream-import a Parquet file."""
     first_batch = True
     
     for batch in parquet_file.iter_batches(columns=columns):
@@ -1428,24 +1439,25 @@ def to_parquet(
     row_group_size: int = 100000,
     chunk_size: int = DEFAULT_CHUNK_SIZE
 ) -> None:
-    """从 NumPack 导出为 Parquet 格式
+    """Export a NumPack array to Parquet.
     
-    对于大数组（>1GB），使用流式读取和分批写入。
+    For large arrays (by default > 1 GB), this function streams reads from NumPack
+    and writes the output in batches.
     
     Parameters
     ----------
     input_path : str or Path
-        输入的 NumPack 文件路径
+        Input NumPack directory path.
     output_path : str or Path
-        输出的 Parquet 文件路径
+        Output Parquet file path.
     array_name : str, optional
-        要导出的数组名
+        Name of the array to export.
     compression : str, optional
-        压缩算法，默认 'snappy'
+        Parquet compression codec.
     row_group_size : int, optional
-        行组大小，默认 100000
+        Parquet row group size used for non-streaming writes.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming export.
     
     Examples
     --------
@@ -1464,7 +1476,7 @@ def to_parquet(
                 array_name = members[0]
             else:
                 raise ValueError(
-                    f"NumPack 文件包含多个数组 {members}，请指定 array_name 参数"
+                    f"NumPack contains multiple arrays {members}; please provide the array_name argument."
                 )
         
         shape = npk.get_shape(array_name)
@@ -1473,19 +1485,19 @@ def to_parquet(
         estimated_size = int(np.prod(shape)) * dtype.itemsize
         
         if estimated_size > LARGE_FILE_THRESHOLD and len(shape) > 0:
-            # 大数组：流式写入
+            # Large array: streamed writes
             _to_parquet_streaming(
                 npk, output_path, array_name, shape, dtype, 
                 compression, row_group_size, chunk_size
             )
         else:
-            # 小数组：直接写入
+            # Small array: write directly
             arr = npk.load(array_name)
-            # 转换为 PyArrow Table
+            # Convert to a PyArrow Table
             if arr.ndim == 1:
                 table = pa.table({'data': arr})
             else:
-                # 多维数组转换为列
+                # Convert a multi-dimensional array into columns
                 columns = {f'col{i}': arr[:, i] for i in range(arr.shape[1])} if arr.ndim == 2 else {'data': arr.flatten()}
                 table = pa.table(columns)
             
@@ -1505,7 +1517,7 @@ def _to_parquet_streaming(
     row_group_size: int,
     chunk_size: int
 ) -> None:
-    """流式导出大数组到 Parquet"""
+    """Stream-export a large array to Parquet."""
     pa = _check_pyarrow()
     import pyarrow.parquet as pq
     
@@ -1519,7 +1531,7 @@ def _to_parquet_streaming(
             end_idx = min(start_idx + batch_rows, total_rows)
             chunk = npk.getitem(array_name, slice(start_idx, end_idx))
             
-            # 转换为 Table
+            # Convert to a Table
             if chunk.ndim == 1:
                 table = pa.table({'data': chunk})
             else:
@@ -1540,7 +1552,7 @@ def _to_parquet_streaming(
 
 
 # =============================================================================
-# Feather 格式转换
+# Feather format conversion
 # =============================================================================
 
 def from_feather(
@@ -1550,22 +1562,22 @@ def from_feather(
     columns: Optional[List[str]] = None,
     drop_if_exists: bool = False
 ) -> None:
-    """从 Feather 文件导入为 NumPack 格式
+    """Import a Feather file into NumPack.
     
-    Feather 是一种快速、轻量级的列式存储格式。
+    Feather is a fast, lightweight columnar format.
     
     Parameters
     ----------
     input_path : str or Path
-        输入的 Feather 文件路径
+        Path to the input Feather file.
     output_path : str or Path
-        输出的 NumPack 文件路径
+        Output NumPack directory path.
     array_name : str, optional
-        数组名称，默认使用文件名（不含扩展名）
+        Name of the output array. If None, defaults to the file stem.
     columns : list of str, optional
-        要读取的列名列表
+        Columns to read.
     drop_if_exists : bool, optional
-        如果输出文件存在是否删除，默认 False
+        If True, delete the output path first if it already exists.
     
     Examples
     --------
@@ -1580,7 +1592,7 @@ def from_feather(
     if array_name is None:
         array_name = input_path.stem
     
-    # Feather 格式需要一次性加载（不支持流式读取）
+    # Feather requires full materialization (no streaming reads here)
     table = feather.read_table(str(input_path), columns=columns)
     arr = table.to_pandas().values
     
@@ -1598,23 +1610,25 @@ def to_feather(
     compression: str = 'zstd',
     chunk_size: int = DEFAULT_CHUNK_SIZE
 ) -> None:
-    """从 NumPack 导出为 Feather 格式
+    """Export a NumPack array to Feather.
     
-    Feather 是一种快速、轻量级的列式存储格式。
-    注意：Feather 不支持真正的流式写入，大文件会完全加载到内存。
+    Notes
+    -----
+    Feather does not support true streaming writes here; the array is loaded into
+    memory before writing.
     
     Parameters
     ----------
     input_path : str or Path
-        输入的 NumPack 文件路径
+        Input NumPack directory path.
     output_path : str or Path
-        输出的 Feather 文件路径
+        Output Feather file path.
     array_name : str, optional
-        要导出的数组名
+        Name of the array to export.
     compression : str, optional
-        压缩算法，默认 'zstd'
+        Feather compression codec.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes (used only for size estimation / warning logic).
     
     Examples
     --------
@@ -1633,7 +1647,7 @@ def to_feather(
                 array_name = members[0]
             else:
                 raise ValueError(
-                    f"NumPack 文件包含多个数组 {members}，请指定 array_name 参数"
+                    f"NumPack contains multiple arrays {members}; please provide the array_name argument."
                 )
         
         shape = npk.get_shape(array_name)
@@ -1641,15 +1655,15 @@ def to_feather(
         
         if estimated_size > LARGE_FILE_THRESHOLD:
             warnings.warn(
-                f"数组 '{array_name}' 较大（>{estimated_size / 1e9:.1f}GB），"
-                "Feather 格式需要将所有数据加载到内存。"
-                "对于大数据集，建议使用 to_parquet 或 to_zarr。",
+                f"Array '{array_name}' is large (>{estimated_size / 1e9:.1f}GB). "
+                "The Feather format loads all data into memory. "
+                "For large datasets, consider using to_parquet or to_zarr.",
                 UserWarning
             )
         
         arr = npk.load(array_name)
         
-        # 转换为 Table
+        # Convert to a Table
         if arr.ndim == 1:
             table = pa.table({'data': arr})
         else:
@@ -1662,7 +1676,7 @@ def to_feather(
 
 
 # =============================================================================
-# Pandas DataFrame 转换
+# Pandas DataFrame conversion
 # =============================================================================
 
 def from_pandas(
@@ -1672,22 +1686,22 @@ def from_pandas(
     drop_if_exists: bool = False,
     chunk_size: int = DEFAULT_CHUNK_SIZE
 ) -> None:
-    """从 Pandas DataFrame 导入为 NumPack 格式
+    """Import a pandas DataFrame into NumPack.
     
-    对于大 DataFrame（>1GB），使用流式写入。
+    Large DataFrames (by default > 1 GB) are streamed into NumPack in chunks.
     
     Parameters
     ----------
     df : pandas.DataFrame
-        输入的 DataFrame
+        Input DataFrame.
     output_path : str or Path
-        输出的 NumPack 文件路径
+        Output NumPack directory path.
     array_name : str, optional
-        数组名称，默认 'data'
+        Name of the output array.
     drop_if_exists : bool, optional
-        如果输出文件存在是否删除，默认 False
+        If True, delete the output path first if it already exists.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming write.
     
     Examples
     --------
@@ -1705,7 +1719,7 @@ def from_pandas(
     
     try:
         if estimated_size > LARGE_FILE_THRESHOLD:
-            # 大 DataFrame：分块写入
+            # Large DataFrame: chunked writes
             _save_array_streaming(npk, array_name, arr, chunk_size)
         else:
             npk.save({array_name: arr})
@@ -1718,21 +1732,21 @@ def to_pandas(
     array_name: Optional[str] = None,
     columns: Optional[List[str]] = None
 ) -> "pd.DataFrame":
-    """从 NumPack 导出为 Pandas DataFrame
+    """Export a NumPack array as a pandas DataFrame.
     
     Parameters
     ----------
     input_path : str or Path
-        输入的 NumPack 文件路径
+        Input NumPack directory path.
     array_name : str, optional
-        要导出的数组名
+        Name of the array to export.
     columns : list of str, optional
-        列名列表，如果为 None 则自动生成
+        Column names. If None and the array is 2D, column names are generated.
     
     Returns
     -------
     pandas.DataFrame
-        转换后的 DataFrame
+        A DataFrame view of the exported array.
     
     Examples
     --------
@@ -1750,7 +1764,7 @@ def to_pandas(
                 array_name = members[0]
             else:
                 raise ValueError(
-                    f"NumPack 文件包含多个数组 {members}，请指定 array_name 参数"
+                    f"NumPack contains multiple arrays {members}; please provide the array_name argument."
                 )
         
         arr = npk.load(array_name)
@@ -1764,7 +1778,7 @@ def to_pandas(
 
 
 # =============================================================================
-# PyTorch Tensor 转换
+# PyTorch tensor conversion
 # =============================================================================
 
 def from_pytorch(
@@ -1774,20 +1788,20 @@ def from_pytorch(
     drop_if_exists: bool = False,
     chunk_size: int = DEFAULT_CHUNK_SIZE
 ) -> None:
-    """从 PyTorch .pt/.pth 文件导入为 NumPack 格式
+    """Import tensors from a PyTorch ``.pt``/``.pth`` file into NumPack.
     
     Parameters
     ----------
     input_path : str or Path
-        输入的 PyTorch 文件路径
+        Path to the input PyTorch file.
     output_path : str or Path
-        输出的 NumPack 文件路径
+        Output NumPack directory path.
     key : str, optional
-        如果文件是字典，指定要加载的键名
+        If the file contains a dict, load only this key.
     drop_if_exists : bool, optional
-        如果输出文件存在是否删除，默认 False
+        If True, delete the output path first if it already exists.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming conversion.
     
     Examples
     --------
@@ -1799,35 +1813,35 @@ def from_pytorch(
     
     input_path = Path(input_path)
     
-    # 加载 PyTorch 文件
+    # Load PyTorch file
     data = torch.load(str(input_path), map_location='cpu', weights_only=False)
     
     npk = _open_numpack_for_write(output_path, drop_if_exists)
     
     try:
         if isinstance(data, dict):
-            # 字典：保存所有张量或指定的键
+            # Dict: save all tensors or a specified key
             if key is not None:
                 if key not in data:
-                    raise KeyError(f"键 '{key}' 不在文件中。可用的键: {list(data.keys())}")
+                    raise KeyError(f"Key '{key}' was not found in the file. Available keys: {list(data.keys())}")
                 tensor = data[key]
                 if torch.is_tensor(tensor):
                     arr = tensor.detach().cpu().numpy()
                     _save_array_with_streaming_check(npk, key, arr, chunk_size)
                 else:
-                    raise TypeError(f"键 '{key}' 的值不是张量类型")
+                    raise TypeError(f"Value for key '{key}' is not a tensor")
             else:
                 for name, tensor in data.items():
                     if torch.is_tensor(tensor):
                         arr = tensor.detach().cpu().numpy()
                         _save_array_with_streaming_check(npk, name, arr, chunk_size)
         elif torch.is_tensor(data):
-            # 单个张量
+            # Single tensor
             array_name = input_path.stem
             arr = data.detach().cpu().numpy()
             _save_array_with_streaming_check(npk, array_name, arr, chunk_size)
         else:
-            raise TypeError(f"不支持的 PyTorch 数据类型: {type(data)}")
+            raise TypeError(f"Unsupported PyTorch data type: {type(data)}")
     finally:
         npk.close()
 
@@ -1838,7 +1852,7 @@ def _save_array_with_streaming_check(
     arr: np.ndarray,
     chunk_size: int
 ) -> None:
-    """检查数组大小并决定是否使用流式保存"""
+    """Check array size and decide whether to use streaming writes."""
     if arr.nbytes > LARGE_FILE_THRESHOLD and arr.ndim > 0:
         _save_array_streaming(npk, array_name, arr, chunk_size)
     else:
@@ -1851,19 +1865,19 @@ def to_pytorch(
     array_names: Optional[List[str]] = None,
     as_dict: bool = True
 ) -> None:
-    """从 NumPack 导出为 PyTorch .pt 格式
+    """Export NumPack arrays to a PyTorch ``.pt`` file.
     
     Parameters
     ----------
     input_path : str or Path
-        输入的 NumPack 文件路径
+        Input NumPack directory path.
     output_path : str or Path
-        输出的 PyTorch 文件路径
+        Output PyTorch file path.
     array_names : list of str, optional
-        要导出的数组名列表。如果为 None，导出所有数组。
+        Names of arrays to export. If None, exports all arrays.
     as_dict : bool, optional
-        是否保存为字典格式，默认 True。如果 False 且只有一个数组，
-        则直接保存张量。
+        If True, save a dict mapping array names to tensors. If False and only one
+        array is exported, save the tensor directly.
     
     Examples
     --------
@@ -1884,17 +1898,17 @@ def to_pytorch(
             tensors[name] = torch.from_numpy(arr)
         
         if not as_dict and len(tensors) == 1:
-            # 保存单个张量
+            # Save a single tensor
             torch.save(list(tensors.values())[0], str(output_path))
         else:
-            # 保存字典
+            # Save a dict
             torch.save(tensors, str(output_path))
     finally:
         npk.close()
 
 
 # =============================================================================
-# S3 远程存储支持
+# S3 remote storage support
 # =============================================================================
 
 def from_s3(
@@ -1905,24 +1919,25 @@ def from_s3(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     **s3_kwargs
 ) -> None:
-    """从 S3 下载文件并导入为 NumPack 格式
+    """Download a file from S3 and import it into NumPack.
     
-    支持的格式：npy, npz, csv, parquet, feather, hdf5
+    Supported formats: npy, npz, csv, parquet, feather, hdf5.
     
     Parameters
     ----------
     s3_path : str
-        S3 路径，格式为 's3://bucket/path/to/file'
+        S3 URL in the form ``"s3://bucket/path/to/file"``.
     output_path : str or Path
-        输出的 NumPack 文件路径
+        Output NumPack directory path.
     format : str, optional
-        文件格式，默认 'auto'（从扩展名推断）
+        Input format. If ``"auto"``, it is inferred from the file suffix.
     drop_if_exists : bool, optional
-        如果输出文件存在是否删除，默认 False
+        If True, delete the output path first if it already exists.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming conversion.
     **s3_kwargs
-        传递给 s3fs 的其他参数（如 anon=True 用于公开桶）
+        Keyword arguments forwarded to ``s3fs.S3FileSystem`` (for example,
+        ``anon=True`` for public buckets).
     
     Examples
     --------
@@ -1933,10 +1948,10 @@ def from_s3(
     s3fs = _check_s3fs()
     import tempfile
     
-    # 创建 S3 文件系统
+    # Create S3 filesystem
     fs = s3fs.S3FileSystem(**s3_kwargs)
     
-    # 推断格式
+    # Infer format
     if format == 'auto':
         suffix = Path(s3_path).suffix.lower()
         format_map = {
@@ -1951,15 +1966,15 @@ def from_s3(
         }
         format = format_map.get(suffix, 'numpy')
     
-    # 下载到临时文件并转换
+    # Download into a temporary file and convert
     with tempfile.NamedTemporaryFile(suffix=Path(s3_path).suffix, delete=False) as tmp:
         tmp_path = tmp.name
     
     try:
-        # 流式下载
+        # Download
         fs.get(s3_path, tmp_path)
         
-        # 根据格式调用相应的导入函数
+        # Dispatch to the corresponding import function
         format_handlers = {
             'numpy': from_numpy,
             'csv': from_csv,
@@ -1971,11 +1986,11 @@ def from_s3(
         
         handler = format_handlers.get(format)
         if handler is None:
-            raise ValueError(f"不支持的格式: {format}")
+            raise ValueError(f"Unsupported format: {format}")
         
         handler(tmp_path, output_path, drop_if_exists=drop_if_exists, chunk_size=chunk_size)
     finally:
-        # 清理临时文件
+        # Clean up temporary file
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
@@ -1988,24 +2003,24 @@ def to_s3(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     **s3_kwargs
 ) -> None:
-    """从 NumPack 导出并上传到 S3
+    """Export from NumPack and upload to S3.
     
-    支持的格式：npy, npz, csv, parquet, feather, hdf5
+    Supported formats: npy, npz, csv, parquet, feather, hdf5.
     
     Parameters
     ----------
     input_path : str or Path
-        输入的 NumPack 文件路径
+        Input NumPack directory path.
     s3_path : str
-        S3 路径，格式为 's3://bucket/path/to/file'
+        S3 URL in the form ``"s3://bucket/path/to/file"``.
     format : str, optional
-        输出文件格式，默认 'auto'（从扩展名推断）
+        Output format. If ``"auto"``, it is inferred from the file suffix.
     array_name : str, optional
-        要导出的数组名
+        Name of the array to export.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming export.
     **s3_kwargs
-        传递给 s3fs 的其他参数
+        Keyword arguments forwarded to ``s3fs.S3FileSystem``.
     
     Examples
     --------
@@ -2015,10 +2030,10 @@ def to_s3(
     s3fs = _check_s3fs()
     import tempfile
     
-    # 创建 S3 文件系统
+    # Create S3 filesystem
     fs = s3fs.S3FileSystem(**s3_kwargs)
     
-    # 推断格式
+    # Infer format
     if format == 'auto':
         suffix = Path(s3_path).suffix.lower()
         format_map = {
@@ -2033,12 +2048,12 @@ def to_s3(
         }
         format = format_map.get(suffix, 'numpy')
     
-    # 导出到临时文件
+    # Export into a temporary file
     with tempfile.NamedTemporaryFile(suffix=Path(s3_path).suffix, delete=False) as tmp:
         tmp_path = tmp.name
     
     try:
-        # 根据格式调用相应的导出函数
+        # Dispatch to the corresponding export function
         format_handlers = {
             'numpy': lambda inp, out, **kw: to_numpy(inp, out, array_names=[array_name] if array_name else None, chunk_size=chunk_size),
             'csv': lambda inp, out, **kw: to_csv(inp, out, array_name=array_name, chunk_size=chunk_size),
@@ -2050,24 +2065,24 @@ def to_s3(
         
         handler = format_handlers.get(format)
         if handler is None:
-            raise ValueError(f"不支持的格式: {format}")
+            raise ValueError(f"Unsupported format: {format}")
         
         handler(input_path, tmp_path)
         
-        # 上传到 S3
+        # Upload to S3
         fs.put(tmp_path, s3_path)
     finally:
-        # 清理临时文件
+        # Clean up temporary file
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
 
 # =============================================================================
-# 便捷函数
+# Convenience functions
 # =============================================================================
 
 def _infer_format(path: Path) -> str:
-    """从文件路径推断格式"""
+    """Infer format from a file path."""
     suffix = path.suffix.lower()
     
     format_map = {
@@ -2089,7 +2104,7 @@ def _infer_format(path: Path) -> str:
         '.npk': 'numpack',
     }
     
-    # 检查是否是目录（可能是 NumPack 或 Zarr）
+    # Check whether it is a directory (could be NumPack or Zarr)
     if path.is_dir():
         if (path / 'metadata.npkm').exists():
             return 'numpack'
@@ -2100,55 +2115,55 @@ def _infer_format(path: Path) -> str:
 
 
 # =============================================================================
-# 导出公共 API
+# Export public API
 # =============================================================================
 
 __all__ = [
-    # 异常
+    # Exceptions
     'DependencyError',
     
-    # 工具函数
+    # Utility functions
     'get_file_size',
     'is_large_file',
     'estimate_chunk_rows',
     
-    # NumPy 转换
+    # NumPy conversion
     'from_numpy',
     'to_numpy',
     
-    # CSV/TXT 转换
+    # CSV/TXT conversion
     'from_csv',
     'to_csv',
     'from_txt',
     'to_txt',
     
-    # HDF5 转换
+    # HDF5 conversion
     'from_hdf5',
     'to_hdf5',
     
-    # Zarr 转换
+    # Zarr conversion
     'from_zarr',
     'to_zarr',
     
-    # Parquet/Feather 转换
+    # Parquet/Feather conversion
     'from_parquet',
     'to_parquet',
     'from_feather',
     'to_feather',
     
-    # Pandas 转换
+    # Pandas conversion
     'from_pandas',
     'to_pandas',
     
-    # PyTorch 转换
+    # PyTorch conversion
     'from_pytorch',
     'to_pytorch',
     
-    # S3 支持
+    # S3 support
     'from_s3',
     'to_s3',
     
-    # 常量
+    # Constants
     'LARGE_FILE_THRESHOLD',
     'DEFAULT_CHUNK_SIZE',
     'DEFAULT_BATCH_ROWS',

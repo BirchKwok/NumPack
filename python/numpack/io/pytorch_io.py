@@ -15,7 +15,7 @@ from .utils import (
 
 
 # =============================================================================
-# PyTorch Tensor 转换
+# PyTorch tensor conversion
 # =============================================================================
 
 def from_pytorch(
@@ -25,20 +25,29 @@ def from_pytorch(
     drop_if_exists: bool = False,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
 ) -> None:
-    """从 PyTorch .pt/.pth 文件导入为 NumPack 格式
+    """Import tensors from a PyTorch ``.pt``/``.pth`` file into NumPack.
 
     Parameters
     ----------
     input_path : str or Path
-        输入的 PyTorch 文件路径
+        Path to the input PyTorch file.
     output_path : str or Path
-        输出的 NumPack 文件路径
+        Output NumPack directory path.
     key : str, optional
-        如果文件是字典，指定要加载的键名
+        If the file contains a dict, load only this key.
     drop_if_exists : bool, optional
-        如果输出文件存在是否删除，默认 False
+        If True, delete the output path first if it already exists.
     chunk_size : int, optional
-        分块大小（字节），默认 100MB
+        Chunk size in bytes used for streaming conversion.
+
+    Raises
+    ------
+    DependencyError
+        If the optional dependency ``torch`` is not installed.
+    KeyError
+        If `key` is provided but not present in the loaded dict.
+    TypeError
+        If the loaded object is not a tensor or a dict of tensors.
 
     Examples
     --------
@@ -50,35 +59,35 @@ def from_pytorch(
 
     input_path = Path(input_path)
 
-    # 加载 PyTorch 文件
+    # Load PyTorch file
     data = torch.load(str(input_path), map_location='cpu', weights_only=False)
 
     npk = _open_numpack_for_write(output_path, drop_if_exists)
 
     try:
         if isinstance(data, dict):
-            # 字典：保存所有张量或指定的键
+            # Dict: save all tensors or a specified key
             if key is not None:
                 if key not in data:
-                    raise KeyError(f"键 '{key}' 不在文件中。可用的键: {list(data.keys())}")
+                    raise KeyError(f"Key '{key}' was not found in the file. Available keys: {list(data.keys())}")
                 tensor = data[key]
                 if torch.is_tensor(tensor):
                     arr = tensor.detach().cpu().numpy()
                     _save_array_with_streaming_check(npk, key, arr, chunk_size)
                 else:
-                    raise TypeError(f"键 '{key}' 的值不是张量类型")
+                    raise TypeError(f"Value for key '{key}' is not a tensor")
             else:
                 for name, tensor in data.items():
                     if torch.is_tensor(tensor):
                         arr = tensor.detach().cpu().numpy()
                         _save_array_with_streaming_check(npk, name, arr, chunk_size)
         elif torch.is_tensor(data):
-            # 单个张量
+            # Single tensor
             array_name = input_path.stem
             arr = data.detach().cpu().numpy()
             _save_array_with_streaming_check(npk, array_name, arr, chunk_size)
         else:
-            raise TypeError(f"不支持的 PyTorch 数据类型: {type(data)}")
+            raise TypeError(f"Unsupported PyTorch data type: {type(data)}")
     finally:
         npk.close()
 
@@ -89,19 +98,24 @@ def to_pytorch(
     array_names: Optional[List[str]] = None,
     as_dict: bool = True,
 ) -> None:
-    """从 NumPack 导出为 PyTorch .pt 格式
+    """Export NumPack arrays to a PyTorch ``.pt`` file.
 
     Parameters
     ----------
     input_path : str or Path
-        输入的 NumPack 文件路径
+        Input NumPack directory path.
     output_path : str or Path
-        输出的 PyTorch 文件路径
+        Output PyTorch file path.
     array_names : list of str, optional
-        要导出的数组名列表。如果为 None，导出所有数组。
+        Names of arrays to export. If None, exports all arrays.
     as_dict : bool, optional
-        是否保存为字典格式，默认 True。如果 False 且只有一个数组，
-        则直接保存张量。
+        If True, save a dict mapping array names to tensors. If False and only
+        one array is exported, save the tensor directly.
+
+    Raises
+    ------
+    DependencyError
+        If the optional dependency ``torch`` is not installed.
 
     Examples
     --------
@@ -122,10 +136,10 @@ def to_pytorch(
             tensors[name] = torch.from_numpy(arr)
 
         if not as_dict and len(tensors) == 1:
-            # 保存单个张量
+            # Save a single tensor
             torch.save(list(tensors.values())[0], str(output_path))
         else:
-            # 保存字典
+            # Save a dict
             torch.save(tensors, str(output_path))
     finally:
         npk.close()

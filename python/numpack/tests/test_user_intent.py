@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-测试用户意图识别功能
+Tests for user intent recognition.
 
-验证NumPack能够正确区分：
-1. 单次访问：lazy_array[i] - 尊重用户意图，不干预
-2. 批量访问：lazy_array[indices] - 一次性FFI调用优化
-3. 复杂索引：切片、布尔掩码等 - 使用现有逻辑
+Verify that NumPack correctly distinguishes:
+1. Single access: lazy_array[i] - respect user intent, no intervention
+2. Batch access: lazy_array[indices] - optimize with a single FFI call
+3. Complex indexing: slices, boolean masks, etc. - use existing logic
 """
 
 import pytest
@@ -19,90 +19,90 @@ from numpack import NumPack
 
 
 class TestUserIntentRecognition:
-    """测试用户意图识别和相应的优化策略"""
+    """Tests for user intent recognition and corresponding optimization strategies."""
     
     def setup_method(self):
-        """设置测试环境"""
+        """Set up test environment."""
         self.temp_dir = tempfile.mkdtemp()
         self.test_file = Path(self.temp_dir) / "test_intent"
         
-        # 创建测试数据
+        # Create test data
         self.rows, self.cols = 50000, 100
         self.test_data = {
             'test_array': np.random.rand(self.rows, self.cols).astype(np.float32)
         }
         
-        # 保存测试数据
+        # Save test data
         self.npk = NumPack(str(self.test_file), drop_if_exists=True)
-        self.npk.open()  # 手动打开文件
+        self.npk.open()  # Open explicitly
         self.npk.save(self.test_data)
         
     def teardown_method(self):
-        """清理测试环境"""
+        """Clean up test environment."""
         if Path(self.temp_dir).exists():
             shutil.rmtree(self.temp_dir)
 
     def test_single_access_intent(self):
-        """测试单次访问意图识别"""
+        """Test single access intent recognition."""
         lazy_array = self.npk.load('test_array', lazy=True)
         
-        # 正确的单次访问用法 - 应该被识别为SingleAccess
+        # Correct single access usage - should be recognized as SingleAccess
         single_index = 42
         result = lazy_array[single_index]
         
         assert result.shape == (self.cols,), f"Single access result shape error: {result.shape}"
         
-        # 验证数据正确性
+        # Verify data correctness
         expected = self.test_data['test_array'][single_index]
         np.testing.assert_array_almost_equal(result, expected, decimal=5)
         print("Single access intent recognized correctly")
 
     def test_batch_access_intent(self):
-        """测试批量访问意图识别"""
+        """Test batch access intent recognition."""
         lazy_array = self.npk.load('test_array', lazy=True)
         
-        # 正确的批量访问用法 - 应该被识别为BatchAccess
+        # Correct batch access usage - should be recognized as BatchAccess
         batch_indices = [10, 25, 50, 100, 200]
         result = lazy_array[batch_indices]
         
         assert result.shape == (len(batch_indices), self.cols), f"Batch access result shape error: {result.shape}"
         
-        # 验证数据正确性
+        # Verify data correctness
         expected = self.test_data['test_array'][batch_indices]
         np.testing.assert_array_almost_equal(result, expected, decimal=5)
         print("Batch access intent recognized correctly")
 
     def test_numpy_array_batch_access(self):
-        """测试NumPy数组索引的批量访问"""
+        """Test batch access using NumPy array indexing."""
         lazy_array = self.npk.load('test_array', lazy=True)
         
-        # NumPy数组索引 - 应该被识别为BatchAccess
+        # NumPy array indexing - should be recognized as BatchAccess
         indices = np.array([5, 15, 35, 75, 150])
         result = lazy_array[indices]
         
         assert result.shape == (len(indices), self.cols), f"NumPy array index result shape error: {result.shape}"
         
-        # 验证数据正确性
+        # Verify data correctness
         expected = self.test_data['test_array'][indices]
         np.testing.assert_array_almost_equal(result, expected, decimal=5)
         print("NumPy array index batch access correct")
 
     def test_slice_access(self):
-        """测试切片访问 - 应该被识别为ComplexIndex"""
+        """Test slice access - should be recognized as ComplexIndex."""
         lazy_array = self.npk.load('test_array', lazy=True)
         
-        # 切片访问
+        # Slice access
         result = lazy_array[10:20]
         
         assert result.shape == (10, self.cols), f"Slice access result shape error: {result.shape}"
         
-        # 验证数据正确性
+        # Verify data correctness
         expected = self.test_data['test_array'][10:20]
         np.testing.assert_array_almost_equal(result, expected, decimal=5)
         print("Slice access correct")
 
     def test_user_intent_examples(self):
-        """展示正确的用户意图用法示例"""
+        """Demonstrate correct user intent usage examples."""
         lazy_array = self.npk.load('test_array', lazy=True)
         
         print("\nUser Intent Examples:")
@@ -135,7 +135,7 @@ class TestUserIntentRecognition:
         print("\nAll user intent example tests passed")
 
 if __name__ == "__main__":
-    # 运行测试
+    # Run tests
     test = TestUserIntentRecognition()
     test.setup_method()
     

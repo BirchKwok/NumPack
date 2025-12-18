@@ -6,45 +6,45 @@ from typing import Any, Optional, Tuple, Union
 
 import numpy as np
 
-# 大文件阈值：1GB
+# Large file threshold: 1GB
 LARGE_FILE_THRESHOLD = 1 * 1024 * 1024 * 1024  # 1GB in bytes
 
-# 默认分块大小：100MB（行数会根据数据类型自动计算）
+# Default chunk size: 100MB (row count is computed based on dtype)
 DEFAULT_CHUNK_SIZE = 100 * 1024 * 1024  # 100MB in bytes
 
-# 默认批处理行数（用于流式处理）
+# Default batch rows (used for streaming)
 DEFAULT_BATCH_ROWS = 100000
 
 
 # =============================================================================
-# 依赖检查工具
+# Dependency checking utilities
 # =============================================================================
 
 class DependencyError(ImportError):
-    """可选依赖未安装时抛出的异常"""
+    """Raised when an optional dependency is required but not installed."""
 
     pass
 
 
 def _check_dependency(module_name: str, package_name: Optional[str] = None) -> Any:
-    """检查并导入可选依赖
+    """Import an optional dependency (lazy import).
 
     Parameters
     ----------
     module_name : str
-        要导入的模块名
+        Module name to import.
     package_name : str, optional
-        pip 安装时的包名（如果与模块名不同）
+        Package name to install with pip (if different from `module_name`).
 
     Returns
     -------
     module
-        导入的模块
+        Imported module.
 
     Raises
     ------
     DependencyError
-        如果依赖未安装
+        If the dependency is not installed.
     """
     import importlib
 
@@ -55,62 +55,63 @@ def _check_dependency(module_name: str, package_name: Optional[str] = None) -> A
         return importlib.import_module(module_name)
     except ImportError:
         raise DependencyError(
-            f"需要安装 '{package_name}' 才能使用此功能。\n"
-            f"请运行: pip install {package_name}"
+            f"The optional dependency '{package_name}' is required to use this feature.\n"
+            f"Please run: pip install {package_name}"
         )
 
 
 def _check_h5py():
-    """检查并导入 h5py"""
+    """Import `h5py`."""
     return _check_dependency('h5py')
 
 
 def _check_zarr():
-    """检查并导入 zarr"""
+    """Import `zarr`."""
     return _check_dependency('zarr')
 
 
 def _check_pyarrow():
-    """检查并导入 pyarrow"""
+    """Import `pyarrow`."""
     return _check_dependency('pyarrow')
 
 
 def _check_pandas():
-    """检查并导入 pandas"""
+    """Import `pandas`."""
     return _check_dependency('pandas')
 
 
 def _check_torch():
-    """检查并导入 torch (PyTorch)"""
+    """Import `torch` (PyTorch)."""
     return _check_dependency('torch', 'torch')
 
 
 def _check_s3fs():
-    """检查并导入 s3fs"""
+    """Import `s3fs`."""
     return _check_dependency('s3fs')
 
 
 def _check_boto3():
-    """检查并导入 boto3"""
+    """Import `boto3`."""
     return _check_dependency('boto3')
 
 
 # =============================================================================
-# 文件大小和流式处理工具
+# File size and streaming utilities
 # =============================================================================
 
 def get_file_size(path: Union[str, Path]) -> int:
-    """获取文件大小（字节）
+    """Return the file size in bytes.
 
     Parameters
     ----------
     path : str or Path
-        文件路径
+        File path. If a directory is provided, the total size of all files under
+        the directory is returned.
 
     Returns
     -------
     int
-        文件大小（字节），如果是目录则返回目录总大小
+        File size in bytes.
     """
     path = Path(path)
     if path.is_file():
@@ -125,19 +126,19 @@ def get_file_size(path: Union[str, Path]) -> int:
 
 
 def is_large_file(path: Union[str, Path], threshold: int = LARGE_FILE_THRESHOLD) -> bool:
-    """检查文件是否为大文件（需要流式处理）
+    """Return True if the file/directory size exceeds the threshold.
 
     Parameters
     ----------
     path : str or Path
-        文件路径
+        File path.
     threshold : int, optional
-        大文件阈值（字节），默认 1GB
+        Threshold in bytes.
 
     Returns
     -------
     bool
-        如果文件大于阈值返回 True
+        True if size is greater than `threshold`.
     """
     return get_file_size(path) > threshold
 
@@ -147,45 +148,45 @@ def estimate_chunk_rows(
     dtype: np.dtype,
     target_chunk_bytes: int = DEFAULT_CHUNK_SIZE,
 ) -> int:
-    """估算每个分块应包含的行数
+    """Estimate the number of rows per chunk for streaming I/O.
 
     Parameters
     ----------
     shape : tuple
-        数组形状
+        Array shape.
     dtype : numpy.dtype
-        数据类型
+        Array dtype.
     target_chunk_bytes : int, optional
-        目标分块大小（字节），默认 100MB
+        Target chunk size in bytes.
 
     Returns
     -------
     int
-        建议的每批处理行数
+        Suggested number of rows per chunk.
     """
     if len(shape) == 0:
         return 1
 
-    # 计算每行的字节数
+    # Calculate the number of bytes per row
     row_elements = int(np.prod(shape[1:])) if len(shape) > 1 else 1
     bytes_per_row = row_elements * dtype.itemsize
 
     if bytes_per_row == 0:
         return DEFAULT_BATCH_ROWS
 
-    # 计算目标行数
+    # Compute target row count
     target_rows = max(1, target_chunk_bytes // bytes_per_row)
 
-    # 限制在合理范围内
+    # Clamp to a reasonable range
     return min(target_rows, shape[0], DEFAULT_BATCH_ROWS * 10)
 
 
 # =============================================================================
-# NumPack 工具函数
+# NumPack helper functions
 # =============================================================================
 
 def _get_numpack_class():
-    """获取 NumPack 类"""
+    """Get the NumPack class."""
     from numpack import NumPack
 
     return NumPack
@@ -195,19 +196,19 @@ def _open_numpack_for_write(
     output_path: Union[str, Path],
     drop_if_exists: bool = False,
 ) -> Any:
-    """打开 NumPack 文件用于写入
+    """Open a NumPack file for writing.
 
     Parameters
     ----------
     output_path : str or Path
-        输出路径
+        Output path.
     drop_if_exists : bool, optional
-        如果文件存在是否删除，默认 False
+        If True, delete the existing output directory first.
 
     Returns
     -------
     NumPack
-        NumPack 实例
+        NumPack instance.
     """
     NumPack = _get_numpack_class()
     npk = NumPack(str(output_path), drop_if_exists=drop_if_exists)
@@ -216,17 +217,17 @@ def _open_numpack_for_write(
 
 
 def _open_numpack_for_read(input_path: Union[str, Path]) -> Any:
-    """打开 NumPack 文件用于读取
+    """Open a NumPack file for reading.
 
     Parameters
     ----------
     input_path : str or Path
-        输入路径
+        Input path.
 
     Returns
     -------
     NumPack
-        NumPack 实例
+        NumPack instance.
     """
     NumPack = _get_numpack_class()
     npk = NumPack(str(input_path))
@@ -240,7 +241,7 @@ def _save_array_streaming(
     arr: np.ndarray,
     chunk_size: int,
 ) -> None:
-    """流式保存大数组到 NumPack"""
+    """Stream-save a large array to NumPack."""
     shape = arr.shape
     dtype = arr.dtype
     batch_rows = estimate_chunk_rows(shape, dtype, chunk_size)
@@ -262,7 +263,7 @@ def _save_array_with_streaming_check(
     arr: np.ndarray,
     chunk_size: int,
 ) -> None:
-    """检查数组大小并决定是否使用流式保存"""
+    """Check array size and decide whether to use streaming writes."""
     if arr.nbytes > LARGE_FILE_THRESHOLD and arr.ndim > 0:
         _save_array_streaming(npk, array_name, arr, chunk_size)
     else:
@@ -270,11 +271,11 @@ def _save_array_with_streaming_check(
 
 
 # =============================================================================
-# 便捷函数工具
+# Convenience helpers
 # =============================================================================
 
 def _infer_format(path: Path) -> str:
-    """从文件路径推断格式"""
+    """Infer format from a file path."""
     suffix = path.suffix.lower()
 
     format_map = {
@@ -296,7 +297,7 @@ def _infer_format(path: Path) -> str:
         '.npk': 'numpack',
     }
 
-    # 检查是否是目录（可能是 NumPack 或 Zarr）
+    # Check whether it is a directory (could be NumPack or Zarr)
     if path.is_dir():
         if (path / 'metadata.npkm').exists():
             return 'numpack'

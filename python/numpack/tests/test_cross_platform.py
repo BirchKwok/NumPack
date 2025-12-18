@@ -1,7 +1,7 @@
 """
-Cross-platform consistency tests
+Cross-platform consistency tests.
 
-确保NumPack在Windows、macOS和Linux上行为一致
+Ensure NumPack behaves consistently on Windows, macOS, and Linux.
 """
 
 import pytest
@@ -15,22 +15,22 @@ from numpack import NumPack, get_backend_info
 
 @pytest.fixture
 def temp_dir():
-    """创建临时目录"""
+    """Create temporary directory."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
 
 
 class TestCrossPlatformConsistency:
-    """验证跨平台一致性"""
+    """Verify cross-platform consistency."""
     
     def test_same_backend_all_platforms(self):
-        """所有平台应该使用相同的backend（Rust）"""
+        """All platforms should use the same backend (Rust)."""
         info = get_backend_info()
-        # 验证后端类型
+        # Verify backend type
         assert info['backend_type'] == 'rust'
     
     def test_file_format_compatibility(self, temp_dir):
-        """文件格式应该跨平台兼容"""
+        """File format should be cross-platform compatible."""
         npk_path = temp_dir / "test.npk"
         
         test_arrays = {
@@ -40,49 +40,49 @@ class TestCrossPlatformConsistency:
             'uint8': np.arange(256, dtype=np.uint8),
         }
         
-        # 保存
+        # Save
         with NumPack(str(npk_path), warn_no_context=False) as npk:
             npk.save(test_arrays)
         
-        # 加载并验证
+        # Load and verify
         with NumPack(str(npk_path), warn_no_context=False) as npk:
             for name, expected in test_arrays.items():
                 loaded = npk.load(name)
                 assert np.array_equal(loaded, expected), \
-                    f"数组'{name}'在保存/加载后不相等"
+                    f"Array '{name}' not equal after save/load"
     
     def test_context_manager_behavior(self, temp_dir):
-        """Context manager应该在所有平台上行为一致"""
+        """Context manager should behave consistently on all platforms."""
         npk_path = temp_dir / "test.npk"
         
-        # 创建并使用context manager
+        # Create and use context manager
         with NumPack(str(npk_path), strict_context_mode=True, warn_no_context=False) as npk:
             npk.save({'data': np.arange(10)})
             result = npk.load('data')
             assert len(result) == 10
         
-        # Context退出后操作应该失败（所有平台）
+        # Operations after context exit should fail (all platforms)
         with pytest.raises(RuntimeError, match="closed"):
             npk.save({'more': np.arange(5)})
     
     def test_strict_mode_consistent(self, temp_dir):
-        """Strict mode在所有平台行为一致"""
+        """Strict mode behaves consistently on all platforms."""
         npk_path = temp_dir / "test.npk"
         
         npk = NumPack(str(npk_path), strict_context_mode=True, warn_no_context=False)
-        npk.open()  # 需要先打开才能测试strict模式
+        npk.open()  # Must open first to test strict mode
         
-        # 所有平台都应该阻止非context使用
+        # All platforms should block non-context usage
         with pytest.raises(RuntimeError, match="strict context mode"):
             npk.save({'data': np.array([1, 2, 3])})
         
         npk.close()
     
     def test_data_types_consistency(self, temp_dir):
-        """所有数据类型在所有平台上一致"""
+        """All data types are consistent across all platforms."""
         npk_path = temp_dir / "types.npk"
         
-        # 测试各种数据类型
+        # Test various data types
         test_data = {
             'bool': np.array([True, False, True], dtype=np.bool_),
             'int8': np.array([-128, 0, 127], dtype=np.int8),
@@ -107,23 +107,23 @@ class TestCrossPlatformConsistency:
                     assert np.array_equal(loaded, expected), f"{name} data type mismatch"
     
     def test_lazy_loading_consistency(self, temp_dir):
-        """LazyArray在所有平台上行为一致"""
+        """LazyArray behaves consistently on all platforms."""
         npk_path = temp_dir / "lazy.npk"
         data = np.arange(1000).reshape(100, 10)
         
         with NumPack(str(npk_path), warn_no_context=False) as npk:
             npk.save({'data': data})
             
-            # Lazy加载
+            # Lazy load
             lazy = npk.load('data', lazy=True)
             
-            # 各种索引方式
+            # Various indexing methods
             assert np.array_equal(lazy[0], data[0])
             assert np.array_equal(lazy[0:10], data[0:10])
             assert np.array_equal(lazy[[1, 5, 10]], data[[1, 5, 10]])
     
     def test_metadata_consistency(self, temp_dir):
-        """元数据在所有平台上一致"""
+        """Metadata is consistent across all platforms."""
         npk_path = temp_dir / "meta.npk"
         
         test_data = {
@@ -134,7 +134,7 @@ class TestCrossPlatformConsistency:
         with NumPack(str(npk_path), warn_no_context=False) as npk:
             npk.save(test_data)
             
-            # 检查元数据
+            # Check metadata
             members = npk.get_member_list()
             assert set(members) == {'array1', 'array2'}
             
@@ -147,10 +147,10 @@ class TestCrossPlatformConsistency:
 
 
 class TestPerformanceConsistency:
-    """测试性能一致性"""
+    """Test performance consistency."""
     
     def test_backend_info(self):
-        """验证backend信息正确"""
+        """Verify backend info is correct."""
         info = get_backend_info()
         
         assert 'backend_type' in info
@@ -160,21 +160,21 @@ class TestPerformanceConsistency:
         
 
         
-        # platform应该是有效值
+        # Platform should be a valid value
         assert info['platform'] in ['Windows', 'Darwin', 'Linux']
         
-        # is_windows应该与platform一致
+        # is_windows should match platform
         assert info['is_windows'] == (info['platform'] == 'Windows')
     
     def test_batch_operations_work(self, temp_dir):
-        """验证批量操作在所有平台工作"""
+        """Verify batch operations work on all platforms."""
         npk_path = temp_dir / "batch.npk"
         data = np.arange(10000).reshape(1000, 10)
         
         with NumPack(str(npk_path), warn_no_context=False) as npk:
             npk.save({'data': data})
             
-            # 批量索引访问
+            # Batch index access
             indices = np.array([0, 10, 50, 100, 500, 999])
             result = npk.load('data', lazy=True)[indices]
             
@@ -183,27 +183,27 @@ class TestPerformanceConsistency:
 
 
 class TestWarningBehavior:
-    """测试警告行为"""
+    """Test warning behavior."""
     
     def test_warning_on_windows_without_context(self, temp_dir):
-        """测试Windows上不使用context manager的警告"""
+        """Test warning on Windows when not using context manager."""
         npk_path = temp_dir / "warn_test.npk"
         
-        # 在Windows上应该警告，其他平台不警告（除非显式设置）
+        # Should warn on Windows, not on other platforms (unless explicitly set)
         if sys.platform.startswith('win'):
             with pytest.warns(UserWarning, match="strict context mode"):
                 npk = NumPack(str(npk_path))
                 npk.close()
         else:
-            # 非Windows平台默认不警告
-            npk = NumPack(str(npk_path))  # 不应该警告
+            # Non-Windows platforms do not warn by default
+            npk = NumPack(str(npk_path))  # Should not warn
             npk.close()
     
     def test_warning_suppression(self, temp_dir):
-        """测试警告可以被抑制"""
+        """Test that warnings can be suppressed."""
         npk_path = temp_dir / "no_warn.npk"
         
-        # 显式设置warn_no_context=False应该不警告
+        # Explicitly setting warn_no_context=False should not warn
         npk = NumPack(str(npk_path), warn_no_context=False)
         npk.close()
 
