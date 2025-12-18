@@ -33,3 +33,4 @@ dist/*
 
 claude_code_env.sh
 .claude/
+.windsurf/
