@@ -112,22 +112,29 @@ impl PyVectorSearch {
         let a_dtype = a.getattr("dtype")?.str()?.to_string();
         let b_dtype = b.getattr("dtype")?.str()?.to_string();
 
-        // Ensure both arrays have the same dtype
+        // If dtypes are different, convert both to float64 for computation
         if a_dtype != b_dtype {
-            return Err(PyTypeError::new_err(format!(
-                "Array a dtype ({}) must match array b dtype ({})",
-                a_dtype, b_dtype
-            )));
+            let numpy = py.import("numpy")?;
+            let a_f64 = a.call_method1("astype", (numpy.getattr("float64")?,))?;
+            let b_f64 = b.call_method1("astype", (numpy.getattr("float64")?,))?;
+            return self.compute_metric_f64(py, &a_f64, &b_f64, metric_type);
         }
 
         // Dispatch to different computation paths based on dtype
         match a_dtype.as_str() {
             "float64" => self.compute_metric_f64(py, a, b, metric_type),
             "float32" => self.compute_metric_f32(py, a, b, metric_type),
+            "float16" => self.compute_metric_f16(py, a, b, metric_type),
             "int8" => self.compute_metric_i8(py, a, b, metric_type),
+            "int16" => self.compute_metric_i16(py, a, b, metric_type),
+            "int32" => self.compute_metric_i32(py, a, b, metric_type),
+            "int64" => self.compute_metric_i64(py, a, b, metric_type),
             "uint8" => self.compute_metric_u8(py, a, b, metric_type),
+            "uint16" => self.compute_metric_u16(py, a, b, metric_type),
+            "uint32" => self.compute_metric_u32(py, a, b, metric_type),
+            "uint64" => self.compute_metric_u64(py, a, b, metric_type),
             _ => Err(PyTypeError::new_err(format!(
-                "Unsupported dtype: {}. Supported: float64, float32, int8, uint8",
+                "Unsupported dtype: {}. Supported: float64, float32, float16, int8, int16, int32, int64, uint8, uint16, uint32, uint64",
                 a_dtype
             ))),
         }
@@ -184,12 +191,12 @@ impl PyVectorSearch {
         let query_dtype = query.getattr("dtype")?.str()?.to_string();
         let candidates_dtype = candidates.getattr("dtype")?.str()?.to_string();
 
-        // Ensure both arrays have the same dtype
+        // If dtypes are different, convert both to float64 for computation
         if query_dtype != candidates_dtype {
-            return Err(PyTypeError::new_err(format!(
-                "Query dtype ({}) must match candidates dtype ({})",
-                query_dtype, candidates_dtype
-            )));
+            let numpy = py.import("numpy")?;
+            let query_f64 = query.call_method1("astype", (numpy.getattr("float64")?,))?;
+            let candidates_f64 = candidates.call_method1("astype", (numpy.getattr("float64")?,))?;
+            return self.batch_compute_f64(py, &query_f64, &candidates_f64, metric_type);
         }
 
         // Dispatch to different computation paths based on dtype
@@ -197,20 +204,27 @@ impl PyVectorSearch {
         match query_dtype.as_str() {
             "float64" => self.batch_compute_f64(py, query, candidates, metric_type),
             "float32" => self.batch_compute_f32(py, query, candidates, metric_type),
-            "float16" => self.batch_compute_f16(py, query, candidates, metric_type),
+            "float16" => self.batch_compute_f16_impl(py, query, candidates, metric_type),
             "int8" => self.batch_compute_i8(py, query, candidates, metric_type),
+            "int16" => self.batch_compute_i16(py, query, candidates, metric_type),
+            "int32" => self.batch_compute_i32(py, query, candidates, metric_type),
+            "int64" => self.batch_compute_i64(py, query, candidates, metric_type),
             "uint8" => self.batch_compute_u8(py, query, candidates, metric_type),
+            "uint16" => self.batch_compute_u16(py, query, candidates, metric_type),
+            "uint32" => self.batch_compute_u32(py, query, candidates, metric_type),
+            "uint64" => self.batch_compute_u64(py, query, candidates, metric_type),
             _ => Err(PyTypeError::new_err(format!(
-                "Unsupported dtype: {}. Supported: float64, float32, float16, int8, uint8",
+                "Unsupported dtype: {}. Supported: float64, float32, float16, int8, int16, int32, int64, uint8, uint16, uint32, uint64",
                 query_dtype
             ))),
         }
     }
 
-    /// Compute batch scores AND merge into top-k in a single FFI call (optimized for streaming)
+    /// Segmented Top-K search: Process large datasets in segments with incremental merging
     ///
-    /// This method combines batch_compute + merge_top_k into a single FFI call,
-    /// eliminating intermediate Python array allocation and reducing FFI overhead by ~50%.
+    /// This method is designed for streaming/segmented processing of large candidate sets.
+    /// It computes scores for a batch of candidates and merges results with the current top-k
+    /// in a single FFI call, eliminating intermediate Python array allocation.
     ///
     /// Args:
     ///     query: Query vector (1D numpy array)
@@ -227,7 +241,7 @@ impl PyVectorSearch {
     ///         - new_indices: Updated top-k indices (1D numpy array of uint64, shape: [<=k])
     ///         - new_scores: Updated top-k scores (1D numpy array of float64, shape: [<=k])
     #[pyo3(signature = (query, candidates, metric, global_offset, current_indices, current_scores, k, is_similarity))]
-    pub fn batch_compute_and_merge_top_k(
+    pub fn segmented_top_k_search(
         &self,
         py: Python,
         query: &Bound<'_, PyAny>,
@@ -247,23 +261,33 @@ impl PyVectorSearch {
         let query_dtype = query.getattr("dtype")?.str()?.to_string();
         let candidates_dtype = candidates.getattr("dtype")?.str()?.to_string();
 
-        // Ensure both arrays have the same dtype
-        if query_dtype != candidates_dtype {
-            return Err(PyTypeError::new_err(format!(
-                "Query dtype ({}) must match candidates dtype ({})",
-                query_dtype, candidates_dtype
-            )));
-        }
-
         // Extract current top-k (may be empty on first call)
         let curr_idx_arr: PyReadonlyArrayDyn<u64> = current_indices.extract()?;
         let curr_scores_arr: PyReadonlyArrayDyn<f64> = current_scores.extract()?;
         let curr_idx_slice = curr_idx_arr.as_slice()?;
         let curr_scores_slice = curr_scores_arr.as_slice()?;
 
+        // If dtypes are different, convert both to float64 for computation
+        if query_dtype != candidates_dtype {
+            let numpy = py.import("numpy")?;
+            let query_f64 = query.call_method1("astype", (numpy.getattr("float64")?,))?;
+            let candidates_f64 = candidates.call_method1("astype", (numpy.getattr("float64")?,))?;
+            return self.segmented_top_k_search_f64(
+                py,
+                &query_f64,
+                &candidates_f64,
+                metric_type,
+                global_offset,
+                curr_idx_slice,
+                curr_scores_slice,
+                k,
+                is_similarity,
+            );
+        }
+
         // Dispatch based on dtype
         match query_dtype.as_str() {
-            "float32" => self.batch_compute_and_merge_top_k_f32(
+            "float32" => self.segmented_top_k_search_f32(
                 py,
                 query,
                 candidates,
@@ -274,7 +298,106 @@ impl PyVectorSearch {
                 k,
                 is_similarity,
             ),
-            "float64" => self.batch_compute_and_merge_top_k_f64(
+            "float64" => self.segmented_top_k_search_f64(
+                py,
+                query,
+                candidates,
+                metric_type,
+                global_offset,
+                curr_idx_slice,
+                curr_scores_slice,
+                k,
+                is_similarity,
+            ),
+            "float16" => self.segmented_top_k_search_f16(
+                py,
+                query,
+                candidates,
+                metric_type,
+                global_offset,
+                curr_idx_slice,
+                curr_scores_slice,
+                k,
+                is_similarity,
+            ),
+            "int8" => self.segmented_top_k_search_i8(
+                py,
+                query,
+                candidates,
+                metric_type,
+                global_offset,
+                curr_idx_slice,
+                curr_scores_slice,
+                k,
+                is_similarity,
+            ),
+            "int16" => self.segmented_top_k_search_i16(
+                py,
+                query,
+                candidates,
+                metric_type,
+                global_offset,
+                curr_idx_slice,
+                curr_scores_slice,
+                k,
+                is_similarity,
+            ),
+            "int32" => self.segmented_top_k_search_i32(
+                py,
+                query,
+                candidates,
+                metric_type,
+                global_offset,
+                curr_idx_slice,
+                curr_scores_slice,
+                k,
+                is_similarity,
+            ),
+            "int64" => self.segmented_top_k_search_i64(
+                py,
+                query,
+                candidates,
+                metric_type,
+                global_offset,
+                curr_idx_slice,
+                curr_scores_slice,
+                k,
+                is_similarity,
+            ),
+            "uint8" => self.segmented_top_k_search_u8(
+                py,
+                query,
+                candidates,
+                metric_type,
+                global_offset,
+                curr_idx_slice,
+                curr_scores_slice,
+                k,
+                is_similarity,
+            ),
+            "uint16" => self.segmented_top_k_search_u16(
+                py,
+                query,
+                candidates,
+                metric_type,
+                global_offset,
+                curr_idx_slice,
+                curr_scores_slice,
+                k,
+                is_similarity,
+            ),
+            "uint32" => self.segmented_top_k_search_u32(
+                py,
+                query,
+                candidates,
+                metric_type,
+                global_offset,
+                curr_idx_slice,
+                curr_scores_slice,
+                k,
+                is_similarity,
+            ),
+            "uint64" => self.segmented_top_k_search_u64(
                 py,
                 query,
                 candidates,
@@ -286,66 +409,10 @@ impl PyVectorSearch {
                 is_similarity,
             ),
             _ => Err(PyTypeError::new_err(format!(
-                "batch_compute_and_merge_top_k currently supports float32 and float64, got: {}",
+                "Unsupported dtype: {}. Supported: float64, float32, float16, int8, int16, int32, int64, uint8, uint16, uint32, uint64",
                 query_dtype
             ))),
         }
-    }
-
-    /// Merge batch scores into existing top-k results (for streaming computation)
-    ///
-    /// This is a performance-critical method that replaces Python heap operations
-    /// with efficient Rust implementation. It's ~10x faster than Python heapq loops.
-    ///
-    /// Args:
-    ///     batch_scores: Scores for current batch (1D numpy array of float64)
-    ///     global_offset: Starting global index for this batch
-    ///     current_indices: Current top-k indices (1D numpy array of uint64, can be empty)
-    ///     current_scores: Current top-k scores (1D numpy array of float64, can be empty)
-    ///     k: Number of top results to maintain
-    ///     is_similarity: true = higher is better, false = lower is better
-    ///
-    /// Returns:
-    ///     tuple: (new_indices, new_scores)
-    ///         - new_indices: Updated top-k indices (1D numpy array of uint64, shape: [<=k])
-    ///         - new_scores: Updated top-k scores (1D numpy array of float64, shape: [<=k])
-    #[pyo3(signature = (batch_scores, global_offset, current_indices, current_scores, k, is_similarity))]
-    pub fn merge_top_k(
-        &self,
-        py: Python,
-        batch_scores: &Bound<'_, PyAny>,
-        global_offset: u64,
-        current_indices: &Bound<'_, PyAny>,
-        current_scores: &Bound<'_, PyAny>,
-        k: usize,
-        is_similarity: bool,
-    ) -> PyResult<(Py<PyArray1<u64>>, Py<PyArray1<f64>>)> {
-        use numpy::PyArrayMethods;
-
-        // Extract batch scores
-        let batch_arr: PyReadonlyArrayDyn<f64> = batch_scores.extract()?;
-        let batch_slice = batch_arr.as_slice()?;
-
-        // Extract current top-k (may be empty on first call)
-        let curr_idx_arr: PyReadonlyArrayDyn<u64> = current_indices.extract()?;
-        let curr_scores_arr: PyReadonlyArrayDyn<f64> = current_scores.extract()?;
-        let curr_idx_slice = curr_idx_arr.as_slice()?;
-        let curr_scores_slice = curr_scores_arr.as_slice()?;
-
-        // Merge using efficient Rust implementation
-        let (new_indices, new_scores) = Self::merge_top_k_impl(
-            batch_slice,
-            global_offset,
-            curr_idx_slice,
-            curr_scores_slice,
-            k,
-            is_similarity,
-        );
-
-        Ok((
-            PyArray1::from_vec(py, new_indices).into(),
-            PyArray1::from_vec(py, new_scores).into(),
-        ))
     }
 
     /// Top-K search: Find the k most similar/closest vectors
@@ -397,22 +464,29 @@ impl PyVectorSearch {
         let query_dtype = query.getattr("dtype")?.str()?.to_string();
         let candidates_dtype = candidates.getattr("dtype")?.str()?.to_string();
 
-        // Ensure both arrays have the same dtype
+        // If dtypes are different, convert both to float64 for computation
         if query_dtype != candidates_dtype {
-            return Err(PyTypeError::new_err(format!(
-                "Query dtype ({}) must match candidates dtype ({})",
-                query_dtype, candidates_dtype
-            )));
+            let numpy = py.import("numpy")?;
+            let query_f64 = query.call_method1("astype", (numpy.getattr("float64")?,))?;
+            let candidates_f64 = candidates.call_method1("astype", (numpy.getattr("float64")?,))?;
+            return self.top_k_search_f64(py, &query_f64, &candidates_f64, metric_type, k);
         }
 
         // Dispatch based on dtype
         match query_dtype.as_str() {
             "float64" => self.top_k_search_f64(py, query, candidates, metric_type, k),
             "float32" => self.top_k_search_f32(py, query, candidates, metric_type, k),
+            "float16" => self.top_k_search_f16(py, query, candidates, metric_type, k),
             "int8" => self.top_k_search_i8(py, query, candidates, metric_type, k),
+            "int16" => self.top_k_search_i16(py, query, candidates, metric_type, k),
+            "int32" => self.top_k_search_i32(py, query, candidates, metric_type, k),
+            "int64" => self.top_k_search_i64(py, query, candidates, metric_type, k),
             "uint8" => self.top_k_search_u8(py, query, candidates, metric_type, k),
+            "uint16" => self.top_k_search_u16(py, query, candidates, metric_type, k),
+            "uint32" => self.top_k_search_u32(py, query, candidates, metric_type, k),
+            "uint64" => self.top_k_search_u64(py, query, candidates, metric_type, k),
             _ => Err(PyTypeError::new_err(format!(
-                "Unsupported dtype: {}. Supported: float64, float32, int8, uint8",
+                "Unsupported dtype: {}. Supported: float64, float32, float16, int8, int16, int32, int64, uint8, uint16, uint32, uint64",
                 query_dtype
             ))),
         }
@@ -452,19 +526,29 @@ impl PyVectorSearch {
         let queries_dtype = queries.getattr("dtype")?.str()?.to_string();
         let candidates_dtype = candidates.getattr("dtype")?.str()?.to_string();
 
+        // If dtypes are different, convert both to float64 for computation
         if queries_dtype != candidates_dtype {
-            return Err(PyTypeError::new_err(format!(
-                "Queries dtype ({}) must match candidates dtype ({})",
-                queries_dtype, candidates_dtype
-            )));
+            let numpy = py.import("numpy")?;
+            let queries_f64 = queries.call_method1("astype", (numpy.getattr("float64")?,))?;
+            let candidates_f64 = candidates.call_method1("astype", (numpy.getattr("float64")?,))?;
+            return self.multi_query_top_k_f64(py, &queries_f64, &candidates_f64, metric_type, k);
         }
 
         // Dispatch based on dtype
         match queries_dtype.as_str() {
             "float32" => self.multi_query_top_k_f32(py, queries, candidates, metric_type, k),
             "float64" => self.multi_query_top_k_f64(py, queries, candidates, metric_type, k),
+            "float16" => self.multi_query_top_k_f16(py, queries, candidates, metric_type, k),
+            "int8" => self.multi_query_top_k_i8(py, queries, candidates, metric_type, k),
+            "int16" => self.multi_query_top_k_i16(py, queries, candidates, metric_type, k),
+            "int32" => self.multi_query_top_k_i32(py, queries, candidates, metric_type, k),
+            "int64" => self.multi_query_top_k_i64(py, queries, candidates, metric_type, k),
+            "uint8" => self.multi_query_top_k_u8(py, queries, candidates, metric_type, k),
+            "uint16" => self.multi_query_top_k_u16(py, queries, candidates, metric_type, k),
+            "uint32" => self.multi_query_top_k_u32(py, queries, candidates, metric_type, k),
+            "uint64" => self.multi_query_top_k_u64(py, queries, candidates, metric_type, k),
             _ => Err(PyTypeError::new_err(format!(
-                "multi_query_top_k currently supports float32 and float64, got: {}",
+                "Unsupported dtype: {}. Supported: float64, float32, float16, int8, int16, int32, int64, uint8, uint16, uint32, uint64",
                 queries_dtype
             ))),
         }
@@ -1049,6 +1133,826 @@ impl PyVectorSearch {
     }
 
     // ========================================================================
+    // New type implementations: compute_metric and batch_compute for additional types
+    // ========================================================================
+
+    /// f16 single vector computation (half precision floating point)
+    fn compute_metric_f16(
+        &self,
+        _py: Python,
+        a: &Bound<'_, PyAny>,
+        b: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<f64> {
+        use numpy::PyArrayMethods;
+
+        let a_arr: PyReadonlyArrayDyn<half::f16> = a.extract()?;
+        let b_arr: PyReadonlyArrayDyn<half::f16> = b.extract()?;
+
+        let readonly_a = a_arr.readonly();
+        let a_array = readonly_a.as_array();
+        let readonly_b = b_arr.readonly();
+        let b_array = readonly_b.as_array();
+        let a_shape = a_array.shape();
+        let b_shape = b_array.shape();
+
+        if a_shape.len() != 1 || b_shape.len() != 1 {
+            return Err(PyTypeError::new_err("Both arrays must be 1D vectors"));
+        }
+
+        if a_shape[0] != b_shape[0] {
+            return Err(PyValueError::new_err(format!(
+                "Vector dimensions don't match: {} vs {}",
+                a_shape[0], b_shape[0]
+            )));
+        }
+
+        let a_slice = a_arr.as_slice()?;
+        let b_slice = b_arr.as_slice()?;
+
+        self.engine
+            .cpu_backend
+            .compute_f16(a_slice, b_slice, metric_type)
+            .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))
+    }
+
+    /// i16 single vector computation
+    fn compute_metric_i16(
+        &self,
+        _py: Python,
+        a: &Bound<'_, PyAny>,
+        b: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<f64> {
+        use numpy::PyArrayMethods;
+
+        let a_arr: PyReadonlyArrayDyn<i16> = a.extract()?;
+        let b_arr: PyReadonlyArrayDyn<i16> = b.extract()?;
+
+        let readonly_a = a_arr.readonly();
+        let a_array = readonly_a.as_array();
+        let readonly_b = b_arr.readonly();
+        let b_array = readonly_b.as_array();
+        let a_shape = a_array.shape();
+        let b_shape = b_array.shape();
+
+        if a_shape.len() != 1 || b_shape.len() != 1 {
+            return Err(PyTypeError::new_err("Both arrays must be 1D vectors"));
+        }
+
+        if a_shape[0] != b_shape[0] {
+            return Err(PyValueError::new_err(format!(
+                "Vector dimensions don't match: {} vs {}",
+                a_shape[0], b_shape[0]
+            )));
+        }
+
+        let a_slice = a_arr.as_slice()?;
+        let b_slice = b_arr.as_slice()?;
+
+        self.engine
+            .cpu_backend
+            .compute_i16(a_slice, b_slice, metric_type)
+            .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))
+    }
+
+    /// i32 single vector computation
+    fn compute_metric_i32(
+        &self,
+        _py: Python,
+        a: &Bound<'_, PyAny>,
+        b: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<f64> {
+        use numpy::PyArrayMethods;
+
+        let a_arr: PyReadonlyArrayDyn<i32> = a.extract()?;
+        let b_arr: PyReadonlyArrayDyn<i32> = b.extract()?;
+
+        let readonly_a = a_arr.readonly();
+        let a_array = readonly_a.as_array();
+        let readonly_b = b_arr.readonly();
+        let b_array = readonly_b.as_array();
+        let a_shape = a_array.shape();
+        let b_shape = b_array.shape();
+
+        if a_shape.len() != 1 || b_shape.len() != 1 {
+            return Err(PyTypeError::new_err("Both arrays must be 1D vectors"));
+        }
+
+        if a_shape[0] != b_shape[0] {
+            return Err(PyValueError::new_err(format!(
+                "Vector dimensions don't match: {} vs {}",
+                a_shape[0], b_shape[0]
+            )));
+        }
+
+        let a_slice = a_arr.as_slice()?;
+        let b_slice = b_arr.as_slice()?;
+
+        self.engine
+            .cpu_backend
+            .compute_i32(a_slice, b_slice, metric_type)
+            .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))
+    }
+
+    /// i64 single vector computation
+    fn compute_metric_i64(
+        &self,
+        _py: Python,
+        a: &Bound<'_, PyAny>,
+        b: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<f64> {
+        use numpy::PyArrayMethods;
+
+        let a_arr: PyReadonlyArrayDyn<i64> = a.extract()?;
+        let b_arr: PyReadonlyArrayDyn<i64> = b.extract()?;
+
+        let readonly_a = a_arr.readonly();
+        let a_array = readonly_a.as_array();
+        let readonly_b = b_arr.readonly();
+        let b_array = readonly_b.as_array();
+        let a_shape = a_array.shape();
+        let b_shape = b_array.shape();
+
+        if a_shape.len() != 1 || b_shape.len() != 1 {
+            return Err(PyTypeError::new_err("Both arrays must be 1D vectors"));
+        }
+
+        if a_shape[0] != b_shape[0] {
+            return Err(PyValueError::new_err(format!(
+                "Vector dimensions don't match: {} vs {}",
+                a_shape[0], b_shape[0]
+            )));
+        }
+
+        let a_slice = a_arr.as_slice()?;
+        let b_slice = b_arr.as_slice()?;
+
+        self.engine
+            .cpu_backend
+            .compute_i64(a_slice, b_slice, metric_type)
+            .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))
+    }
+
+    /// u16 single vector computation
+    fn compute_metric_u16(
+        &self,
+        _py: Python,
+        a: &Bound<'_, PyAny>,
+        b: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<f64> {
+        use numpy::PyArrayMethods;
+
+        let a_arr: PyReadonlyArrayDyn<u16> = a.extract()?;
+        let b_arr: PyReadonlyArrayDyn<u16> = b.extract()?;
+
+        let readonly_a = a_arr.readonly();
+        let a_array = readonly_a.as_array();
+        let readonly_b = b_arr.readonly();
+        let b_array = readonly_b.as_array();
+        let a_shape = a_array.shape();
+        let b_shape = b_array.shape();
+
+        if a_shape.len() != 1 || b_shape.len() != 1 {
+            return Err(PyTypeError::new_err("Both arrays must be 1D vectors"));
+        }
+
+        if a_shape[0] != b_shape[0] {
+            return Err(PyValueError::new_err(format!(
+                "Vector dimensions don't match: {} vs {}",
+                a_shape[0], b_shape[0]
+            )));
+        }
+
+        let a_slice = a_arr.as_slice()?;
+        let b_slice = b_arr.as_slice()?;
+
+        self.engine
+            .cpu_backend
+            .compute_u16(a_slice, b_slice, metric_type)
+            .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))
+    }
+
+    /// u32 single vector computation
+    fn compute_metric_u32(
+        &self,
+        _py: Python,
+        a: &Bound<'_, PyAny>,
+        b: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<f64> {
+        use numpy::PyArrayMethods;
+
+        let a_arr: PyReadonlyArrayDyn<u32> = a.extract()?;
+        let b_arr: PyReadonlyArrayDyn<u32> = b.extract()?;
+
+        let readonly_a = a_arr.readonly();
+        let a_array = readonly_a.as_array();
+        let readonly_b = b_arr.readonly();
+        let b_array = readonly_b.as_array();
+        let a_shape = a_array.shape();
+        let b_shape = b_array.shape();
+
+        if a_shape.len() != 1 || b_shape.len() != 1 {
+            return Err(PyTypeError::new_err("Both arrays must be 1D vectors"));
+        }
+
+        if a_shape[0] != b_shape[0] {
+            return Err(PyValueError::new_err(format!(
+                "Vector dimensions don't match: {} vs {}",
+                a_shape[0], b_shape[0]
+            )));
+        }
+
+        let a_slice = a_arr.as_slice()?;
+        let b_slice = b_arr.as_slice()?;
+
+        self.engine
+            .cpu_backend
+            .compute_u32(a_slice, b_slice, metric_type)
+            .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))
+    }
+
+    /// u64 single vector computation
+    fn compute_metric_u64(
+        &self,
+        _py: Python,
+        a: &Bound<'_, PyAny>,
+        b: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<f64> {
+        use numpy::PyArrayMethods;
+
+        let a_arr: PyReadonlyArrayDyn<u64> = a.extract()?;
+        let b_arr: PyReadonlyArrayDyn<u64> = b.extract()?;
+
+        let readonly_a = a_arr.readonly();
+        let a_array = readonly_a.as_array();
+        let readonly_b = b_arr.readonly();
+        let b_array = readonly_b.as_array();
+        let a_shape = a_array.shape();
+        let b_shape = b_array.shape();
+
+        if a_shape.len() != 1 || b_shape.len() != 1 {
+            return Err(PyTypeError::new_err("Both arrays must be 1D vectors"));
+        }
+
+        if a_shape[0] != b_shape[0] {
+            return Err(PyValueError::new_err(format!(
+                "Vector dimensions don't match: {} vs {}",
+                a_shape[0], b_shape[0]
+            )));
+        }
+
+        let a_slice = a_arr.as_slice()?;
+        let b_slice = b_arr.as_slice()?;
+
+        self.engine
+            .cpu_backend
+            .compute_u64(a_slice, b_slice, metric_type)
+            .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))
+    }
+
+    // ========================================================================
+    // New batch_compute implementations for additional types
+    // ========================================================================
+
+    /// f16 batch computation (half precision floating point) - actual implementation
+    fn batch_compute_f16_impl(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<Py<PyArray1<f64>>> {
+        use numpy::PyArrayMethods;
+
+        let query_arr: PyReadonlyArrayDyn<half::f16> = query.extract()?;
+        let candidates_arr: PyReadonlyArrayDyn<half::f16> = candidates.extract()?;
+
+        let query_slice = query_arr.as_slice()?;
+        let readonly_candidates = candidates_arr.readonly();
+        let candidates_array = readonly_candidates.as_array();
+        let shape = candidates_array.shape();
+
+        if shape.len() != 2 {
+            return Err(PyTypeError::new_err("Candidates must be a 2D array"));
+        }
+
+        let n_candidates = shape[0];
+        let dim = shape[1];
+
+        if query_slice.len() != dim {
+            return Err(PyValueError::new_err(format!(
+                "Query dimension {} does not match candidates dimension {}",
+                query_slice.len(),
+                dim
+            )));
+        }
+
+        let candidates_slice = candidates_arr.as_slice()?;
+        let query_addr = query_slice.as_ptr() as usize;
+        let candidates_addr = candidates_slice.as_ptr() as usize;
+
+        let scores = py
+            .allow_threads(|| {
+                #[cfg(feature = "rayon")]
+                {
+                    use rayon::prelude::*;
+                    (0..n_candidates)
+                        .into_par_iter()
+                        .map(|i| unsafe {
+                            let query = std::slice::from_raw_parts(query_addr as *const half::f16, dim);
+                            let candidate = std::slice::from_raw_parts(
+                                (candidates_addr + i * dim * std::mem::size_of::<half::f16>())
+                                    as *const half::f16,
+                                dim,
+                            );
+                            self.engine.cpu_backend.compute_f16(query, candidate, metric_type)
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                }
+
+                #[cfg(not(feature = "rayon"))]
+                {
+                    (0..n_candidates)
+                        .map(|i| unsafe {
+                            let query = std::slice::from_raw_parts(query_addr as *const half::f16, dim);
+                            let candidate = std::slice::from_raw_parts(
+                                (candidates_addr + i * dim * std::mem::size_of::<half::f16>())
+                                    as *const half::f16,
+                                dim,
+                            );
+                            self.engine.cpu_backend.compute_f16(query, candidate, metric_type)
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                }
+            })
+            .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
+
+        Ok(PyArray1::from_vec(py, scores).into())
+    }
+
+    /// i16 batch computation
+    fn batch_compute_i16(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<Py<PyArray1<f64>>> {
+        use numpy::PyArrayMethods;
+
+        let query_arr: PyReadonlyArrayDyn<i16> = query.extract()?;
+        let candidates_arr: PyReadonlyArrayDyn<i16> = candidates.extract()?;
+
+        let query_slice = query_arr.as_slice()?;
+        let readonly_candidates = candidates_arr.readonly();
+        let candidates_array = readonly_candidates.as_array();
+        let shape = candidates_array.shape();
+
+        if shape.len() != 2 {
+            return Err(PyTypeError::new_err("Candidates must be a 2D array"));
+        }
+
+        let n_candidates = shape[0];
+        let dim = shape[1];
+
+        if query_slice.len() != dim {
+            return Err(PyValueError::new_err(format!(
+                "Query dimension {} does not match candidates dimension {}",
+                query_slice.len(),
+                dim
+            )));
+        }
+
+        let candidates_slice = candidates_arr.as_slice()?;
+        let query_addr = query_slice.as_ptr() as usize;
+        let candidates_addr = candidates_slice.as_ptr() as usize;
+
+        let scores = py
+            .allow_threads(|| {
+                #[cfg(feature = "rayon")]
+                {
+                    use rayon::prelude::*;
+                    (0..n_candidates)
+                        .into_par_iter()
+                        .map(|i| unsafe {
+                            let query = std::slice::from_raw_parts(query_addr as *const i16, dim);
+                            let candidate = std::slice::from_raw_parts(
+                                (candidates_addr + i * dim * std::mem::size_of::<i16>())
+                                    as *const i16,
+                                dim,
+                            );
+                            self.engine.cpu_backend.compute_i16(query, candidate, metric_type)
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                }
+
+                #[cfg(not(feature = "rayon"))]
+                {
+                    (0..n_candidates)
+                        .map(|i| unsafe {
+                            let query = std::slice::from_raw_parts(query_addr as *const i16, dim);
+                            let candidate = std::slice::from_raw_parts(
+                                (candidates_addr + i * dim * std::mem::size_of::<i16>())
+                                    as *const i16,
+                                dim,
+                            );
+                            self.engine.cpu_backend.compute_i16(query, candidate, metric_type)
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                }
+            })
+            .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
+
+        Ok(PyArray1::from_vec(py, scores).into())
+    }
+
+    /// i32 batch computation
+    fn batch_compute_i32(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<Py<PyArray1<f64>>> {
+        use numpy::PyArrayMethods;
+
+        let query_arr: PyReadonlyArrayDyn<i32> = query.extract()?;
+        let candidates_arr: PyReadonlyArrayDyn<i32> = candidates.extract()?;
+
+        let query_slice = query_arr.as_slice()?;
+        let readonly_candidates = candidates_arr.readonly();
+        let candidates_array = readonly_candidates.as_array();
+        let shape = candidates_array.shape();
+
+        if shape.len() != 2 {
+            return Err(PyTypeError::new_err("Candidates must be a 2D array"));
+        }
+
+        let n_candidates = shape[0];
+        let dim = shape[1];
+
+        if query_slice.len() != dim {
+            return Err(PyValueError::new_err(format!(
+                "Query dimension {} does not match candidates dimension {}",
+                query_slice.len(),
+                dim
+            )));
+        }
+
+        let candidates_slice = candidates_arr.as_slice()?;
+        let query_addr = query_slice.as_ptr() as usize;
+        let candidates_addr = candidates_slice.as_ptr() as usize;
+
+        let scores = py
+            .allow_threads(|| {
+                #[cfg(feature = "rayon")]
+                {
+                    use rayon::prelude::*;
+                    (0..n_candidates)
+                        .into_par_iter()
+                        .map(|i| unsafe {
+                            let query = std::slice::from_raw_parts(query_addr as *const i32, dim);
+                            let candidate = std::slice::from_raw_parts(
+                                (candidates_addr + i * dim * std::mem::size_of::<i32>())
+                                    as *const i32,
+                                dim,
+                            );
+                            self.engine.cpu_backend.compute_i32(query, candidate, metric_type)
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                }
+
+                #[cfg(not(feature = "rayon"))]
+                {
+                    (0..n_candidates)
+                        .map(|i| unsafe {
+                            let query = std::slice::from_raw_parts(query_addr as *const i32, dim);
+                            let candidate = std::slice::from_raw_parts(
+                                (candidates_addr + i * dim * std::mem::size_of::<i32>())
+                                    as *const i32,
+                                dim,
+                            );
+                            self.engine.cpu_backend.compute_i32(query, candidate, metric_type)
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                }
+            })
+            .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
+
+        Ok(PyArray1::from_vec(py, scores).into())
+    }
+
+    /// i64 batch computation
+    fn batch_compute_i64(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<Py<PyArray1<f64>>> {
+        use numpy::PyArrayMethods;
+
+        let query_arr: PyReadonlyArrayDyn<i64> = query.extract()?;
+        let candidates_arr: PyReadonlyArrayDyn<i64> = candidates.extract()?;
+
+        let query_slice = query_arr.as_slice()?;
+        let readonly_candidates = candidates_arr.readonly();
+        let candidates_array = readonly_candidates.as_array();
+        let shape = candidates_array.shape();
+
+        if shape.len() != 2 {
+            return Err(PyTypeError::new_err("Candidates must be a 2D array"));
+        }
+
+        let n_candidates = shape[0];
+        let dim = shape[1];
+
+        if query_slice.len() != dim {
+            return Err(PyValueError::new_err(format!(
+                "Query dimension {} does not match candidates dimension {}",
+                query_slice.len(),
+                dim
+            )));
+        }
+
+        let candidates_slice = candidates_arr.as_slice()?;
+        let query_addr = query_slice.as_ptr() as usize;
+        let candidates_addr = candidates_slice.as_ptr() as usize;
+
+        let scores = py
+            .allow_threads(|| {
+                #[cfg(feature = "rayon")]
+                {
+                    use rayon::prelude::*;
+                    (0..n_candidates)
+                        .into_par_iter()
+                        .map(|i| unsafe {
+                            let query = std::slice::from_raw_parts(query_addr as *const i64, dim);
+                            let candidate = std::slice::from_raw_parts(
+                                (candidates_addr + i * dim * std::mem::size_of::<i64>())
+                                    as *const i64,
+                                dim,
+                            );
+                            self.engine.cpu_backend.compute_i64(query, candidate, metric_type)
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                }
+
+                #[cfg(not(feature = "rayon"))]
+                {
+                    (0..n_candidates)
+                        .map(|i| unsafe {
+                            let query = std::slice::from_raw_parts(query_addr as *const i64, dim);
+                            let candidate = std::slice::from_raw_parts(
+                                (candidates_addr + i * dim * std::mem::size_of::<i64>())
+                                    as *const i64,
+                                dim,
+                            );
+                            self.engine.cpu_backend.compute_i64(query, candidate, metric_type)
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                }
+            })
+            .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
+
+        Ok(PyArray1::from_vec(py, scores).into())
+    }
+
+    /// u16 batch computation
+    fn batch_compute_u16(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<Py<PyArray1<f64>>> {
+        use numpy::PyArrayMethods;
+
+        let query_arr: PyReadonlyArrayDyn<u16> = query.extract()?;
+        let candidates_arr: PyReadonlyArrayDyn<u16> = candidates.extract()?;
+
+        let query_slice = query_arr.as_slice()?;
+        let readonly_candidates = candidates_arr.readonly();
+        let candidates_array = readonly_candidates.as_array();
+        let shape = candidates_array.shape();
+
+        if shape.len() != 2 {
+            return Err(PyTypeError::new_err("Candidates must be a 2D array"));
+        }
+
+        let n_candidates = shape[0];
+        let dim = shape[1];
+
+        if query_slice.len() != dim {
+            return Err(PyValueError::new_err(format!(
+                "Query dimension {} does not match candidates dimension {}",
+                query_slice.len(),
+                dim
+            )));
+        }
+
+        let candidates_slice = candidates_arr.as_slice()?;
+        let query_addr = query_slice.as_ptr() as usize;
+        let candidates_addr = candidates_slice.as_ptr() as usize;
+
+        let scores = py
+            .allow_threads(|| {
+                #[cfg(feature = "rayon")]
+                {
+                    use rayon::prelude::*;
+                    (0..n_candidates)
+                        .into_par_iter()
+                        .map(|i| unsafe {
+                            let query = std::slice::from_raw_parts(query_addr as *const u16, dim);
+                            let candidate = std::slice::from_raw_parts(
+                                (candidates_addr + i * dim * std::mem::size_of::<u16>())
+                                    as *const u16,
+                                dim,
+                            );
+                            self.engine.cpu_backend.compute_u16(query, candidate, metric_type)
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                }
+
+                #[cfg(not(feature = "rayon"))]
+                {
+                    (0..n_candidates)
+                        .map(|i| unsafe {
+                            let query = std::slice::from_raw_parts(query_addr as *const u16, dim);
+                            let candidate = std::slice::from_raw_parts(
+                                (candidates_addr + i * dim * std::mem::size_of::<u16>())
+                                    as *const u16,
+                                dim,
+                            );
+                            self.engine.cpu_backend.compute_u16(query, candidate, metric_type)
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                }
+            })
+            .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
+
+        Ok(PyArray1::from_vec(py, scores).into())
+    }
+
+    /// u32 batch computation
+    fn batch_compute_u32(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<Py<PyArray1<f64>>> {
+        use numpy::PyArrayMethods;
+
+        let query_arr: PyReadonlyArrayDyn<u32> = query.extract()?;
+        let candidates_arr: PyReadonlyArrayDyn<u32> = candidates.extract()?;
+
+        let query_slice = query_arr.as_slice()?;
+        let readonly_candidates = candidates_arr.readonly();
+        let candidates_array = readonly_candidates.as_array();
+        let shape = candidates_array.shape();
+
+        if shape.len() != 2 {
+            return Err(PyTypeError::new_err("Candidates must be a 2D array"));
+        }
+
+        let n_candidates = shape[0];
+        let dim = shape[1];
+
+        if query_slice.len() != dim {
+            return Err(PyValueError::new_err(format!(
+                "Query dimension {} does not match candidates dimension {}",
+                query_slice.len(),
+                dim
+            )));
+        }
+
+        let candidates_slice = candidates_arr.as_slice()?;
+        let query_addr = query_slice.as_ptr() as usize;
+        let candidates_addr = candidates_slice.as_ptr() as usize;
+
+        let scores = py
+            .allow_threads(|| {
+                #[cfg(feature = "rayon")]
+                {
+                    use rayon::prelude::*;
+                    (0..n_candidates)
+                        .into_par_iter()
+                        .map(|i| unsafe {
+                            let query = std::slice::from_raw_parts(query_addr as *const u32, dim);
+                            let candidate = std::slice::from_raw_parts(
+                                (candidates_addr + i * dim * std::mem::size_of::<u32>())
+                                    as *const u32,
+                                dim,
+                            );
+                            self.engine.cpu_backend.compute_u32(query, candidate, metric_type)
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                }
+
+                #[cfg(not(feature = "rayon"))]
+                {
+                    (0..n_candidates)
+                        .map(|i| unsafe {
+                            let query = std::slice::from_raw_parts(query_addr as *const u32, dim);
+                            let candidate = std::slice::from_raw_parts(
+                                (candidates_addr + i * dim * std::mem::size_of::<u32>())
+                                    as *const u32,
+                                dim,
+                            );
+                            self.engine.cpu_backend.compute_u32(query, candidate, metric_type)
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                }
+            })
+            .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
+
+        Ok(PyArray1::from_vec(py, scores).into())
+    }
+
+    /// u64 batch computation
+    fn batch_compute_u64(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<Py<PyArray1<f64>>> {
+        use numpy::PyArrayMethods;
+
+        let query_arr: PyReadonlyArrayDyn<u64> = query.extract()?;
+        let candidates_arr: PyReadonlyArrayDyn<u64> = candidates.extract()?;
+
+        let query_slice = query_arr.as_slice()?;
+        let readonly_candidates = candidates_arr.readonly();
+        let candidates_array = readonly_candidates.as_array();
+        let shape = candidates_array.shape();
+
+        if shape.len() != 2 {
+            return Err(PyTypeError::new_err("Candidates must be a 2D array"));
+        }
+
+        let n_candidates = shape[0];
+        let dim = shape[1];
+
+        if query_slice.len() != dim {
+            return Err(PyValueError::new_err(format!(
+                "Query dimension {} does not match candidates dimension {}",
+                query_slice.len(),
+                dim
+            )));
+        }
+
+        let candidates_slice = candidates_arr.as_slice()?;
+        let query_addr = query_slice.as_ptr() as usize;
+        let candidates_addr = candidates_slice.as_ptr() as usize;
+
+        let scores = py
+            .allow_threads(|| {
+                #[cfg(feature = "rayon")]
+                {
+                    use rayon::prelude::*;
+                    (0..n_candidates)
+                        .into_par_iter()
+                        .map(|i| unsafe {
+                            let query = std::slice::from_raw_parts(query_addr as *const u64, dim);
+                            let candidate = std::slice::from_raw_parts(
+                                (candidates_addr + i * dim * std::mem::size_of::<u64>())
+                                    as *const u64,
+                                dim,
+                            );
+                            self.engine.cpu_backend.compute_u64(query, candidate, metric_type)
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                }
+
+                #[cfg(not(feature = "rayon"))]
+                {
+                    (0..n_candidates)
+                        .map(|i| unsafe {
+                            let query = std::slice::from_raw_parts(query_addr as *const u64, dim);
+                            let candidate = std::slice::from_raw_parts(
+                                (candidates_addr + i * dim * std::mem::size_of::<u64>())
+                                    as *const u64,
+                                dim,
+                            );
+                            self.engine.cpu_backend.compute_u64(query, candidate, metric_type)
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                }
+            })
+            .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
+
+        Ok(PyArray1::from_vec(py, scores).into())
+    }
+
+    // ========================================================================
     // Top-K search implementations: Optimized Top-K search for each data type
     // ========================================================================
 
@@ -1135,6 +2039,146 @@ impl PyVectorSearch {
         // u8 metrics are all distances (lower is better)
         let (indices, top_scores) = Self::select_top_k(scores_slice, k, false);
 
+        Ok((
+            PyArray1::from_vec(py, indices).into(),
+            PyArray1::from_vec(py, top_scores).into(),
+        ))
+    }
+
+    /// Top-K search (f16)
+    fn top_k_search_f16(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        k: usize,
+    ) -> PyResult<(Py<PyArray1<usize>>, Py<PyArray1<f64>>)> {
+        let scores_array = self.batch_compute_f16_impl(py, query, candidates, metric_type)?;
+        let scores = scores_array.bind(py).readonly();
+        let scores_slice = scores.as_slice()?;
+        let (indices, top_scores) =
+            Self::select_top_k(scores_slice, k, metric_type.is_similarity());
+        Ok((
+            PyArray1::from_vec(py, indices).into(),
+            PyArray1::from_vec(py, top_scores).into(),
+        ))
+    }
+
+    /// Top-K search (i16)
+    fn top_k_search_i16(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        k: usize,
+    ) -> PyResult<(Py<PyArray1<usize>>, Py<PyArray1<f64>>)> {
+        let scores_array = self.batch_compute_i16(py, query, candidates, metric_type)?;
+        let scores = scores_array.bind(py).readonly();
+        let scores_slice = scores.as_slice()?;
+        let (indices, top_scores) =
+            Self::select_top_k(scores_slice, k, metric_type.is_similarity());
+        Ok((
+            PyArray1::from_vec(py, indices).into(),
+            PyArray1::from_vec(py, top_scores).into(),
+        ))
+    }
+
+    /// Top-K search (i32)
+    fn top_k_search_i32(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        k: usize,
+    ) -> PyResult<(Py<PyArray1<usize>>, Py<PyArray1<f64>>)> {
+        let scores_array = self.batch_compute_i32(py, query, candidates, metric_type)?;
+        let scores = scores_array.bind(py).readonly();
+        let scores_slice = scores.as_slice()?;
+        let (indices, top_scores) =
+            Self::select_top_k(scores_slice, k, metric_type.is_similarity());
+        Ok((
+            PyArray1::from_vec(py, indices).into(),
+            PyArray1::from_vec(py, top_scores).into(),
+        ))
+    }
+
+    /// Top-K search (i64)
+    fn top_k_search_i64(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        k: usize,
+    ) -> PyResult<(Py<PyArray1<usize>>, Py<PyArray1<f64>>)> {
+        let scores_array = self.batch_compute_i64(py, query, candidates, metric_type)?;
+        let scores = scores_array.bind(py).readonly();
+        let scores_slice = scores.as_slice()?;
+        let (indices, top_scores) =
+            Self::select_top_k(scores_slice, k, metric_type.is_similarity());
+        Ok((
+            PyArray1::from_vec(py, indices).into(),
+            PyArray1::from_vec(py, top_scores).into(),
+        ))
+    }
+
+    /// Top-K search (u16)
+    fn top_k_search_u16(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        k: usize,
+    ) -> PyResult<(Py<PyArray1<usize>>, Py<PyArray1<f64>>)> {
+        let scores_array = self.batch_compute_u16(py, query, candidates, metric_type)?;
+        let scores = scores_array.bind(py).readonly();
+        let scores_slice = scores.as_slice()?;
+        let (indices, top_scores) =
+            Self::select_top_k(scores_slice, k, metric_type.is_similarity());
+        Ok((
+            PyArray1::from_vec(py, indices).into(),
+            PyArray1::from_vec(py, top_scores).into(),
+        ))
+    }
+
+    /// Top-K search (u32)
+    fn top_k_search_u32(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        k: usize,
+    ) -> PyResult<(Py<PyArray1<usize>>, Py<PyArray1<f64>>)> {
+        let scores_array = self.batch_compute_u32(py, query, candidates, metric_type)?;
+        let scores = scores_array.bind(py).readonly();
+        let scores_slice = scores.as_slice()?;
+        let (indices, top_scores) =
+            Self::select_top_k(scores_slice, k, metric_type.is_similarity());
+        Ok((
+            PyArray1::from_vec(py, indices).into(),
+            PyArray1::from_vec(py, top_scores).into(),
+        ))
+    }
+
+    /// Top-K search (u64)
+    fn top_k_search_u64(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        k: usize,
+    ) -> PyResult<(Py<PyArray1<usize>>, Py<PyArray1<f64>>)> {
+        let scores_array = self.batch_compute_u64(py, query, candidates, metric_type)?;
+        let scores = scores_array.bind(py).readonly();
+        let scores_slice = scores.as_slice()?;
+        let (indices, top_scores) =
+            Self::select_top_k(scores_slice, k, metric_type.is_similarity());
         Ok((
             PyArray1::from_vec(py, indices).into(),
             PyArray1::from_vec(py, top_scores).into(),
@@ -1440,7 +2484,7 @@ impl PyVectorSearch {
     }
 
     /// f32 batch compute and merge top-k (single FFI call optimization)
-    fn batch_compute_and_merge_top_k_f32(
+    fn segmented_top_k_search_f32(
         &self,
         py: Python,
         query: &Bound<'_, PyAny>,
@@ -1551,8 +2595,8 @@ impl PyVectorSearch {
         ))
     }
 
-    /// f64 batch compute and merge top-k (single FFI call optimization)
-    fn batch_compute_and_merge_top_k_f64(
+    /// f64 segmented top-k search (single FFI call optimization)
+    fn segmented_top_k_search_f64(
         &self,
         py: Python,
         query: &Bound<'_, PyAny>,
@@ -1760,6 +2804,393 @@ impl PyVectorSearch {
 
         (new_indices, new_scores)
     }
+
+    // ========================================================================
+    // multi_query_top_k implementations for additional types (using conversion)
+    // ========================================================================
+
+    /// Multi-query Top-K search (f16) - uses f32 conversion internally
+    fn multi_query_top_k_f16(
+        &self,
+        py: Python,
+        queries: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        k: usize,
+    ) -> PyResult<(Py<PyArray1<u64>>, Py<PyArray1<f64>>)> {
+        let numpy = py.import("numpy")?;
+        let queries_f32 = queries.call_method1("astype", (numpy.getattr("float32")?,))?;
+        let candidates_f32 = candidates.call_method1("astype", (numpy.getattr("float32")?,))?;
+        self.multi_query_top_k_f32(py, &queries_f32, &candidates_f32, metric_type, k)
+    }
+
+    /// Multi-query Top-K search (i8)
+    fn multi_query_top_k_i8(
+        &self,
+        py: Python,
+        queries: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        k: usize,
+    ) -> PyResult<(Py<PyArray1<u64>>, Py<PyArray1<f64>>)> {
+        let numpy = py.import("numpy")?;
+        let queries_f64 = queries.call_method1("astype", (numpy.getattr("float64")?,))?;
+        let candidates_f64 = candidates.call_method1("astype", (numpy.getattr("float64")?,))?;
+        self.multi_query_top_k_f64(py, &queries_f64, &candidates_f64, metric_type, k)
+    }
+
+    /// Multi-query Top-K search (i16)
+    fn multi_query_top_k_i16(
+        &self,
+        py: Python,
+        queries: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        k: usize,
+    ) -> PyResult<(Py<PyArray1<u64>>, Py<PyArray1<f64>>)> {
+        let numpy = py.import("numpy")?;
+        let queries_f64 = queries.call_method1("astype", (numpy.getattr("float64")?,))?;
+        let candidates_f64 = candidates.call_method1("astype", (numpy.getattr("float64")?,))?;
+        self.multi_query_top_k_f64(py, &queries_f64, &candidates_f64, metric_type, k)
+    }
+
+    /// Multi-query Top-K search (i32)
+    fn multi_query_top_k_i32(
+        &self,
+        py: Python,
+        queries: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        k: usize,
+    ) -> PyResult<(Py<PyArray1<u64>>, Py<PyArray1<f64>>)> {
+        let numpy = py.import("numpy")?;
+        let queries_f64 = queries.call_method1("astype", (numpy.getattr("float64")?,))?;
+        let candidates_f64 = candidates.call_method1("astype", (numpy.getattr("float64")?,))?;
+        self.multi_query_top_k_f64(py, &queries_f64, &candidates_f64, metric_type, k)
+    }
+
+    /// Multi-query Top-K search (i64)
+    fn multi_query_top_k_i64(
+        &self,
+        py: Python,
+        queries: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        k: usize,
+    ) -> PyResult<(Py<PyArray1<u64>>, Py<PyArray1<f64>>)> {
+        let numpy = py.import("numpy")?;
+        let queries_f64 = queries.call_method1("astype", (numpy.getattr("float64")?,))?;
+        let candidates_f64 = candidates.call_method1("astype", (numpy.getattr("float64")?,))?;
+        self.multi_query_top_k_f64(py, &queries_f64, &candidates_f64, metric_type, k)
+    }
+
+    /// Multi-query Top-K search (u8)
+    fn multi_query_top_k_u8(
+        &self,
+        py: Python,
+        queries: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        k: usize,
+    ) -> PyResult<(Py<PyArray1<u64>>, Py<PyArray1<f64>>)> {
+        let numpy = py.import("numpy")?;
+        let queries_f64 = queries.call_method1("astype", (numpy.getattr("float64")?,))?;
+        let candidates_f64 = candidates.call_method1("astype", (numpy.getattr("float64")?,))?;
+        self.multi_query_top_k_f64(py, &queries_f64, &candidates_f64, metric_type, k)
+    }
+
+    /// Multi-query Top-K search (u16)
+    fn multi_query_top_k_u16(
+        &self,
+        py: Python,
+        queries: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        k: usize,
+    ) -> PyResult<(Py<PyArray1<u64>>, Py<PyArray1<f64>>)> {
+        let numpy = py.import("numpy")?;
+        let queries_f64 = queries.call_method1("astype", (numpy.getattr("float64")?,))?;
+        let candidates_f64 = candidates.call_method1("astype", (numpy.getattr("float64")?,))?;
+        self.multi_query_top_k_f64(py, &queries_f64, &candidates_f64, metric_type, k)
+    }
+
+    /// Multi-query Top-K search (u32)
+    fn multi_query_top_k_u32(
+        &self,
+        py: Python,
+        queries: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        k: usize,
+    ) -> PyResult<(Py<PyArray1<u64>>, Py<PyArray1<f64>>)> {
+        let numpy = py.import("numpy")?;
+        let queries_f64 = queries.call_method1("astype", (numpy.getattr("float64")?,))?;
+        let candidates_f64 = candidates.call_method1("astype", (numpy.getattr("float64")?,))?;
+        self.multi_query_top_k_f64(py, &queries_f64, &candidates_f64, metric_type, k)
+    }
+
+    /// Multi-query Top-K search (u64)
+    fn multi_query_top_k_u64(
+        &self,
+        py: Python,
+        queries: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        k: usize,
+    ) -> PyResult<(Py<PyArray1<u64>>, Py<PyArray1<f64>>)> {
+        let numpy = py.import("numpy")?;
+        let queries_f64 = queries.call_method1("astype", (numpy.getattr("float64")?,))?;
+        let candidates_f64 = candidates.call_method1("astype", (numpy.getattr("float64")?,))?;
+        self.multi_query_top_k_f64(py, &queries_f64, &candidates_f64, metric_type, k)
+    }
+
+    // ========================================================================
+    // segmented_top_k_search implementations for additional types
+    // ========================================================================
+
+    /// segmented_top_k_search (f16)
+    fn segmented_top_k_search_f16(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        global_offset: u64,
+        current_indices: &[u64],
+        current_scores: &[f64],
+        k: usize,
+        is_similarity: bool,
+    ) -> PyResult<(Py<PyArray1<u64>>, Py<PyArray1<f64>>)> {
+        // Compute batch scores using f16 batch_compute
+        let scores_array = self.batch_compute_f16_impl(py, query, candidates, metric_type)?;
+        let scores = scores_array.bind(py).readonly();
+        let scores_slice = scores.as_slice()?;
+
+        let (new_indices, new_scores) = Self::merge_top_k_impl(
+            scores_slice, global_offset, current_indices, current_scores, k, is_similarity,
+        );
+
+        Ok((
+            PyArray1::from_vec(py, new_indices).into(),
+            PyArray1::from_vec(py, new_scores).into(),
+        ))
+    }
+
+    /// segmented_top_k_search (i8)
+    fn segmented_top_k_search_i8(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        global_offset: u64,
+        current_indices: &[u64],
+        current_scores: &[f64],
+        k: usize,
+        is_similarity: bool,
+    ) -> PyResult<(Py<PyArray1<u64>>, Py<PyArray1<f64>>)> {
+        let scores_array = self.batch_compute_i8(py, query, candidates, metric_type)?;
+        let scores = scores_array.bind(py).readonly();
+        let scores_slice = scores.as_slice()?;
+
+        let (new_indices, new_scores) = Self::merge_top_k_impl(
+            scores_slice, global_offset, current_indices, current_scores, k, is_similarity,
+        );
+
+        Ok((
+            PyArray1::from_vec(py, new_indices).into(),
+            PyArray1::from_vec(py, new_scores).into(),
+        ))
+    }
+
+    /// segmented_top_k_search (i16)
+    fn segmented_top_k_search_i16(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        global_offset: u64,
+        current_indices: &[u64],
+        current_scores: &[f64],
+        k: usize,
+        is_similarity: bool,
+    ) -> PyResult<(Py<PyArray1<u64>>, Py<PyArray1<f64>>)> {
+        let scores_array = self.batch_compute_i16(py, query, candidates, metric_type)?;
+        let scores = scores_array.bind(py).readonly();
+        let scores_slice = scores.as_slice()?;
+
+        let (new_indices, new_scores) = Self::merge_top_k_impl(
+            scores_slice, global_offset, current_indices, current_scores, k, is_similarity,
+        );
+
+        Ok((
+            PyArray1::from_vec(py, new_indices).into(),
+            PyArray1::from_vec(py, new_scores).into(),
+        ))
+    }
+
+    /// segmented_top_k_search (i32)
+    fn segmented_top_k_search_i32(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        global_offset: u64,
+        current_indices: &[u64],
+        current_scores: &[f64],
+        k: usize,
+        is_similarity: bool,
+    ) -> PyResult<(Py<PyArray1<u64>>, Py<PyArray1<f64>>)> {
+        let scores_array = self.batch_compute_i32(py, query, candidates, metric_type)?;
+        let scores = scores_array.bind(py).readonly();
+        let scores_slice = scores.as_slice()?;
+
+        let (new_indices, new_scores) = Self::merge_top_k_impl(
+            scores_slice, global_offset, current_indices, current_scores, k, is_similarity,
+        );
+
+        Ok((
+            PyArray1::from_vec(py, new_indices).into(),
+            PyArray1::from_vec(py, new_scores).into(),
+        ))
+    }
+
+    /// segmented_top_k_search (i64)
+    fn segmented_top_k_search_i64(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        global_offset: u64,
+        current_indices: &[u64],
+        current_scores: &[f64],
+        k: usize,
+        is_similarity: bool,
+    ) -> PyResult<(Py<PyArray1<u64>>, Py<PyArray1<f64>>)> {
+        let scores_array = self.batch_compute_i64(py, query, candidates, metric_type)?;
+        let scores = scores_array.bind(py).readonly();
+        let scores_slice = scores.as_slice()?;
+
+        let (new_indices, new_scores) = Self::merge_top_k_impl(
+            scores_slice, global_offset, current_indices, current_scores, k, is_similarity,
+        );
+
+        Ok((
+            PyArray1::from_vec(py, new_indices).into(),
+            PyArray1::from_vec(py, new_scores).into(),
+        ))
+    }
+
+    /// segmented_top_k_search (u8)
+    fn segmented_top_k_search_u8(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        global_offset: u64,
+        current_indices: &[u64],
+        current_scores: &[f64],
+        k: usize,
+        is_similarity: bool,
+    ) -> PyResult<(Py<PyArray1<u64>>, Py<PyArray1<f64>>)> {
+        let scores_array = self.batch_compute_u8(py, query, candidates, metric_type)?;
+        let scores = scores_array.bind(py).readonly();
+        let scores_slice = scores.as_slice()?;
+
+        let (new_indices, new_scores) = Self::merge_top_k_impl(
+            scores_slice, global_offset, current_indices, current_scores, k, is_similarity,
+        );
+
+        Ok((
+            PyArray1::from_vec(py, new_indices).into(),
+            PyArray1::from_vec(py, new_scores).into(),
+        ))
+    }
+
+    /// segmented_top_k_search (u16)
+    fn segmented_top_k_search_u16(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        global_offset: u64,
+        current_indices: &[u64],
+        current_scores: &[f64],
+        k: usize,
+        is_similarity: bool,
+    ) -> PyResult<(Py<PyArray1<u64>>, Py<PyArray1<f64>>)> {
+        let scores_array = self.batch_compute_u16(py, query, candidates, metric_type)?;
+        let scores = scores_array.bind(py).readonly();
+        let scores_slice = scores.as_slice()?;
+
+        let (new_indices, new_scores) = Self::merge_top_k_impl(
+            scores_slice, global_offset, current_indices, current_scores, k, is_similarity,
+        );
+
+        Ok((
+            PyArray1::from_vec(py, new_indices).into(),
+            PyArray1::from_vec(py, new_scores).into(),
+        ))
+    }
+
+    /// segmented_top_k_search (u32)
+    fn segmented_top_k_search_u32(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        global_offset: u64,
+        current_indices: &[u64],
+        current_scores: &[f64],
+        k: usize,
+        is_similarity: bool,
+    ) -> PyResult<(Py<PyArray1<u64>>, Py<PyArray1<f64>>)> {
+        let scores_array = self.batch_compute_u32(py, query, candidates, metric_type)?;
+        let scores = scores_array.bind(py).readonly();
+        let scores_slice = scores.as_slice()?;
+
+        let (new_indices, new_scores) = Self::merge_top_k_impl(
+            scores_slice, global_offset, current_indices, current_scores, k, is_similarity,
+        );
+
+        Ok((
+            PyArray1::from_vec(py, new_indices).into(),
+            PyArray1::from_vec(py, new_scores).into(),
+        ))
+    }
+
+    /// segmented_top_k_search (u64)
+    fn segmented_top_k_search_u64(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+        global_offset: u64,
+        current_indices: &[u64],
+        current_scores: &[f64],
+        k: usize,
+        is_similarity: bool,
+    ) -> PyResult<(Py<PyArray1<u64>>, Py<PyArray1<f64>>)> {
+        let scores_array = self.batch_compute_u64(py, query, candidates, metric_type)?;
+        let scores = scores_array.bind(py).readonly();
+        let scores_slice = scores.as_slice()?;
+
+        let (new_indices, new_scores) = Self::merge_top_k_impl(
+            scores_slice, global_offset, current_indices, current_scores, k, is_similarity,
+        );
+
+        Ok((
+            PyArray1::from_vec(py, new_indices).into(),
+            PyArray1::from_vec(py, new_scores).into(),
+        ))
+    }
 }
 
 // ========================================================================
@@ -1846,7 +3277,7 @@ impl PyStreamingVectorSearch {
         // Get query dtype
         let query_dtype = query.getattr("dtype")?.str()?.to_string();
 
-        // Dispatch based on dtype
+        // Dispatch based on dtype - convert non-float types to f64
         match query_dtype.as_str() {
             "float32" => self.streaming_top_k_from_file_f32(
                 py,
@@ -1866,8 +3297,24 @@ impl PyStreamingVectorSearch {
                 k,
                 batch_size,
             ),
+            "float16" => {
+                // Convert f16 query to f32
+                let numpy = py.import("numpy")?;
+                let query_f32 = query.call_method1("astype", (numpy.getattr("float32")?,))?;
+                self.streaming_top_k_from_file_f32(
+                    py, &query_f32, npk_dir, array_name, metric_type, k, batch_size,
+                )
+            }
+            "int8" | "int16" | "int32" | "int64" | "uint8" | "uint16" | "uint32" | "uint64" => {
+                // Convert integer query to f32 (most common file format)
+                let numpy = py.import("numpy")?;
+                let query_f32 = query.call_method1("astype", (numpy.getattr("float32")?,))?;
+                self.streaming_top_k_from_file_f32(
+                    py, &query_f32, npk_dir, array_name, metric_type, k, batch_size,
+                )
+            }
             _ => Err(PyTypeError::new_err(format!(
-                "streaming_top_k_from_file supports float32 and float64, got: {}",
+                "Unsupported dtype: {}. Supported: float64, float32, float16, int8, int16, int32, int64, uint8, uint16, uint32, uint64",
                 query_dtype
             ))),
         }
@@ -1904,7 +3351,7 @@ impl PyStreamingVectorSearch {
         // Get query dtype
         let query_dtype = query.getattr("dtype")?.str()?.to_string();
 
-        // Dispatch based on dtype
+        // Dispatch based on dtype - convert non-float types to f64
         match query_dtype.as_str() {
             "float32" => self.streaming_batch_compute_f32(
                 py,
@@ -1922,8 +3369,24 @@ impl PyStreamingVectorSearch {
                 metric_type,
                 batch_size,
             ),
+            "float16" => {
+                // Convert f16 query to f32
+                let numpy = py.import("numpy")?;
+                let query_f32 = query.call_method1("astype", (numpy.getattr("float32")?,))?;
+                self.streaming_batch_compute_f32(
+                    py, &query_f32, npk_dir, array_name, metric_type, batch_size,
+                )
+            }
+            "int8" | "int16" | "int32" | "int64" | "uint8" | "uint16" | "uint32" | "uint64" => {
+                // Convert integer query to f32 (most common file format)
+                let numpy = py.import("numpy")?;
+                let query_f32 = query.call_method1("astype", (numpy.getattr("float32")?,))?;
+                self.streaming_batch_compute_f32(
+                    py, &query_f32, npk_dir, array_name, metric_type, batch_size,
+                )
+            }
             _ => Err(PyTypeError::new_err(format!(
-                "streaming_batch_compute supports float32 and float64, got: {}",
+                "Unsupported dtype: {}. Supported: float64, float32, float16, int8, int16, int32, int64, uint8, uint16, uint32, uint64",
                 query_dtype
             ))),
         }
@@ -1964,16 +3427,33 @@ impl PyStreamingVectorSearch {
         let metric_type = MetricType::from_str(metric)
             .ok_or_else(|| PyValueError::new_err(format!("Unknown metric: {}", metric)))?;
 
-        // Get queries dtype and shape
+        // Get queries dtype and shape - convert to f32 if necessary
         let queries_dtype = queries.getattr("dtype")?.str()?.to_string();
-        let queries_arr: PyReadonlyArrayDyn<f32> = if queries_dtype == "float32" {
-            queries.extract()?
-        } else {
-            return Err(PyTypeError::new_err(format!(
-                "streaming_multi_query_top_k currently supports float32, got: {}",
-                queries_dtype
-            )));
-        };
+        
+        // Convert non-f32 types to f32
+        let queries_bound: std::borrow::Cow<'_, Bound<'_, PyAny>>;
+        let queries_ref: &Bound<'_, PyAny>;
+        
+        match queries_dtype.as_str() {
+            "float32" => {
+                queries_ref = queries;
+            }
+            "float64" | "float16" | "int8" | "int16" | "int32" | "int64" | "uint8" | "uint16" | "uint32" | "uint64" => {
+                let numpy = py.import("numpy")?;
+                queries_bound = std::borrow::Cow::Owned(
+                    queries.call_method1("astype", (numpy.getattr("float32")?,))?
+                );
+                queries_ref = queries_bound.as_ref();
+            }
+            _ => {
+                return Err(PyTypeError::new_err(format!(
+                    "Unsupported dtype: {}. Supported: float64, float32, float16, int8, int16, int32, int64, uint8, uint16, uint32, uint64",
+                    queries_dtype
+                )));
+            }
+        }
+        
+        let queries_arr: PyReadonlyArrayDyn<f32> = queries_ref.extract()?;
 
         let readonly_queries = queries_arr.readonly();
         let queries_array = readonly_queries.as_array();

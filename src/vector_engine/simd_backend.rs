@@ -368,6 +368,289 @@ impl SimdBackend {
                 .collect()
         }
     }
+
+    // ============== int16 support ==============
+    
+    /// 计算两个 i16 向量的度量 (通过转换为 f64 计算)
+    pub fn compute_i16(&self, a: &[i16], b: &[i16], metric: MetricType) -> Result<f64> {
+        if a.len() != b.len() {
+            return Err(SimdError::LengthMismatch {
+                expected: a.len(),
+                got: b.len(),
+            });
+        }
+        // Convert to f64 for computation
+        let a_f64: Vec<f64> = a.iter().map(|&x| x as f64).collect();
+        let b_f64: Vec<f64> = b.iter().map(|&x| x as f64).collect();
+        self.compute_f64(&a_f64, &b_f64, metric)
+    }
+
+    /// 批量计算 (i16)
+    pub fn batch_compute_i16(
+        &self,
+        query: &[i16],
+        candidates: &[&[i16]],
+        metric: MetricType,
+    ) -> Result<Vec<f64>> {
+        #[cfg(feature = "rayon")]
+        {
+            use rayon::prelude::*;
+            candidates
+                .par_iter()
+                .map(|candidate| self.compute_i16(query, candidate, metric))
+                .collect()
+        }
+
+        #[cfg(not(feature = "rayon"))]
+        {
+            candidates
+                .iter()
+                .map(|candidate| self.compute_i16(query, candidate, metric))
+                .collect()
+        }
+    }
+
+    // ============== int32 support ==============
+    
+    /// 计算两个 i32 向量的度量 (通过转换为 f64 计算)
+    pub fn compute_i32(&self, a: &[i32], b: &[i32], metric: MetricType) -> Result<f64> {
+        if a.len() != b.len() {
+            return Err(SimdError::LengthMismatch {
+                expected: a.len(),
+                got: b.len(),
+            });
+        }
+        let a_f64: Vec<f64> = a.iter().map(|&x| x as f64).collect();
+        let b_f64: Vec<f64> = b.iter().map(|&x| x as f64).collect();
+        self.compute_f64(&a_f64, &b_f64, metric)
+    }
+
+    /// 批量计算 (i32)
+    pub fn batch_compute_i32(
+        &self,
+        query: &[i32],
+        candidates: &[&[i32]],
+        metric: MetricType,
+    ) -> Result<Vec<f64>> {
+        #[cfg(feature = "rayon")]
+        {
+            use rayon::prelude::*;
+            candidates
+                .par_iter()
+                .map(|candidate| self.compute_i32(query, candidate, metric))
+                .collect()
+        }
+
+        #[cfg(not(feature = "rayon"))]
+        {
+            candidates
+                .iter()
+                .map(|candidate| self.compute_i32(query, candidate, metric))
+                .collect()
+        }
+    }
+
+    // ============== int64 support ==============
+    
+    /// 计算两个 i64 向量的度量 (通过转换为 f64 计算)
+    pub fn compute_i64(&self, a: &[i64], b: &[i64], metric: MetricType) -> Result<f64> {
+        if a.len() != b.len() {
+            return Err(SimdError::LengthMismatch {
+                expected: a.len(),
+                got: b.len(),
+            });
+        }
+        let a_f64: Vec<f64> = a.iter().map(|&x| x as f64).collect();
+        let b_f64: Vec<f64> = b.iter().map(|&x| x as f64).collect();
+        self.compute_f64(&a_f64, &b_f64, metric)
+    }
+
+    /// 批量计算 (i64)
+    pub fn batch_compute_i64(
+        &self,
+        query: &[i64],
+        candidates: &[&[i64]],
+        metric: MetricType,
+    ) -> Result<Vec<f64>> {
+        #[cfg(feature = "rayon")]
+        {
+            use rayon::prelude::*;
+            candidates
+                .par_iter()
+                .map(|candidate| self.compute_i64(query, candidate, metric))
+                .collect()
+        }
+
+        #[cfg(not(feature = "rayon"))]
+        {
+            candidates
+                .iter()
+                .map(|candidate| self.compute_i64(query, candidate, metric))
+                .collect()
+        }
+    }
+
+    // ============== uint16 support ==============
+    
+    /// 计算两个 u16 向量的度量 (通过转换为 f64 计算)
+    pub fn compute_u16(&self, a: &[u16], b: &[u16], metric: MetricType) -> Result<f64> {
+        if a.len() != b.len() {
+            return Err(SimdError::LengthMismatch {
+                expected: a.len(),
+                got: b.len(),
+            });
+        }
+        let a_f64: Vec<f64> = a.iter().map(|&x| x as f64).collect();
+        let b_f64: Vec<f64> = b.iter().map(|&x| x as f64).collect();
+        self.compute_f64(&a_f64, &b_f64, metric)
+    }
+
+    /// 批量计算 (u16)
+    pub fn batch_compute_u16(
+        &self,
+        query: &[u16],
+        candidates: &[&[u16]],
+        metric: MetricType,
+    ) -> Result<Vec<f64>> {
+        #[cfg(feature = "rayon")]
+        {
+            use rayon::prelude::*;
+            candidates
+                .par_iter()
+                .map(|candidate| self.compute_u16(query, candidate, metric))
+                .collect()
+        }
+
+        #[cfg(not(feature = "rayon"))]
+        {
+            candidates
+                .iter()
+                .map(|candidate| self.compute_u16(query, candidate, metric))
+                .collect()
+        }
+    }
+
+    // ============== uint32 support ==============
+    
+    /// 计算两个 u32 向量的度量 (通过转换为 f64 计算)
+    pub fn compute_u32(&self, a: &[u32], b: &[u32], metric: MetricType) -> Result<f64> {
+        if a.len() != b.len() {
+            return Err(SimdError::LengthMismatch {
+                expected: a.len(),
+                got: b.len(),
+            });
+        }
+        let a_f64: Vec<f64> = a.iter().map(|&x| x as f64).collect();
+        let b_f64: Vec<f64> = b.iter().map(|&x| x as f64).collect();
+        self.compute_f64(&a_f64, &b_f64, metric)
+    }
+
+    /// 批量计算 (u32)
+    pub fn batch_compute_u32(
+        &self,
+        query: &[u32],
+        candidates: &[&[u32]],
+        metric: MetricType,
+    ) -> Result<Vec<f64>> {
+        #[cfg(feature = "rayon")]
+        {
+            use rayon::prelude::*;
+            candidates
+                .par_iter()
+                .map(|candidate| self.compute_u32(query, candidate, metric))
+                .collect()
+        }
+
+        #[cfg(not(feature = "rayon"))]
+        {
+            candidates
+                .iter()
+                .map(|candidate| self.compute_u32(query, candidate, metric))
+                .collect()
+        }
+    }
+
+    // ============== uint64 support ==============
+    
+    /// 计算两个 u64 向量的度量 (通过转换为 f64 计算)
+    pub fn compute_u64(&self, a: &[u64], b: &[u64], metric: MetricType) -> Result<f64> {
+        if a.len() != b.len() {
+            return Err(SimdError::LengthMismatch {
+                expected: a.len(),
+                got: b.len(),
+            });
+        }
+        let a_f64: Vec<f64> = a.iter().map(|&x| x as f64).collect();
+        let b_f64: Vec<f64> = b.iter().map(|&x| x as f64).collect();
+        self.compute_f64(&a_f64, &b_f64, metric)
+    }
+
+    /// 批量计算 (u64)
+    pub fn batch_compute_u64(
+        &self,
+        query: &[u64],
+        candidates: &[&[u64]],
+        metric: MetricType,
+    ) -> Result<Vec<f64>> {
+        #[cfg(feature = "rayon")]
+        {
+            use rayon::prelude::*;
+            candidates
+                .par_iter()
+                .map(|candidate| self.compute_u64(query, candidate, metric))
+                .collect()
+        }
+
+        #[cfg(not(feature = "rayon"))]
+        {
+            candidates
+                .iter()
+                .map(|candidate| self.compute_u64(query, candidate, metric))
+                .collect()
+        }
+    }
+
+    // ============== float16 support ==============
+    
+    /// 计算两个 f16 向量的度量 (通过转换为 f32 计算)
+    pub fn compute_f16(&self, a: &[half::f16], b: &[half::f16], metric: MetricType) -> Result<f64> {
+        if a.len() != b.len() {
+            return Err(SimdError::LengthMismatch {
+                expected: a.len(),
+                got: b.len(),
+            });
+        }
+        // Convert to f32 for computation (f16 -> f32 is lossless)
+        let a_f32: Vec<f32> = a.iter().map(|&x| x.to_f32()).collect();
+        let b_f32: Vec<f32> = b.iter().map(|&x| x.to_f32()).collect();
+        let result = self.compute_f32(&a_f32, &b_f32, metric)?;
+        Ok(result as f64)
+    }
+
+    /// 批量计算 (f16)
+    pub fn batch_compute_f16(
+        &self,
+        query: &[half::f16],
+        candidates: &[&[half::f16]],
+        metric: MetricType,
+    ) -> Result<Vec<f64>> {
+        #[cfg(feature = "rayon")]
+        {
+            use rayon::prelude::*;
+            candidates
+                .par_iter()
+                .map(|candidate| self.compute_f16(query, candidate, metric))
+                .collect()
+        }
+
+        #[cfg(not(feature = "rayon"))]
+        {
+            candidates
+                .iter()
+                .map(|candidate| self.compute_f16(query, candidate, metric))
+                .collect()
+        }
+    }
 }
 
 impl Default for SimdBackend {

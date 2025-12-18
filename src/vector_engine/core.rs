@@ -154,6 +154,76 @@ impl VectorEngine {
         // u8 使用 CPU SimSIMD 加速（hamming/jaccard）
         self.cpu_backend.batch_compute_u8(query, candidates, metric)
     }
+
+    /// 批量计算 (i16 - 16位整数向量)
+    pub fn batch_compute_i16(
+        &self,
+        query: &[i16],
+        candidates: &[&[i16]],
+        metric: MetricType,
+    ) -> Result<Vec<f64>> {
+        self.cpu_backend.batch_compute_i16(query, candidates, metric)
+    }
+
+    /// 批量计算 (i32 - 32位整数向量)
+    pub fn batch_compute_i32(
+        &self,
+        query: &[i32],
+        candidates: &[&[i32]],
+        metric: MetricType,
+    ) -> Result<Vec<f64>> {
+        self.cpu_backend.batch_compute_i32(query, candidates, metric)
+    }
+
+    /// 批量计算 (i64 - 64位整数向量)
+    pub fn batch_compute_i64(
+        &self,
+        query: &[i64],
+        candidates: &[&[i64]],
+        metric: MetricType,
+    ) -> Result<Vec<f64>> {
+        self.cpu_backend.batch_compute_i64(query, candidates, metric)
+    }
+
+    /// 批量计算 (u16 - 16位无符号整数向量)
+    pub fn batch_compute_u16(
+        &self,
+        query: &[u16],
+        candidates: &[&[u16]],
+        metric: MetricType,
+    ) -> Result<Vec<f64>> {
+        self.cpu_backend.batch_compute_u16(query, candidates, metric)
+    }
+
+    /// 批量计算 (u32 - 32位无符号整数向量)
+    pub fn batch_compute_u32(
+        &self,
+        query: &[u32],
+        candidates: &[&[u32]],
+        metric: MetricType,
+    ) -> Result<Vec<f64>> {
+        self.cpu_backend.batch_compute_u32(query, candidates, metric)
+    }
+
+    /// 批量计算 (u64 - 64位无符号整数向量)
+    pub fn batch_compute_u64(
+        &self,
+        query: &[u64],
+        candidates: &[&[u64]],
+        metric: MetricType,
+    ) -> Result<Vec<f64>> {
+        self.cpu_backend.batch_compute_u64(query, candidates, metric)
+    }
+
+    /// 批量计算 (f16 - 半精度浮点)
+    pub fn batch_compute_f16(
+        &self,
+        query: &[half::f16],
+        candidates: &[&[half::f16]],
+        metric: MetricType,
+    ) -> Result<Vec<f64>> {
+        self.cpu_backend.batch_compute_f16(query, candidates, metric)
+    }
 }
 
 impl Default for VectorEngine {

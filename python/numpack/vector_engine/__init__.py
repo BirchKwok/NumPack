@@ -58,8 +58,19 @@ class VectorSearch:
     Supported data types:
         - float64 (f64): Double precision floating point
         - float32 (f32): Single precision floating point
+        - float16 (f16): Half precision floating point
         - int8 (i8): 8-bit signed integers
-        - uint8 (u8): Binary vectors (for hamming/jaccard metrics)
+        - int16 (i16): 16-bit signed integers
+        - int32 (i32): 32-bit signed integers
+        - int64 (i64): 64-bit signed integers
+        - uint8 (u8): 8-bit unsigned integers (binary vectors for hamming/jaccard)
+        - uint16 (u16): 16-bit unsigned integers
+        - uint32 (u32): 32-bit unsigned integers
+        - uint64 (u64): 64-bit unsigned integers
+    
+    Mixed dtype support:
+        Query and candidates can have different dtypes. When dtypes differ,
+        both are automatically converted to float64 for computation.
     
     Supported metrics:
         - Similarity (higher is better):
@@ -110,8 +121,8 @@ class VectorSearch:
     
     def compute_metric(
         self,
-        a: NDArray[np.floating],
-        b: NDArray[np.floating],
+        a: NDArray,
+        b: NDArray,
         metric: MetricType
     ) -> float:
         """Compute the metric value between two vectors.
@@ -132,8 +143,8 @@ class VectorSearch:
     
     def batch_compute(
         self,
-        query: NDArray[np.floating],
-        candidates: NDArray[np.floating],
+        query: NDArray,
+        candidates: NDArray,
         metric: MetricType
     ) -> NDArray[np.float64]:
         """Batch compute metrics between a query vector and multiple candidates.
@@ -156,8 +167,8 @@ class VectorSearch:
     
     def top_k_search(
         self,
-        query: NDArray[np.floating],
-        candidates: NDArray[np.floating],
+        query: NDArray,
+        candidates: NDArray,
         metric: MetricType,
         k: int
     ) -> Tuple[NDArray[np.uint64], NDArray[np.float64]]:
@@ -185,8 +196,8 @@ class VectorSearch:
     
     def multi_query_top_k(
         self,
-        queries: NDArray[np.floating],
-        candidates: NDArray[np.floating],
+        queries: NDArray,
+        candidates: NDArray,
         metric: MetricType,
         k: int
     ) -> Tuple[NDArray[np.uint64], NDArray[np.float64]]:
@@ -215,37 +226,10 @@ class VectorSearch:
         """
         ...
     
-    def merge_top_k(
+    def segmented_top_k_search(
         self,
-        batch_scores: NDArray[np.float64],
-        global_offset: int,
-        current_indices: NDArray[np.uint64],
-        current_scores: NDArray[np.float64],
-        k: int,
-        is_similarity: bool
-    ) -> Tuple[NDArray[np.uint64], NDArray[np.float64]]:
-        """Merge batch scores into existing top-k results.
-        
-        This is a helper method for implementing custom streaming searches.
-        It efficiently merges new batch results with current top-k.
-        
-        Args:
-            batch_scores: Scores for current batch (float64)
-            global_offset: Starting global index for this batch
-            current_indices: Current top-k indices (uint64, can be empty)
-            current_scores: Current top-k scores (float64, can be empty)
-            k: Number of top results to maintain
-            is_similarity: True = higher is better, False = lower is better
-        
-        Returns:
-            tuple: (new_indices, new_scores) - Updated top-k results
-        """
-        ...
-    
-    def batch_compute_and_merge_top_k(
-        self,
-        query: NDArray[np.floating],
-        candidates: NDArray[np.floating],
+        query: NDArray,
+        candidates: NDArray,
         metric: MetricType,
         global_offset: int,
         current_indices: NDArray[np.uint64],
@@ -253,10 +237,11 @@ class VectorSearch:
         k: int,
         is_similarity: bool
     ) -> Tuple[NDArray[np.uint64], NDArray[np.float64]]:
-        """Compute batch scores AND merge into top-k in a single FFI call.
+        """Segmented Top-K search: Process large datasets in segments with incremental merging.
         
-        This is an optimized method that combines batch_compute + merge_top_k,
-        eliminating intermediate Python array allocation and reducing FFI overhead.
+        This method is designed for streaming/segmented processing of large candidate sets.
+        It computes scores for a batch of candidates and merges results with the current top-k
+        in a single FFI call, eliminating intermediate Python array allocation.
         
         Args:
             query: Query vector (1D numpy array)
@@ -270,6 +255,19 @@ class VectorSearch:
         
         Returns:
             tuple: (new_indices, new_scores) - Updated top-k results
+        
+        Example:
+            >>> engine = VectorSearch()
+            >>> query = np.random.randn(128).astype(np.float32)
+            >>> current_indices = np.array([], dtype=np.uint64)
+            >>> current_scores = np.array([], dtype=np.float64)
+            >>>
+            >>> for batch_idx, candidates_batch in enumerate(data_batches):
+            ...     global_offset = batch_idx * batch_size
+            ...     current_indices, current_scores = engine.segmented_top_k_search(
+            ...         query, candidates_batch, 'cosine', global_offset,
+            ...         current_indices, current_scores, k=10, is_similarity=True
+            ...     )
         """
         ...
 
@@ -287,9 +285,23 @@ class StreamingVectorSearch:
         - No intermediate Python array allocation per batch
         - Single FFI call for entire search
     
-    Supported data types:
-        - float32 (f32): Single precision floating point
+    Supported data types (query vectors):
         - float64 (f64): Double precision floating point
+        - float32 (f32): Single precision floating point
+        - float16 (f16): Half precision floating point (converted to f32)
+        - int8 (i8): 8-bit signed integers (converted to f64)
+        - int16 (i16): 16-bit signed integers (converted to f64)
+        - int32 (i32): 32-bit signed integers (converted to f64)
+        - int64 (i64): 64-bit signed integers (converted to f64)
+        - uint8 (u8): 8-bit unsigned integers (converted to f64)
+        - uint16 (u16): 16-bit unsigned integers (converted to f64)
+        - uint32 (u32): 32-bit unsigned integers (converted to f64)
+        - uint64 (u64): 64-bit unsigned integers (converted to f64)
+    
+    Note: 
+        - For streaming from files, query vectors are automatically converted to 
+          match the file's data type (usually float32).
+        - Integer and float16 query vectors are converted to float32 for file operations.
     
     Example:
         >>> from numpack import NumPack
