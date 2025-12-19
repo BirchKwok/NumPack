@@ -160,6 +160,12 @@ print(f"Files: {info['file_count']}, Compression: {info['compression_ratio']:.1%
 | Vector similarity search | ✅ **NumPack** (SIMD) |
 | Write-once, read-many | ✅ **NumPack** (1.74x faster read) |
 | Extreme compression | ✅ **NumPack** `.npkg` (better ratio, streaming, high I/O) |
+| RAG/Embedding storage | ✅ **NumPack** (fast retrieval + SIMD search) |
+| Feature store | ✅ **NumPack** (real-time updates + low latency) |
+| Memory-constrained environments | ✅ **NumPack** (mmap + lazy loading) |
+| Multi-process data sharing | ✅ **NumPack** (zero-copy mmap) |
+| Incremental data pipelines | ✅ **NumPack** (329x faster append) |
+| Real-time feature updates | ✅ **NumPack** (ms-level replace) |
 
 ## Documentation
 
