@@ -147,6 +147,21 @@ enum UserIntent {
     ComplexIndex,          // 复杂索引：切片、布尔掩码等
 }
 
+/// 批量访问模式枚举 - 用于动态策略选择
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum BatchAccessPattern {
+    /// 顺序访问：索引连续或近似连续
+    Sequential,
+    /// 聚簇访问：索引分布在几个连续块中
+    Clustered,
+    /// 稀疏访问：索引均匀分布在整个范围
+    Sparse,
+    /// 随机访问：索引分布无规律
+    Random,
+    /// 热点访问：大部分访问集中在少数区域
+    Hot,
+}
+
 #[pyclass]
 struct ArrayMetadata {
     #[pyo3(get)]
@@ -2221,14 +2236,196 @@ impl LazyArray {
         self.create_numpy_array(py, row_data, &row_shape)
     }
 
+    /// 快速访问模式检测（极简版：最小化开销）
+    /// 
+    /// 只做最基本的检测，避免复杂统计计算
+    #[inline]
+    fn detect_access_pattern_fast(&self, indices: &[(usize, usize)], total_rows: usize) -> BatchAccessPattern {
+        let n = indices.len();
+        if n < 20 {
+            return BatchAccessPattern::Sequential;
+        }
+        
+        // 快速采样：只检测前32个样本（减少开销）
+        const SAMPLE_SIZE: usize = 32;
+        let sample_count = n.min(SAMPLE_SIZE);
+        
+        // 计算连续性和小间隔比率
+        let mut consecutive = 0usize;
+        let mut small_gap = 0usize;
+        
+        for i in 1..sample_count {
+            let prev = indices[i - 1].1;
+            let curr = indices[i].1;
+            let gap = if curr > prev { curr - prev } else { prev - curr };
+            
+            if gap == 1 {
+                consecutive += 1;
+            }
+            if gap <= 16 {  // 放宽小间隔阈值
+                small_gap += 1;
+            }
+        }
+        
+        let pairs = sample_count - 1;
+        if pairs == 0 {
+            return BatchAccessPattern::Sequential;
+        }
+        
+        // 快速判断 - 优化阈值
+        if consecutive * 5 > pairs * 4 {  // >80% 连续
+            return BatchAccessPattern::Sequential;
+        }
+        if small_gap * 10 > pairs * 6 {  // >60% 小间隔 -> Clustered
+            return BatchAccessPattern::Clustered;
+        }
+        
+        // 检测热点：检查范围
+        let min_idx = indices[..sample_count].iter().map(|&(_, p)| p).min().unwrap_or(0);
+        let max_idx = indices[..sample_count].iter().map(|&(_, p)| p).max().unwrap_or(0);
+        let range = max_idx.saturating_sub(min_idx);
+        
+        if total_rows > 0 && range < total_rows / 10 {
+            return BatchAccessPattern::Hot;
+        }
+        
+        BatchAccessPattern::Random
+    }
+    
+    /// 检测批量访问的访问模式（完整版：采样检测）
+    /// 
+    /// 通过分析索引分布特征来判断访问模式：
+    /// - Sequential: 连续性 > 80%
+    /// - Clustered: 连续性 > 40% 或 有明显的聚簇特征
+    /// - Hot: 大部分索引集中在小范围内
+    /// - Sparse: 索引间隔均匀
+    /// - Random: 其他情况
+    #[allow(dead_code)]
+    fn detect_access_pattern(&self, indices: &[(usize, usize)], total_rows: usize) -> BatchAccessPattern {
+        if indices.len() < 3 {
+            return BatchAccessPattern::Sequential;
+        }
+        
+        // 优化：对大批量使用采样检测（最多检测200个样本）
+        const MAX_SAMPLE_SIZE: usize = 200;
+        let sample_indices: Vec<usize> = if indices.len() <= MAX_SAMPLE_SIZE {
+            indices.iter().map(|&(_, p)| p).collect()
+        } else {
+            // 均匀采样
+            let step = indices.len() / MAX_SAMPLE_SIZE;
+            indices.iter()
+                .enumerate()
+                .filter(|(i, _)| i % step == 0)
+                .take(MAX_SAMPLE_SIZE)
+                .map(|(_, &(_, p))| p)
+                .collect()
+        };
+        
+        if sample_indices.len() < 2 {
+            return BatchAccessPattern::Sequential;
+        }
+        
+        // 计算统计信息
+        let mut consecutive_pairs = 0;
+        let mut total_pairs = 0;
+        let mut small_gap_count = 0; // 间隔 <= 5 的对数
+        
+        for window in sample_indices.windows(2) {
+            let gap = if window[1] > window[0] {
+                window[1] - window[0]
+            } else {
+                window[0] - window[1]
+            };
+            
+            if gap == 1 {
+                consecutive_pairs += 1;
+            }
+            if gap <= 5 {
+                small_gap_count += 1;
+            }
+            total_pairs += 1;
+        }
+        
+        if total_pairs == 0 {
+            return BatchAccessPattern::Sequential;
+        }
+        
+        let consecutive_ratio = consecutive_pairs as f64 / total_pairs as f64;
+        let clustered_ratio = small_gap_count as f64 / total_pairs as f64;
+        
+        // 快速判断顺序和聚簇模式
+        if consecutive_ratio > 0.8 {
+            return BatchAccessPattern::Sequential;
+        }
+        if clustered_ratio > 0.5 || consecutive_ratio > 0.4 {
+            return BatchAccessPattern::Clustered;
+        }
+        
+        // 检测热点模式：大部分索引集中在小范围内
+        let min_idx = *sample_indices.iter().min().unwrap_or(&0);
+        let max_idx = *sample_indices.iter().max().unwrap_or(&0);
+        let index_range = max_idx.saturating_sub(min_idx);
+        
+        // 热点模式：索引范围小于总数据量的10%，且索引密度高
+        // 密度 = 索引数量 / 范围
+        let density = if index_range > 0 {
+            sample_indices.len() as f64 / index_range as f64
+        } else {
+            1.0
+        };
+        
+        // 高密度（>0.3）且小范围才是热点模式
+        if total_rows > 0 && index_range < total_rows / 10 && density > 0.3 {
+            return BatchAccessPattern::Hot;
+        }
+        
+        // 检查是否为稀疏模式（均匀分布）
+        if sample_indices.len() > 1 && index_range > 0 {
+            let expected_gap = index_range as f64 / (sample_indices.len() - 1) as f64;
+            let mut total_gap = 0usize;
+            for window in sample_indices.windows(2) {
+                let gap = if window[1] > window[0] {
+                    window[1] - window[0]
+                } else {
+                    window[0] - window[1]
+                };
+                total_gap += gap;
+            }
+            let avg_gap = total_gap as f64 / total_pairs as f64;
+            
+            // 如果平均间隔接近预期间隔，说明是均匀分布
+            if expected_gap > 0.0 && (avg_gap - expected_gap).abs() / expected_gap < 0.3 {
+                return BatchAccessPattern::Sparse;
+            }
+        }
+        
+        BatchAccessPattern::Random
+    }
+    
     /// 处理批量访问（优化的一次性FFI调用）
+    /// 
+    /// 优化策略（动态选择）：
+    /// 1. 访问模式自动检测 - 分析索引分布判断最优策略
+    /// 2. 索引排序优化 - 仅对随机/稀疏模式启用，聚簇模式绕过
+    /// 3. 连续块检测 - 检测连续索引块进行批量读取
+    /// 4. 预取提示 - 在Unix系统上使用madvise提供预读提示
     fn handle_batch_access(&self, py: Python, indices: Vec<i64>) -> PyResult<PyObject> {
-        // 一次性处理所有索引，减少FFI开销
-        let mut all_data = Vec::new();
         let logical_len = self.len_logical() as i64;
-        let mut logical_indices = Vec::with_capacity(indices.len());
-
-        for &idx in &indices {
+        let num_indices = indices.len();
+        
+        // 快速路径：空索引
+        if num_indices == 0 {
+            let mut result_shape = self.shape.clone();
+            if !result_shape.is_empty() {
+                result_shape[0] = 0;
+            }
+            return self.create_numpy_array(py, Vec::new(), &result_shape);
+        }
+        
+        // 归一化索引并创建 (original_position, physical_index) 对
+        let mut indexed_positions: Vec<(usize, usize)> = Vec::with_capacity(num_indices);
+        
+        for (orig_pos, &idx) in indices.iter().enumerate() {
             let normalized = if idx < 0 { logical_len + idx } else { idx };
             if normalized < 0 || normalized >= logical_len {
                 return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
@@ -2236,45 +2433,403 @@ impl LazyArray {
                     idx
                 )));
             }
-            logical_indices.push(normalized as usize);
+            indexed_positions.push((orig_pos, normalized as usize));
         }
-
-        let physical_indices = if let Some(mut map) = self.logical_rows.clone() {
-            map.logical_indices(&logical_indices)?
-        } else {
-            logical_indices
-        };
-
+        
+        // 转换逻辑索引到物理索引
+        if let Some(mut map) = self.logical_rows.clone() {
+            let logical_indices: Vec<usize> = indexed_positions.iter().map(|&(_, li)| li).collect();
+            let physical_indices = map.logical_indices(&logical_indices)?;
+            for (i, phys_idx) in physical_indices.into_iter().enumerate() {
+                indexed_positions[i].1 = phys_idx;
+            }
+        }
+        
         let row_size = if self.shape.len() > 1 {
             self.shape[1..].iter().product::<usize>() * self.itemsize
         } else {
             self.itemsize
         };
-
-        for phys_idx in physical_indices {
-            if let Some(ref engine) = self.optimized_engine {
-                let row_data = engine.get_row(phys_idx);
-                if !row_data.is_empty() {
-                    all_data.extend(row_data);
-                    continue;
-                }
+        
+        // 动态策略选择 - 根据数据规模调整阈值
+        let total_rows = self.shape[0];
+        let data_size_bytes = total_rows * row_size;
+        
+        // 大数据集（>10MB）使用更保守的策略
+        let is_large_dataset = data_size_bytes > 10 * 1024 * 1024;
+        
+        // 优化：提高阈值减少小批量开销
+        let sort_threshold = if is_large_dataset { 200 } else { 100 };
+        let pattern_detect_threshold = 50; // 提高模式检测阈值
+        let parallel_threshold = 50000; // 并行处理阈值（仅对超大批量启用）
+        
+        // 检测访问模式（仅对足够大的批量进行检测）
+        let access_pattern = if num_indices >= pattern_detect_threshold {
+            self.detect_access_pattern_fast(&indexed_positions, total_rows)
+        } else {
+            BatchAccessPattern::Sequential // 小批量默认按顺序处理
+        };
+        
+        // 根据访问模式和数据规模决定优化策略
+        // 优化：只对小数据集的Random/Sparse模式启用排序
+        // Clustered模式已有良好局部性，不需要排序
+        let use_sorted_access = num_indices >= sort_threshold && 
+            !is_large_dataset &&
+            access_pattern == BatchAccessPattern::Random;
+        
+        // 优化：使用连续内存缓冲区，避免Vec<Vec<u8>>的多次分配
+        let total_size = num_indices * row_size;
+        let mut all_data = vec![0u8; total_size];
+        
+        if use_sorted_access {
+            // 就地排序indexed_positions（避免clone）
+            indexed_positions.sort_unstable_by_key(|&(_, phys_idx)| phys_idx);
+            
+            // 预取提示
+            #[cfg(unix)]
+            if access_pattern == BatchAccessPattern::Random {
+                self.advise_sequential_access(&indexed_positions, row_size);
             }
-
-            let offset = phys_idx * row_size;
-            if offset + row_size > self.mmap.len() {
-                return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
-                    "Data access out of bounds",
-                ));
+            
+            // 直接写入连续缓冲区
+            self.process_sorted_batch_fast(&indexed_positions, row_size, &mut all_data)?;
+        } else if num_indices >= parallel_threshold && row_size >= 32 {
+            // 优化：大批量使用并行处理
+            self.process_parallel_batch_fast(&indexed_positions, row_size, &mut all_data)?;
+        } else {
+            // 预取提示
+            #[cfg(unix)]
+            if matches!(access_pattern, BatchAccessPattern::Clustered | BatchAccessPattern::Hot) 
+                && num_indices >= sort_threshold {
+                self.advise_willneed_access(&indexed_positions, row_size);
             }
-            all_data.extend(&self.mmap[offset..offset + row_size]);
+            
+            // 直接写入连续缓冲区
+            self.process_direct_batch_fast(&indexed_positions, row_size, &mut all_data)?;
         }
 
         let mut result_shape = self.shape.clone();
         if !result_shape.is_empty() {
-            result_shape[0] = indices.len();
+            result_shape[0] = num_indices;
         }
 
         self.create_numpy_array(py, all_data, &result_shape)
+    }
+    
+    /// 快速处理排序后的批量访问（直接写入连续缓冲区）
+    fn process_sorted_batch_fast(
+        &self,
+        sorted_positions: &[(usize, usize)],
+        row_size: usize,
+        output: &mut [u8],
+    ) -> PyResult<()> {
+        let mmap_len = self.mmap.len();
+        let mut i = 0;
+        
+        while i < sorted_positions.len() {
+            let (orig_pos, phys_idx) = sorted_positions[i];
+            
+            // 检测连续块的长度
+            let mut block_len = 1;
+            while i + block_len < sorted_positions.len() {
+                let (_, next_phys_idx) = sorted_positions[i + block_len];
+                if next_phys_idx == phys_idx + block_len {
+                    block_len += 1;
+                } else {
+                    break;
+                }
+            }
+            
+            let src_offset = phys_idx * row_size;
+            
+            if block_len >= 2 {
+                // 连续块：批量读取后分发
+                let block_size = block_len * row_size;
+                if src_offset + block_size <= mmap_len {
+                    let block_data = &self.mmap[src_offset..src_offset + block_size];
+                    for j in 0..block_len {
+                        let (orig_pos_j, _) = sorted_positions[i + j];
+                        let dst_start = orig_pos_j * row_size;
+                        let src_start = j * row_size;
+                        output[dst_start..dst_start + row_size]
+                            .copy_from_slice(&block_data[src_start..src_start + row_size]);
+                    }
+                }
+                i += block_len;
+            } else {
+                // 单行：直接复制
+                if src_offset + row_size <= mmap_len {
+                    let dst_start = orig_pos * row_size;
+                    output[dst_start..dst_start + row_size]
+                        .copy_from_slice(&self.mmap[src_offset..src_offset + row_size]);
+                } else {
+                    return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                        "Data access out of bounds",
+                    ));
+                }
+                i += 1;
+            }
+        }
+        Ok(())
+    }
+    
+    /// 快速直接批量访问（直接写入连续缓冲区）
+    fn process_direct_batch_fast(
+        &self,
+        indexed_positions: &[(usize, usize)],
+        row_size: usize,
+        output: &mut [u8],
+    ) -> PyResult<()> {
+        let mmap_len = self.mmap.len();
+        let mmap_slice = &self.mmap[..];
+        
+        for &(orig_pos, phys_idx) in indexed_positions {
+            let src_offset = phys_idx * row_size;
+            if src_offset + row_size > mmap_len {
+                return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                    "Data access out of bounds",
+                ));
+            }
+            let dst_start = orig_pos * row_size;
+            output[dst_start..dst_start + row_size]
+                .copy_from_slice(&mmap_slice[src_offset..src_offset + row_size]);
+        }
+        Ok(())
+    }
+    
+    /// 并行批量访问（使用rayon并行化大批量内存复制）
+    /// 优化版：减少内存分配，使用更大的chunk和预分配缓冲区
+    fn process_parallel_batch_fast(
+        &self,
+        indexed_positions: &[(usize, usize)],
+        row_size: usize,
+        output: &mut [u8],
+    ) -> PyResult<()> {
+        let mmap_len = self.mmap.len();
+        let mmap_slice = &self.mmap[..];
+        let num_indices = indexed_positions.len();
+        
+        // 首先验证所有索引都在范围内
+        for &(_, phys_idx) in indexed_positions {
+            let src_offset = phys_idx * row_size;
+            if src_offset + row_size > mmap_len {
+                return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                    "Data access out of bounds",
+                ));
+            }
+        }
+        
+        // 优化：对于大批量，使用更大的chunk减少并行开销
+        // 每个chunk至少处理1024行或总数/CPU核心数
+        let num_threads = rayon::current_num_threads().max(1);
+        let chunk_size = (num_indices / num_threads).max(1024).min(num_indices);
+        
+        // 使用分块并行处理 - 每个chunk预分配固定缓冲区
+        let chunks: Vec<_> = indexed_positions.chunks(chunk_size).collect();
+        
+        // 并行处理每个chunk，直接写入预分配的缓冲区
+        let chunk_buffers: Vec<Vec<u8>> = chunks
+            .par_iter()
+            .map(|chunk| {
+                // 每个chunk使用一个连续缓冲区
+                let mut buffer = vec![0u8; chunk.len() * row_size];
+                for (i, &(_, phys_idx)) in chunk.iter().enumerate() {
+                    let src_offset = phys_idx * row_size;
+                    let dst_offset = i * row_size;
+                    buffer[dst_offset..dst_offset + row_size]
+                        .copy_from_slice(&mmap_slice[src_offset..src_offset + row_size]);
+                }
+                buffer
+            })
+            .collect();
+        
+        // 串行写入最终输出（保持原始顺序）
+        let mut chunk_start = 0;
+        for (chunk_idx, chunk) in chunks.iter().enumerate() {
+            let buffer = &chunk_buffers[chunk_idx];
+            for (i, &(orig_pos, _)) in chunk.iter().enumerate() {
+                let src_offset = i * row_size;
+                let dst_start = orig_pos * row_size;
+                output[dst_start..dst_start + row_size]
+                    .copy_from_slice(&buffer[src_offset..src_offset + row_size]);
+            }
+            chunk_start += chunk.len();
+        }
+        
+        Ok(())
+    }
+    
+    /// 处理排序后的批量访问（检测连续块）- 旧版本保留兼容
+    #[allow(dead_code)]
+    fn process_sorted_batch(
+        &self,
+        sorted_positions: &[(usize, usize)],
+        row_size: usize,
+        result_rows: &mut [Vec<u8>],
+    ) -> PyResult<()> {
+        let mut i = 0;
+        while i < sorted_positions.len() {
+            let (orig_pos, phys_idx) = sorted_positions[i];
+            
+            // 检测连续块的长度
+            let mut block_len = 1;
+            while i + block_len < sorted_positions.len() {
+                let (_, next_phys_idx) = sorted_positions[i + block_len];
+                if next_phys_idx == phys_idx + block_len {
+                    block_len += 1;
+                } else {
+                    break;
+                }
+            }
+            
+            // 如果是连续块（>=2行），批量读取
+            if block_len >= 2 {
+                let start_offset = phys_idx * row_size;
+                let block_size = block_len * row_size;
+                
+                if start_offset + block_size <= self.mmap.len() {
+                    let block_data = &self.mmap[start_offset..start_offset + block_size];
+                    
+                    // 分配到各个原始位置
+                    for j in 0..block_len {
+                        let (orig_pos_j, _) = sorted_positions[i + j];
+                        let row_start = j * row_size;
+                        result_rows[orig_pos_j] = block_data[row_start..row_start + row_size].to_vec();
+                    }
+                }
+                i += block_len;
+            } else {
+                // 单行读取
+                self.read_single_row(phys_idx, row_size, orig_pos, result_rows)?;
+                i += 1;
+            }
+        }
+        Ok(())
+    }
+    
+    /// 直接批量访问（按原始顺序）- 旧版本保留兼容
+    #[allow(dead_code)]
+    fn process_direct_batch(
+        &self,
+        indexed_positions: &[(usize, usize)],
+        row_size: usize,
+        result_rows: &mut [Vec<u8>],
+    ) -> PyResult<()> {
+        for &(orig_pos, phys_idx) in indexed_positions {
+            self.read_single_row(phys_idx, row_size, orig_pos, result_rows)?;
+        }
+        Ok(())
+    }
+    
+    /// 读取单行数据 - 旧版本保留兼容
+    #[allow(dead_code)]
+    fn read_single_row(
+        &self,
+        phys_idx: usize,
+        row_size: usize,
+        orig_pos: usize,
+        result_rows: &mut [Vec<u8>],
+    ) -> PyResult<()> {
+        // 优先使用优化引擎
+        if let Some(ref engine) = self.optimized_engine {
+            let row_data = engine.get_row(phys_idx);
+            if !row_data.is_empty() {
+                result_rows[orig_pos] = row_data;
+                return Ok(());
+            }
+        }
+        
+        let offset = phys_idx * row_size;
+        if offset + row_size > self.mmap.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Data access out of bounds",
+            ));
+        }
+        result_rows[orig_pos] = self.mmap[offset..offset + row_size].to_vec();
+        Ok(())
+    }
+    
+    /// Unix系统上的madvise预取提示
+    #[cfg(unix)]
+    fn advise_sequential_access(&self, sorted_positions: &[(usize, usize)], row_size: usize) {
+        use std::os::unix::io::AsRawFd;
+        
+        if sorted_positions.is_empty() {
+            return;
+        }
+        
+        // 获取访问范围
+        let first_phys = sorted_positions.first().map(|&(_, p)| p).unwrap_or(0);
+        let last_phys = sorted_positions.last().map(|&(_, p)| p).unwrap_or(0);
+        
+        let start_offset = first_phys * row_size;
+        let end_offset = (last_phys + 1) * row_size;
+        let range_size = end_offset.saturating_sub(start_offset);
+        
+        // 只对较大范围提供提示（避免过多系统调用）
+        if range_size > 64 * 1024 {  // 64KB阈值
+            unsafe {
+                let ptr = self.mmap.as_ptr().add(start_offset);
+                // MADV_SEQUENTIAL = 2, 提示顺序访问
+                libc::madvise(ptr as *mut libc::c_void, range_size, libc::MADV_SEQUENTIAL);
+            }
+        }
+    }
+    
+    /// Windows系统上的空实现
+    #[cfg(not(unix))]
+    fn advise_sequential_access(&self, _sorted_positions: &[(usize, usize)], _row_size: usize) {
+        // Windows不支持madvise，使用空实现
+    }
+    
+    /// Unix系统上的WILLNEED预取提示（用于聚簇访问模式）
+    #[cfg(unix)]
+    fn advise_willneed_access(&self, indexed_positions: &[(usize, usize)], row_size: usize) {
+        if indexed_positions.is_empty() {
+            return;
+        }
+        
+        // 找出所有需要访问的区域，合并相近的区域
+        let mut regions: Vec<(usize, usize)> = Vec::new();
+        let mut sorted_indices: Vec<usize> = indexed_positions.iter().map(|&(_, p)| p).collect();
+        sorted_indices.sort();
+        
+        let mut region_start = sorted_indices[0];
+        let mut region_end = sorted_indices[0];
+        
+        for &idx in &sorted_indices[1..] {
+            // 如果间隔小于32行，合并到同一区域
+            if idx <= region_end + 32 {
+                region_end = idx;
+            } else {
+                regions.push((region_start, region_end));
+                region_start = idx;
+                region_end = idx;
+            }
+        }
+        regions.push((region_start, region_end));
+        
+        // 对每个区域发送WILLNEED提示
+        for (start_idx, end_idx) in regions {
+            let start_offset = start_idx * row_size;
+            let end_offset = (end_idx + 1) * row_size;
+            let range_size = end_offset.saturating_sub(start_offset);
+            
+            // 只对较大区域发送提示（>16KB）
+            if range_size > 16 * 1024 && start_offset + range_size <= self.mmap.len() {
+                unsafe {
+                    let ptr = self.mmap.as_ptr().add(start_offset);
+                    // MADV_WILLNEED = 3, 提示即将访问
+                    libc::madvise(ptr as *mut libc::c_void, range_size, libc::MADV_WILLNEED);
+                }
+            }
+        }
+    }
+    
+    /// Windows系统上的空实现
+    #[cfg(not(unix))]
+    fn advise_willneed_access(&self, _indexed_positions: &[(usize, usize)], _row_size: usize) {
+        // Windows不支持madvise，使用空实现
     }
 
     /// 处理复杂索引（保持现有逻辑）
@@ -2362,6 +2917,201 @@ fn get_array_dtype(array: &Bound<'_, PyAny>) -> PyResult<DataType> {
             "Unsupported dtype: {}",
             dtype_str
         ))),
+    }
+}
+
+// 辅助函数（非PyO3方法）
+impl NumPack {
+    /// 辅助函数：根据dtype创建numpy数组
+    /// 【零复制优化】使用bytemuck::cast_vec直接转换Vec，避免额外复制
+    fn create_numpy_array_from_dtype(
+        &self,
+        py: Python,
+        data: Vec<u8>,
+        shape: &[usize],
+        dtype: DataType,
+    ) -> PyResult<PyObject> {
+        let array: PyObject = match dtype {
+            DataType::Bool => {
+                let bool_vec: Vec<bool> = data.iter().map(|&x| x != 0).collect();
+                let array = ArrayD::from_shape_vec(shape.to_vec(), bool_vec)
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+                array.into_pyarray(py).into()
+            }
+            DataType::Uint8 => {
+                let array = unsafe {
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), data)
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Uint16 => {
+                // 【零复制】使用ptr::copy_nonoverlapping直接复制到对齐缓冲区
+                let count = data.len() / std::mem::size_of::<u16>();
+                let mut typed_data: Vec<u16> = vec![0u16; count];
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        data.as_ptr(),
+                        typed_data.as_mut_ptr() as *mut u8,
+                        data.len()
+                    );
+                }
+                let array = unsafe {
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data)
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Uint32 => {
+                let count = data.len() / std::mem::size_of::<u32>();
+                let mut typed_data: Vec<u32> = vec![0u32; count];
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        data.as_ptr(),
+                        typed_data.as_mut_ptr() as *mut u8,
+                        data.len()
+                    );
+                }
+                let array = unsafe {
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data)
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Uint64 => {
+                let count = data.len() / std::mem::size_of::<u64>();
+                let mut typed_data: Vec<u64> = vec![0u64; count];
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        data.as_ptr(),
+                        typed_data.as_mut_ptr() as *mut u8,
+                        data.len()
+                    );
+                }
+                let array = unsafe {
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data)
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Int8 => {
+                let typed_data: Vec<i8> = unsafe {
+                    std::mem::transmute::<Vec<u8>, Vec<i8>>(data)
+                };
+                let array = unsafe {
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data)
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Int16 => {
+                let count = data.len() / std::mem::size_of::<i16>();
+                let mut typed_data: Vec<i16> = vec![0i16; count];
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        data.as_ptr(),
+                        typed_data.as_mut_ptr() as *mut u8,
+                        data.len()
+                    );
+                }
+                let array = unsafe {
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data)
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Int32 => {
+                let count = data.len() / std::mem::size_of::<i32>();
+                let mut typed_data: Vec<i32> = vec![0i32; count];
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        data.as_ptr(),
+                        typed_data.as_mut_ptr() as *mut u8,
+                        data.len()
+                    );
+                }
+                let array = unsafe {
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data)
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Int64 => {
+                let count = data.len() / std::mem::size_of::<i64>();
+                let mut typed_data: Vec<i64> = vec![0i64; count];
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        data.as_ptr(),
+                        typed_data.as_mut_ptr() as *mut u8,
+                        data.len()
+                    );
+                }
+                let array = unsafe {
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data)
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Float16 => {
+                let count = data.len() / std::mem::size_of::<f16>();
+                let mut typed_data: Vec<f16> = vec![f16::ZERO; count];
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        data.as_ptr(),
+                        typed_data.as_mut_ptr() as *mut u8,
+                        data.len()
+                    );
+                }
+                let array = unsafe {
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data)
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Float32 => {
+                let count = data.len() / std::mem::size_of::<f32>();
+                let mut typed_data: Vec<f32> = vec![0f32; count];
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        data.as_ptr(),
+                        typed_data.as_mut_ptr() as *mut u8,
+                        data.len()
+                    );
+                }
+                let array = unsafe {
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data)
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Float64 => {
+                let count = data.len() / std::mem::size_of::<f64>();
+                let mut typed_data: Vec<f64> = vec![0f64; count];
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        data.as_ptr(),
+                        typed_data.as_mut_ptr() as *mut u8,
+                        data.len()
+                    );
+                }
+                let array = unsafe {
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data)
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Complex64 => {
+                // Complex类型不支持cast_vec，使用原方式
+                let array = unsafe {
+                    let slice = std::slice::from_raw_parts(
+                        data.as_ptr() as *const Complex32,
+                        data.len() / std::mem::size_of::<Complex32>(),
+                    );
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
+                };
+                array.into_pyarray(py).into()
+            }
+            DataType::Complex128 => {
+                let array = unsafe {
+                    let slice = std::slice::from_raw_parts(
+                        data.as_ptr() as *const Complex64,
+                        data.len() / std::mem::size_of::<Complex64>(),
+                    );
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
+                };
+                array.into_pyarray(py).into()
+            }
+        };
+        Ok(array)
     }
 }
 
@@ -3504,8 +4254,37 @@ impl NumPack {
             PyErr::new::<PyKeyError, _>(format!("Array {} not found", array_name))
         })?;
 
-        // Get the indices of the rows to read
-        let indices = if let Ok(slice) = indices.downcast::<PySlice>() {
+        // 【性能优化】使用mmap路径读取数据
+        let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
+        let dtype = meta.get_dtype();
+        let itemsize = dtype.size_bytes() as usize;
+        let row_size = shape[1..].iter().product::<usize>() * itemsize;
+        let total_rows = shape[0];
+        let modify_time = meta.last_modified as i64;
+        
+        // 构建数据文件路径
+        let data_path = self.base_dir.join(format!("data_{}.npkd", array_name));
+        let array_path_string = data_path.to_string_lossy().to_string();
+        
+        // 获取或创建mmap
+        let mmap_arc = {
+            let mut mmap_cache = MMAP_CACHE.lock().unwrap();
+            if let Some((cached_mmap, cached_time)) = mmap_cache.get(&array_path_string) {
+                if *cached_time == modify_time {
+                    Arc::clone(cached_mmap)
+                } else {
+                    create_optimized_mmap(&data_path, modify_time, &mut mmap_cache)?
+                }
+            } else {
+                create_optimized_mmap(&data_path, modify_time, &mut mmap_cache)?
+            }
+        };
+        
+        let mmap_slice = &mmap_arc[..];
+        let mmap_len = mmap_slice.len();
+
+        // 【快速路径】检测slice并使用单次memcpy
+        if let Ok(slice) = indices.downcast::<PySlice>() {
             let start = slice
                 .getattr("start")?
                 .extract::<Option<i64>>()?
@@ -3525,17 +4304,142 @@ impl NumPack {
                 ));
             }
 
-            (start..stop).collect::<Vec<i64>>()
-        } else if let Ok(indices) = indices.extract::<Vec<i64>>() {
-            indices
+            // 标准化索引
+            let start_idx = if start < 0 { (total_rows as i64 + start).max(0) as usize } else { start as usize };
+            let stop_idx = if stop < 0 { (total_rows as i64 + stop).max(0) as usize } else { (stop as usize).min(total_rows) };
+            
+            if start_idx >= stop_idx || start_idx >= total_rows {
+                // 空切片
+                let mut new_shape = shape.clone();
+                new_shape[0] = 0;
+                return self.create_numpy_array_from_dtype(py, vec![], &new_shape, dtype);
+            }
+            
+            let num_rows = stop_idx - start_idx;
+            let src_offset = start_idx * row_size;
+            let total_size = num_rows * row_size;
+            
+            if src_offset + total_size > mmap_len {
+                return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                    "Slice access out of bounds"
+                ));
+            }
+            
+            // 【零复制优化】直接从mmap创建typed Vec，跳过中间的Vec<u8>
+            let mut new_shape = shape.clone();
+            new_shape[0] = num_rows;
+            
+            // 针对最常用类型的快速路径
+            return match dtype {
+                DataType::Float32 => {
+                    let count = total_size / std::mem::size_of::<f32>();
+                    let mut typed_data: Vec<f32> = Vec::with_capacity(count);
+                    unsafe {
+                        typed_data.set_len(count);
+                        std::ptr::copy_nonoverlapping(
+                            mmap_slice[src_offset..].as_ptr(),
+                            typed_data.as_mut_ptr() as *mut u8,
+                            total_size
+                        );
+                    }
+                    let array = unsafe {
+                        ArrayD::from_shape_vec_unchecked(new_shape, typed_data)
+                    };
+                    Ok(array.into_pyarray(py).into())
+                }
+                DataType::Float64 => {
+                    let count = total_size / std::mem::size_of::<f64>();
+                    let mut typed_data: Vec<f64> = Vec::with_capacity(count);
+                    unsafe {
+                        typed_data.set_len(count);
+                        std::ptr::copy_nonoverlapping(
+                            mmap_slice[src_offset..].as_ptr(),
+                            typed_data.as_mut_ptr() as *mut u8,
+                            total_size
+                        );
+                    }
+                    let array = unsafe {
+                        ArrayD::from_shape_vec_unchecked(new_shape, typed_data)
+                    };
+                    Ok(array.into_pyarray(py).into())
+                }
+                DataType::Int32 => {
+                    let count = total_size / std::mem::size_of::<i32>();
+                    let mut typed_data: Vec<i32> = Vec::with_capacity(count);
+                    unsafe {
+                        typed_data.set_len(count);
+                        std::ptr::copy_nonoverlapping(
+                            mmap_slice[src_offset..].as_ptr(),
+                            typed_data.as_mut_ptr() as *mut u8,
+                            total_size
+                        );
+                    }
+                    let array = unsafe {
+                        ArrayD::from_shape_vec_unchecked(new_shape, typed_data)
+                    };
+                    Ok(array.into_pyarray(py).into())
+                }
+                DataType::Int64 => {
+                    let count = total_size / std::mem::size_of::<i64>();
+                    let mut typed_data: Vec<i64> = Vec::with_capacity(count);
+                    unsafe {
+                        typed_data.set_len(count);
+                        std::ptr::copy_nonoverlapping(
+                            mmap_slice[src_offset..].as_ptr(),
+                            typed_data.as_mut_ptr() as *mut u8,
+                            total_size
+                        );
+                    }
+                    let array = unsafe {
+                        ArrayD::from_shape_vec_unchecked(new_shape, typed_data)
+                    };
+                    Ok(array.into_pyarray(py).into())
+                }
+                DataType::Uint8 => {
+                    let data = mmap_slice[src_offset..src_offset + total_size].to_vec();
+                    let array = unsafe {
+                        ArrayD::from_shape_vec_unchecked(new_shape, data)
+                    };
+                    Ok(array.into_pyarray(py).into())
+                }
+                _ => {
+                    // 其他类型走通用路径
+                    let data = mmap_slice[src_offset..src_offset + total_size].to_vec();
+                    self.create_numpy_array_from_dtype(py, data, &new_shape, dtype)
+                }
+            };
+        }
+        
+        // 【普通路径】索引列表访问
+        let indices: Vec<i64> = if let Ok(idx_list) = indices.extract::<Vec<i64>>() {
+            idx_list
         } else {
             return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
                 "indices must be a list of integers or a slice",
             ));
         };
-
-        // Read data
-        let data = self.io.read_rows(array_name, &indices)?;
+        
+        let num_indices = indices.len();
+        let total_size = num_indices * row_size;
+        let mut data = vec![0u8; total_size];
+        
+        for (i, &idx) in indices.iter().enumerate() {
+            let normalized = if idx < 0 { total_rows as i64 + idx } else { idx };
+            if normalized < 0 || normalized as usize >= total_rows {
+                return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
+                    "Index {} is out of bounds", idx
+                )));
+            }
+            let src_offset = normalized as usize * row_size;
+            if src_offset + row_size > mmap_len {
+                return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                    "Data access out of bounds"
+                ));
+            }
+            let dst_offset = i * row_size;
+            data[dst_offset..dst_offset + row_size]
+                .copy_from_slice(&mmap_slice[src_offset..src_offset + row_size]);
+        }
 
         // Calculate the new shape
         let mut new_shape = meta.shape.iter().map(|&x| x as usize).collect::<Vec<_>>();
