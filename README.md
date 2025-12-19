@@ -101,6 +101,26 @@ indices, scores = streaming.streaming_top_k_from_file(
 
 **Supported Metrics:** `cosine`, `dot`, `l2`, `l2sq`, `hamming`, `jaccard`, `kl`, `js`
 
+### Pack & Unpack
+
+Portable `.npkg` format for easy migration and sharing.
+
+```python
+from numpack import pack, unpack, get_package_info
+
+# Pack NumPack directory into a single .npkg file
+pack('data.npk')                          # -> data.npkg (with Zstd compression)
+pack('data.npk', 'backup/data.npkg')      # Custom output path
+
+# Unpack .npkg back to NumPack directory
+unpack('data.npkg')                       # -> data.npk
+unpack('data.npkg', 'restored/')          # Custom restore path
+
+# View package info without extracting
+info = get_package_info('data.npkg')
+print(f"Files: {info['file_count']}, Compression: {info['compression_ratio']:.1%}")
+```
+
 ## Benchmarks
 
 *Tested on macOS Apple Silicon, 1M rows × 10 columns, Float32 (38.1MB)*

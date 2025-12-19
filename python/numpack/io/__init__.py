@@ -2163,6 +2163,11 @@ __all__ = [
     'from_s3',
     'to_s3',
     
+    # Package operations
+    'pack',
+    'unpack',
+    'get_package_info',
+    
     # Constants
     'LARGE_FILE_THRESHOLD',
     'DEFAULT_CHUNK_SIZE',
@@ -2188,3 +2193,4 @@ from .parquet_io import from_parquet, to_parquet
 from .pytorch_io import from_pytorch, to_pytorch
 from .s3_io import from_s3, to_s3
 from .zarr_io import from_zarr, to_zarr
+from .package_io import pack, unpack, get_package_info

@@ -10,6 +10,7 @@ This document covers advanced NumPack features including lazy loading, streaming
 - [In-Place Operations](#in-place-operations)
 - [Memory Management](#memory-management)
 - [Cross-Platform Considerations](#cross-platform-considerations)
+- [Pack & Unpack](#pack--unpack)
 
 ---
 
@@ -736,4 +737,201 @@ This example demonstrates:
 - Writable batch mode for in-place normalization
 - Batch mode for augmentation
 - Memory-efficient processing of large datasets
+
+---
+
+## Pack & Unpack
+
+### Overview
+
+NumPack provides a portable `.npkg` format for packaging entire NumPack directories into a single compressed file. This is ideal for:
+
+- **Migration**: Move NumPack data between machines or environments
+- **Backup**: Create compressed backups of NumPack directories
+- **Sharing**: Share NumPack datasets as a single file
+- **Archival**: Long-term storage with integrity verification
+
+The `.npkg` format preserves all NumPack files:
+- Metadata (`metadata.npkm`)
+- Data files (`data_*.npkd`)
+- Deletion bitmaps (`deleted_*.npkb`)
+
+### `pack(source, target=None, compression=True, overwrite=False)`
+
+Pack a NumPack directory into a single `.npkg` file.
+
+#### Parameters
+
+- `source` (str | Path): Path to the NumPack directory to pack
+- `target` (str | Path, optional): Output `.npkg` file path. Default: `<source>.npkg`
+- `compression` (bool): Enable Zstd compression. Default: `True`
+- `overwrite` (bool): Overwrite existing file. Default: `False`
+
+#### Returns
+
+- `Path`: Path to the created `.npkg` file
+
+#### Example
+
+```python
+from numpack import pack
+
+# Basic pack - creates data.npkg in same directory
+pack('data.npk')
+
+# Custom output path
+pack('data.npk', '/backup/my_data.npkg')
+
+# Without compression (faster, larger file)
+pack('data.npk', 'data_uncompressed.npkg', compression=False)
+
+# Overwrite existing package
+pack('data.npk', 'data.npkg', overwrite=True)
+```
+
+---
+
+### `unpack(source, target=None, overwrite=False, verify=True)`
+
+Unpack a `.npkg` file into a NumPack directory.
+
+#### Parameters
+
+- `source` (str | Path): Path to the `.npkg` file
+- `target` (str | Path, optional): Output directory path. Default: `<source_stem>.npk`
+- `overwrite` (bool): Overwrite existing directory. Default: `False`
+- `verify` (bool): Verify CRC32 checksum after extraction. Default: `True`
+
+#### Returns
+
+- `Path`: Path to the extracted NumPack directory
+
+#### Example
+
+```python
+from numpack import unpack
+
+# Basic unpack - creates data.npk in same directory
+unpack('data.npkg')
+
+# Custom output path
+unpack('data.npkg', '/restored/my_data')
+
+# Overwrite existing directory
+unpack('data.npkg', 'data.npk', overwrite=True)
+
+# Skip checksum verification (faster but less safe)
+unpack('data.npkg', verify=False)
+```
+
+---
+
+### `get_package_info(source)`
+
+Get information about a `.npkg` package without extracting it.
+
+#### Parameters
+
+- `source` (str | Path): Path to the `.npkg` file
+
+#### Returns
+
+- `dict`: Package information containing:
+  - `version`: Package format version
+  - `compression`: Compression type code (0=None, 1=Zstd)
+  - `compression_name`: Compression algorithm name
+  - `file_count`: Number of files in package
+  - `files`: List of file details (name, original_size, compressed_size)
+  - `total_original_size`: Total uncompressed size in bytes
+  - `total_compressed_size`: Total compressed size in bytes
+  - `compression_ratio`: Ratio of compressed to original size
+
+#### Example
+
+```python
+from numpack import get_package_info
+
+info = get_package_info('data.npkg')
+
+print(f"Version: {info['version']}")
+print(f"Compression: {info['compression_name']}")
+print(f"Files: {info['file_count']}")
+print(f"Original size: {info['total_original_size'] / 1024 / 1024:.2f} MB")
+print(f"Compressed size: {info['total_compressed_size'] / 1024 / 1024:.2f} MB")
+print(f"Compression ratio: {info['compression_ratio']:.1%}")
+
+# List all files
+for f in info['files']:
+    print(f"  {f['name']}: {f['original_size']} bytes")
+```
+
+---
+
+### Complete Migration Example
+
+```python
+import numpy as np
+from numpack import NumPack, pack, unpack, get_package_info
+
+# Create original NumPack with data
+with NumPack("original.npk", drop_if_exists=True) as npk:
+    npk.save({
+        'embeddings': np.random.rand(10000, 128).astype(np.float32),
+        'labels': np.arange(10000).astype(np.int64)
+    })
+    # Simulate some deletions
+    npk.drop('embeddings', indexes=[0, 100, 200])
+
+print("Original data created")
+
+# Pack for migration
+package_path = pack("original.npk", "backup/data.npkg")
+print(f"Packed to: {package_path}")
+
+# View package info
+info = get_package_info(package_path)
+print(f"Package contains {info['file_count']} files")
+print(f"Compression ratio: {info['compression_ratio']:.1%}")
+
+# Simulate migration - unpack to new location
+restored_path = unpack(package_path, "restored/data.npk")
+print(f"Restored to: {restored_path}")
+
+# Verify data integrity
+with NumPack(restored_path) as npk:
+    embeddings = npk.load('embeddings')
+    labels = npk.load('labels')
+    print(f"Embeddings shape: {embeddings.shape}")  # (9997, 128) - 3 rows deleted
+    print(f"Labels shape: {labels.shape}")
+```
+
+---
+
+### .npkg File Format
+
+The `.npkg` format is a binary format designed for portability and integrity:
+
+```
+Header (13 bytes):
+  - Magic Number: "NPKG" (4 bytes)
+  - Version: uint32 (4 bytes) - currently 1
+  - Compression: uint8 (1 byte) - 0=None, 1=Zstd
+  - File Count: uint32 (4 bytes)
+
+Per File Entry:
+  - Path Length: uint32 (4 bytes)
+  - Path: UTF-8 string (variable)
+  - Original Size: uint64 (8 bytes)
+  - Compressed Size: uint64 (8 bytes) - 0 if not compressed
+  - Data: bytes (variable)
+
+Footer:
+  - CRC32 Checksum: uint32 (4 bytes)
+```
+
+**Features:**
+- Cross-platform compatible (little-endian)
+- CRC32 checksum for integrity verification
+- Zstd compression (with zlib fallback)
+- Preserves all NumPack files including deletion bitmaps
 

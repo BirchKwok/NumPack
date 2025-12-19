@@ -924,8 +924,14 @@ __all__ = [
     'LazyArray', 
     'force_cleanup_windows_handles', 
     'get_backend_info', 
-    'BatchModeContext'
+    'BatchModeContext',
+    'pack',
+    'unpack',
+    'get_package_info',
 ]
+
+# Package operations (convenience imports at top level)
+from .io.package_io import pack, unpack, get_package_info
 
 # Backend information query
 def get_backend_info():
