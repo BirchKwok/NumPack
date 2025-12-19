@@ -159,7 +159,7 @@ print(f"Files: {info['file_count']}, Compression: {info['compression_ratio']:.1%
 | ML/DL pipelines | ✅ **NumPack** |
 | Vector similarity search | ✅ **NumPack** (SIMD) |
 | Write-once, read-many | ✅ **NumPack** (1.74x faster read) |
-| Extreme compression | NPZ (10% smaller) |
+| Extreme compression | ✅ **NumPack** `.npkg` (better ratio, streaming, high I/O) |
 
 ## Documentation
 
