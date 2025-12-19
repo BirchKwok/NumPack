@@ -43,7 +43,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-13, macos-14]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         python: ['3.9', '3.10', '3.11', '3.12', '3.13']
         include:
           # Linux ARM64 builds
@@ -63,37 +63,22 @@ jobs:
             python: '3.13'
             target: 'aarch64-unknown-linux-gnu'
           # Apple Silicon (M1/M2) builds
-          - os: macos-14
+          - os: macos-latest
             python: '3.9'
             target: 'aarch64-apple-darwin'
-          - os: macos-14
+          - os: macos-latest
             python: '3.10'
             target: 'aarch64-apple-darwin'
-          - os: macos-14
+          - os: macos-latest
             python: '3.11'
             target: 'aarch64-apple-darwin'
-          - os: macos-14
+          - os: macos-latest
             python: '3.12'
             target: 'aarch64-apple-darwin'
-          - os: macos-14
+          - os: macos-latest
             python: '3.13'
             target: 'aarch64-apple-darwin'
-          # Intel Mac builds
-          - os: macos-13
-            python: '3.9'
-            target: 'x86_64-apple-darwin'
-          - os: macos-13
-            python: '3.10'
-            target: 'x86_64-apple-darwin'
-          - os: macos-13
-            python: '3.11'
-            target: 'x86_64-apple-darwin'
-          - os: macos-13
-            python: '3.12'
-            target: 'x86_64-apple-darwin'
-          - os: macos-13
-            python: '3.13'
-            target: 'x86_64-apple-darwin'
+          
 
     steps:
       - uses: actions/checkout@v4
