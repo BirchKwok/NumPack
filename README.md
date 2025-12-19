@@ -15,35 +15,6 @@ NumPack is a high-performance array storage library that combines Rust's perform
 - Seamless integration with existing NumPy workflows
 - **Vector Engine**: SIMD-accelerated vector similarity search (AVX2, AVX-512, NEON, SVE)
 
-### New I/O Optimizations
-
-1. **Adaptive Buffer Sizing**
-   - Small arrays (<1MB): 256KB buffer → 96% memory saving
-   - Medium arrays (1-10MB): 4MB buffer → balanced performance
-   - Large arrays (>10MB): 16MB buffer → maximum throughput
-
-2. **Smart Parallelization**
-   - Automatically parallelizes only when beneficial (>10MB total data)
-   - Avoids thread overhead for small datasets
-
-3. **Fast Overwrite Path**
-   - Same-shape array overwrite: 1.5-2.5x faster
-   - Uses in-place update instead of file recreation
-
-4. **SIMD Acceleration**
-   - Large files (>10MB) use SIMD-optimized operations
-   - Theoretical 2-4x speedup for memory-intensive operations
-
-5. **Batch Mode Intelligence**
-   - Smart dirty tracking: only flushes modified arrays
-   - Zero-copy cache detection
-   - Reduced metadata synchronization
-
-### Core Advantages Enhanced
-
-- Replace operations now **321x faster** than NPY
-- Full Load now **1.58x faster** than NPY
-- System-wide optimizations benefit all operation modes
 
 ## Features
 
