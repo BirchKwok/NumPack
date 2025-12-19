@@ -67,6 +67,8 @@ NumPack is a high-performance array storage library that combines Rust's perform
 
 ## Installation
 
+> **Important Notice**: Due to GitHub Actions workflow machine adjustments, precompiled NumPack packages are no longer provided for macOS-13 and earlier versions. For these systems, please install from source.
+
 ### From PyPI (Recommended)
 
 #### Prerequisites
