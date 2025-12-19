@@ -331,11 +331,12 @@ class FormatBenchmark:
         print(f"\n  Testing Sequential Access Performance...")
         
         # Sequential Access - Small Batch (100 consecutive rows)
+        # 使用slice以利用零复制优化
         npk_seq_small = NumPack(path)
         npk_seq_small.open()
         
         def seq_access_small_op():
-            _ = npk_seq_small.getitem(array_name, list(range(100)))
+            _ = npk_seq_small.getitem(array_name, slice(0, 100))
         
         time_ms = self.benchmark_operation(format_name, "Sequential Access (100)", seq_access_small_op, number=10, repeat=3)
         npk_seq_small.close()
@@ -349,7 +350,7 @@ class FormatBenchmark:
         npk_seq_medium.open()
         
         def seq_access_medium_op():
-            _ = npk_seq_medium.getitem(array_name, list(range(1000)))
+            _ = npk_seq_medium.getitem(array_name, slice(0, 1000))
         
         time_ms = self.benchmark_operation(format_name, "Sequential Access (1K)", seq_access_medium_op, number=5, repeat=3)
         npk_seq_medium.close()
@@ -363,7 +364,7 @@ class FormatBenchmark:
         npk_seq_large.open()
         
         def seq_access_large_op():
-            _ = npk_seq_large.getitem(array_name, list(range(10000)))
+            _ = npk_seq_large.getitem(array_name, slice(0, 10000))
         
         time_ms = self.benchmark_operation(format_name, "Sequential Access (10K)", seq_access_large_op, number=3, repeat=3)
         npk_seq_large.close()
