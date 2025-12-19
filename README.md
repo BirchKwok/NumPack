@@ -6,12 +6,12 @@ A high-performance NumPy array storage library combining Rust's speed with Pytho
 
 | Feature | Performance |
 |---------|-------------|
-| Row Replacement | **397x faster** than NPY |
-| Data Append | **346x faster** than NPY |
-| Lazy Loading | **45x faster** than NPY mmap |
-| Full Load | **1.57x faster** than NPY |
-| Random Access | Equal to NPY mmap |
-| Batch Mode | **19x speedup** |
+| Row Replacement | **318x faster** than NPY |
+| Data Append | **329x faster** than NPY |
+| Lazy Loading | **46x faster** than NPY mmap |
+| Full Load | **1.74x faster** than NPY |
+| Random Access | **27% faster** than NPY mmap |
+| Batch Mode | **21x speedup** |
 
 **Core Capabilities:**
 - Zero-copy mmap operations with minimal memory footprint
@@ -65,14 +65,14 @@ with NumPack("data.npk") as npk:
 ### Batch Modes
 
 ```python
-# Batch Mode - cached writes (19x speedup)
+# Batch Mode - cached writes (21x speedup)
 with npk.batch_mode():
     for i in range(1000):
         arr = npk.load('data')
         arr[:10] *= 2.0
         npk.save({'data': arr})
 
-# Writable Batch Mode - direct mmap (10x speedup)
+# Writable Batch Mode - direct mmap (108x speedup)
 with npk.writable_batch_mode() as wb:
     arr = wb.load('data')
     arr[:10] *= 2.0  # Auto-persisted
@@ -107,11 +107,11 @@ indices, scores = streaming.streaming_top_k_from_file(
 
 | Operation | NumPack | NPY | Advantage |
 |-----------|---------|-----|----------:|
-| Full Load | 3.72ms | 5.83ms | **1.57x** |
-| Lazy Load | 0.002ms | 0.090ms | **45x** |
-| Replace 100 rows | 0.034ms | 13.49ms | **397x** |
-| Append 100 rows | 0.059ms | 20.40ms | **346x** |
-| Random Access | ~equal | ~equal | mmap-optimized |
+| Full Load | 3.81ms | 6.64ms | **1.74x** |
+| Lazy Load | 0.002ms | 0.107ms | **46x** |
+| Replace 100 rows | 0.042ms | 13.35ms | **318x** |
+| Append 100 rows | 0.056ms | 18.30ms | **329x** |
+| Random Access (100) | 0.002ms | 0.003ms | **27% faster** |
 
 <details>
 <summary><b>Detailed Benchmarks</b></summary>
@@ -119,10 +119,10 @@ indices, scores = streaming.streaming_top_k_from_file(
 **Batch Mode Performance (100 consecutive operations):**
 
 | Mode | Time | Speedup |
-|------|------|---------|
-| Normal | 40.1ms | - |
-| Batch Mode | 2.1ms | 19x |
-| Writable Batch | 3.9ms | 10x |
+|------|------|--------|
+| Normal | 417ms | - |
+| Batch Mode | 19.7ms | 21x |
+| Writable Batch | 3.8ms | 108x |
 
 **Random/Sequential Access (mmap-optimized):**
 - Random access: Equal to NPY mmap for small/medium batches
@@ -135,7 +135,7 @@ indices, scores = streaming.streaming_top_k_from_file(
 
 | Use Case | Recommendation |
 |----------|----------------|
-| Frequent modifications | ✅ **NumPack** (397x faster) |
+| Frequent modifications | ✅ **NumPack** (318x faster) |
 | ML/DL pipelines | ✅ **NumPack** |
 | Vector similarity search | ✅ **NumPack** (SIMD) |
 | Write-once, read-many | NPY (faster initial write) |

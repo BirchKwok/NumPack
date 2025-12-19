@@ -1940,7 +1940,26 @@ impl LazyArray {
         }
     }
 
-    // 新增：创建NumPy数组
+    #[inline]
+    fn safe_cast_vec<T: bytemuck::Pod + bytemuck::AnyBitPattern + bytemuck::NoUninit>(data: Vec<u8>) -> Vec<T> {
+        match bytemuck::allocation::try_cast_vec::<u8, T>(data) {
+            Ok(typed_vec) => typed_vec,
+            Err((_err, data)) => {
+                let count = data.len() / std::mem::size_of::<T>();
+                let mut result: Vec<T> = Vec::with_capacity(count);
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        data.as_ptr(),
+                        result.as_mut_ptr() as *mut u8,
+                        data.len()
+                    );
+                    result.set_len(count);
+                }
+                result
+            }
+        }
+    }
+
     fn create_numpy_array(
         &self,
         py: Python,
@@ -1955,78 +1974,77 @@ impl LazyArray {
             }
             DataType::Uint8 => {
                 let array = unsafe {
-                    let slice: &[u8] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), data)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Uint16 => {
+                let typed_vec: Vec<u16> = Self::safe_cast_vec(data);
                 let array = unsafe {
-                    let slice: &[u16] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Uint32 => {
+                let typed_vec: Vec<u32> = Self::safe_cast_vec(data);
                 let array = unsafe {
-                    let slice: &[u32] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Uint64 => {
+                let typed_vec: Vec<u64> = Self::safe_cast_vec(data);
                 let array = unsafe {
-                    let slice: &[u64] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Int8 => {
+                let typed_vec: Vec<i8> = Self::safe_cast_vec(data);
                 let array = unsafe {
-                    let slice: &[i8] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Int16 => {
+                let typed_vec: Vec<i16> = Self::safe_cast_vec(data);
                 let array = unsafe {
-                    let slice: &[i16] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Int32 => {
+                let typed_vec: Vec<i32> = Self::safe_cast_vec(data);
                 let array = unsafe {
-                    let slice: &[i32] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Int64 => {
+                let typed_vec: Vec<i64> = Self::safe_cast_vec(data);
                 let array = unsafe {
-                    let slice: &[i64] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Float16 => {
+                let typed_vec: Vec<f16> = Self::safe_cast_vec(data);
                 let array = unsafe {
-                    let slice: &[f16] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Float32 => {
+                let typed_vec: Vec<f32> = Self::safe_cast_vec(data);
                 let array = unsafe {
-                    let slice: &[f32] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Float64 => {
+                let typed_vec: Vec<f64> = Self::safe_cast_vec(data);
                 let array = unsafe {
-                    let slice: &[f64] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), slice.to_vec())
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
                 };
                 array.into_pyarray(py).into()
             }
@@ -2922,8 +2940,28 @@ fn get_array_dtype(array: &Bound<'_, PyAny>) -> PyResult<DataType> {
 
 // 辅助函数（非PyO3方法）
 impl NumPack {
+    #[inline]
+    fn safe_cast_vec_numpack<T: bytemuck::Pod + bytemuck::AnyBitPattern + bytemuck::NoUninit>(data: Vec<u8>) -> Vec<T> {
+        match bytemuck::allocation::try_cast_vec::<u8, T>(data) {
+            Ok(typed_vec) => typed_vec,
+            Err((_err, data)) => {
+                let count = data.len() / std::mem::size_of::<T>();
+                let mut result: Vec<T> = Vec::with_capacity(count);
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        data.as_ptr(),
+                        result.as_mut_ptr() as *mut u8,
+                        data.len()
+                    );
+                    result.set_len(count);
+                }
+                result
+            }
+        }
+    }
+
     /// 辅助函数：根据dtype创建numpy数组
-    /// 【零复制优化】使用bytemuck::cast_vec直接转换Vec，避免额外复制
+    /// 【零复制优化】使用try_cast_vec直接转换Vec，避免额外复制
     fn create_numpy_array_from_dtype(
         &self,
         py: Python,
@@ -2945,152 +2983,76 @@ impl NumPack {
                 array.into_pyarray(py).into()
             }
             DataType::Uint16 => {
-                // 【零复制】使用ptr::copy_nonoverlapping直接复制到对齐缓冲区
-                let count = data.len() / std::mem::size_of::<u16>();
-                let mut typed_data: Vec<u16> = vec![0u16; count];
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        data.as_ptr(),
-                        typed_data.as_mut_ptr() as *mut u8,
-                        data.len()
-                    );
-                }
+                let typed_vec: Vec<u16> = Self::safe_cast_vec_numpack(data);
                 let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data)
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Uint32 => {
-                let count = data.len() / std::mem::size_of::<u32>();
-                let mut typed_data: Vec<u32> = vec![0u32; count];
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        data.as_ptr(),
-                        typed_data.as_mut_ptr() as *mut u8,
-                        data.len()
-                    );
-                }
+                let typed_vec: Vec<u32> = Self::safe_cast_vec_numpack(data);
                 let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data)
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Uint64 => {
-                let count = data.len() / std::mem::size_of::<u64>();
-                let mut typed_data: Vec<u64> = vec![0u64; count];
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        data.as_ptr(),
-                        typed_data.as_mut_ptr() as *mut u8,
-                        data.len()
-                    );
-                }
+                let typed_vec: Vec<u64> = Self::safe_cast_vec_numpack(data);
                 let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data)
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Int8 => {
-                let typed_data: Vec<i8> = unsafe {
-                    std::mem::transmute::<Vec<u8>, Vec<i8>>(data)
-                };
+                let typed_vec: Vec<i8> = Self::safe_cast_vec_numpack(data);
                 let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data)
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Int16 => {
-                let count = data.len() / std::mem::size_of::<i16>();
-                let mut typed_data: Vec<i16> = vec![0i16; count];
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        data.as_ptr(),
-                        typed_data.as_mut_ptr() as *mut u8,
-                        data.len()
-                    );
-                }
+                let typed_vec: Vec<i16> = Self::safe_cast_vec_numpack(data);
                 let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data)
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Int32 => {
-                let count = data.len() / std::mem::size_of::<i32>();
-                let mut typed_data: Vec<i32> = vec![0i32; count];
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        data.as_ptr(),
-                        typed_data.as_mut_ptr() as *mut u8,
-                        data.len()
-                    );
-                }
+                let typed_vec: Vec<i32> = Self::safe_cast_vec_numpack(data);
                 let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data)
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Int64 => {
-                let count = data.len() / std::mem::size_of::<i64>();
-                let mut typed_data: Vec<i64> = vec![0i64; count];
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        data.as_ptr(),
-                        typed_data.as_mut_ptr() as *mut u8,
-                        data.len()
-                    );
-                }
+                let typed_vec: Vec<i64> = Self::safe_cast_vec_numpack(data);
                 let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data)
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Float16 => {
-                let count = data.len() / std::mem::size_of::<f16>();
-                let mut typed_data: Vec<f16> = vec![f16::ZERO; count];
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        data.as_ptr(),
-                        typed_data.as_mut_ptr() as *mut u8,
-                        data.len()
-                    );
-                }
+                let typed_vec: Vec<f16> = Self::safe_cast_vec_numpack(data);
                 let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data)
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Float32 => {
-                let count = data.len() / std::mem::size_of::<f32>();
-                let mut typed_data: Vec<f32> = vec![0f32; count];
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        data.as_ptr(),
-                        typed_data.as_mut_ptr() as *mut u8,
-                        data.len()
-                    );
-                }
+                let typed_vec: Vec<f32> = Self::safe_cast_vec_numpack(data);
                 let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data)
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Float64 => {
-                let count = data.len() / std::mem::size_of::<f64>();
-                let mut typed_data: Vec<f64> = vec![0f64; count];
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        data.as_ptr(),
-                        typed_data.as_mut_ptr() as *mut u8,
-                        data.len()
-                    );
-                }
+                let typed_vec: Vec<f64> = Self::safe_cast_vec_numpack(data);
                 let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data)
+                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
                 };
                 array.into_pyarray(py).into()
             }
             DataType::Complex64 => {
-                // Complex类型不支持cast_vec，使用原方式
                 let array = unsafe {
                     let slice = std::slice::from_raw_parts(
                         data.as_ptr() as *const Complex32,

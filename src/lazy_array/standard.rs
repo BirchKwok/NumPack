@@ -1454,24 +1454,23 @@ impl LazyArray {
         self.create_numpy_array(py, data, &row_shape)
     }
 
-    /// 创建NumPy数组【Inline优化】
     #[inline]
-    // Helper function to safely convert bytes to typed slice, handling alignment issues
-    fn safe_cast_slice<T: bytemuck::Pod>(data: &[u8]) -> Vec<T> {
-        if bytemuck::try_cast_slice::<u8, T>(data).is_ok() {
-            // Fast path: data is properly aligned
-            bytemuck::cast_slice::<u8, T>(data).to_vec()
-        } else {
-            // Slow path: data is not aligned, copy manually
-            let num_elements = data.len() / std::mem::size_of::<T>();
-            let mut result = Vec::with_capacity(num_elements);
-            unsafe {
-                let ptr = data.as_ptr() as *const T;
-                for i in 0..num_elements {
-                    result.push(ptr::read_unaligned(ptr.add(i)));
+    fn safe_cast_vec<T: bytemuck::Pod + bytemuck::AnyBitPattern + bytemuck::NoUninit>(data: Vec<u8>) -> Vec<T> {
+        match bytemuck::allocation::try_cast_vec::<u8, T>(data) {
+            Ok(typed_vec) => typed_vec,
+            Err((_err, data)) => {
+                let count = data.len() / std::mem::size_of::<T>();
+                let mut result: Vec<T> = Vec::with_capacity(count);
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        data.as_ptr(),
+                        result.as_mut_ptr() as *mut u8,
+                        data.len()
+                    );
+                    result.set_len(count);
                 }
+                result
             }
-            result
         }
     }
 
@@ -1492,54 +1491,53 @@ impl LazyArray {
                 array.into_pyarray(py).into()
             }
             DataType::Uint16 => {
-                let typed_data = Self::safe_cast_slice::<u16>(&data);
-                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data) };
+                let typed_vec: Vec<u16> = Self::safe_cast_vec(data);
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Uint32 => {
-                let typed_data = Self::safe_cast_slice::<u32>(&data);
-                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data) };
+                let typed_vec: Vec<u32> = Self::safe_cast_vec(data);
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Uint64 => {
-                let typed_data = Self::safe_cast_slice::<u64>(&data);
-                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data) };
+                let typed_vec: Vec<u64> = Self::safe_cast_vec(data);
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Int8 => {
-                let typed_data = Self::safe_cast_slice::<i8>(&data);
-                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data) };
+                let typed_vec: Vec<i8> = Self::safe_cast_vec(data);
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Int16 => {
-                let typed_data = Self::safe_cast_slice::<i16>(&data);
-                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data) };
+                let typed_vec: Vec<i16> = Self::safe_cast_vec(data);
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Int32 => {
-                let typed_data = Self::safe_cast_slice::<i32>(&data);
-                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data) };
+                let typed_vec: Vec<i32> = Self::safe_cast_vec(data);
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Int64 => {
-                let typed_data = Self::safe_cast_slice::<i64>(&data);
-                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data) };
+                let typed_vec: Vec<i64> = Self::safe_cast_vec(data);
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Float16 => {
-                let typed_data = data.to_typed_vec::<half::f16>();
-                let f32_data: Vec<f32> = typed_data.iter().map(|&x| x.to_f32()).collect();
-                let array = ArrayD::from_shape_vec(shape.to_vec(), f32_data).unwrap();
+                let typed_vec: Vec<half::f16> = Self::safe_cast_vec(data);
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Float32 => {
-                let typed_data = Self::safe_cast_slice::<f32>(&data);
-                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data) };
+                let typed_vec: Vec<f32> = Self::safe_cast_vec(data);
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Float64 => {
-                let typed_data = Self::safe_cast_slice::<f64>(&data);
-                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_data) };
+                let typed_vec: Vec<f64> = Self::safe_cast_vec(data);
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Complex64 => {
