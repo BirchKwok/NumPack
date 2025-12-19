@@ -156,7 +156,7 @@ print(f"Files: {info['file_count']}, Compression: {info['compression_ratio']:.1%
 | Use Case | Recommendation |
 |----------|----------------|
 | Frequent modifications | ✅ **NumPack** (318x faster) |
-| ML/DL pipelines | ✅ **NumPack** |
+| ML/DL pipelines | ✅ **NumPack** (zero-copy random access, no full load) |
 | Vector similarity search | ✅ **NumPack** (SIMD) |
 | Write-once, read-many | ✅ **NumPack** (1.74x faster read) |
 | Extreme compression | ✅ **NumPack** `.npkg` (better ratio, streaming, high I/O) |
