@@ -199,9 +199,9 @@ def verify_installation(python_interpreter):
             # Try importing numpack
         result = subprocess.run(
             [python_interpreter, '-c', 
-             'import numpack; from numpack.vector_engine import VectorSearch; '
+             'import numpack; from numpack.vector_engine import VectorEngine; '
              'print("NumPack version:", numpack.__version__ if hasattr(numpack, "__version__") else "unknown"); '
-             'engine = VectorSearch(); '
+             'engine = VectorEngine(); '
              'print("Capabilities:", engine.capabilities())'],
             capture_output=True,
             text=True,
@@ -296,13 +296,13 @@ Examples:
     print("=" * 70)
     
     print("\nNext steps:")
-    print("  1. Quick test: python quick_test.py")
+    print("  1. Quick test: python -c 'from numpack.vector_engine import VectorEngine; print(VectorEngine().capabilities())'")
     print("  2. Verify install: python build.py --verify-only")
     
     print("\nUsage hint:")
-    print("  import numpack; from numpack.vector_engine import VectorSearch;")
-    print("  engine = VectorSearch()")
-    print("  scores = engine.batch_compute(query, candidates, metric='dot')")
+    print("  import numpack; from numpack.vector_engine import VectorEngine;")
+    print("  engine = VectorEngine()")
+    print("  scores = engine.batch_compute(query, candidates, 'dot')")
     
     print("\n" + "=" * 70 + "\n")
 
