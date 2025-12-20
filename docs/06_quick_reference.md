@@ -168,6 +168,39 @@ for batch in npk.stream_load('array', buffer_size=1000):
     process(batch)
 ```
 
+### Format Conversion
+
+```python
+from numpack.io import (
+    # Memory ↔ .npk
+    from_torch, to_torch,           # PyTorch
+    from_arrow, to_arrow,           # PyArrow
+    from_parquet_table, to_parquet_table,  # Parquet
+    from_safetensors, to_safetensors,      # SafeTensors
+    # File ↔ .npk (streaming)
+    from_torch_file, to_torch_file,
+    from_feather_file, to_feather_file,
+    from_parquet_file, to_parquet_file,
+    from_safetensors_file, to_safetensors_file,
+)
+
+# Memory → .npk
+from_torch(tensor, 'output.npk', array_name='embeddings')
+from_arrow(table, 'output.npk', array_name='data')
+
+# .npk → Memory
+tensor = to_torch('input.npk', array_name='embeddings')
+table = to_arrow('input.npk', array_name='data')
+
+# File → .npk (streaming)
+from_torch_file('model.pt', 'output.npk')
+from_parquet_file('data.parquet', 'output.npk')
+
+# .npk → File (streaming)
+to_torch_file('input.npk', 'output.pt')
+to_parquet_file('input.npk', 'output.parquet')
+```
+
 ### Metadata
 
 ```python

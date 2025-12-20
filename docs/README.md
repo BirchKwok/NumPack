@@ -55,6 +55,15 @@ Welcome to the NumPack API documentation! NumPack is a high-performance array st
   - Decision trees for choosing the right approach
   - Troubleshooting guide
 
+### Format Conversion
+
+- **[07. IO Conversion](./07_io_conversion.md)**
+  - PyTorch tensor conversion
+  - PyArrow/Feather/Parquet conversion
+  - SafeTensors conversion
+  - NumPy, HDF5, Zarr, CSV conversion
+  - Memory ↔ .npk and File ↔ .npk patterns
+
 ---
 
 ## Quick Links
@@ -67,7 +76,9 @@ Welcome to the NumPack API documentation! NumPack is a high-performance array st
 | **API lookup** | [Core Operations](./02_core_operations.md) | Complete API reference |
 | **Performance optimization** | [Batch Processing](./03_batch_processing.md), [Performance Guide](./05_performance_guide.md) | 25-174x speedup |
 | **Large datasets** | [Advanced Features](./04_advanced_features.md) | Lazy loading, streaming |
+｜ 
 | **Quick answers** | [Quick Reference](./06_quick_reference.md) | Cheatsheet, common patterns |
+| **Format conversion** | [IO Conversion](./07_io_conversion.md) | PyTorch, Arrow, Parquet, SafeTensors |
 
 ### By Feature
 

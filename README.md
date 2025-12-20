@@ -101,6 +101,28 @@ indices, scores = streaming.streaming_top_k_from_file(
 
 **Supported Metrics:** `cosine`, `dot`, `l2`, `l2sq`, `hamming`, `jaccard`, `kl`, `js`
 
+### Format Conversion
+
+Convert between NumPack and other formats (PyTorch, Arrow, Parquet, SafeTensors).
+
+```python
+from numpack.io import from_torch, to_torch, from_arrow, to_arrow
+
+# Memory ↔ .npk (zero-copy when possible)
+from_torch(tensor, 'output.npk', array_name='embeddings')  # tensor → .npk
+tensor = to_torch('input.npk', array_name='embeddings')     # .npk → tensor
+
+from_arrow(table, 'output.npk')  # PyArrow Table → .npk
+table = to_arrow('input.npk')     # .npk → PyArrow Table
+
+# File ↔ File (streaming for large files)
+from numpack.io import from_torch_file, to_torch_file
+from_torch_file('model.pt', 'output.npk')  # .pt → .npk
+to_torch_file('input.npk', 'output.pt')    # .npk → .pt
+```
+
+**Supported formats:** PyTorch (.pt), Feather, Parquet, SafeTensors, NumPy (.npy), HDF5, Zarr, CSV
+
 ### Pack & Unpack
 
 Portable `.npkg` format for easy migration and sharing.
