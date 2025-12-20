@@ -2155,9 +2155,41 @@ __all__ = [
     'from_pandas',
     'to_pandas',
     
-    # PyTorch conversion
-    'from_pytorch',
-    'to_pytorch',
+    # PyTorch conversion (memory - zero-copy)
+    'from_torch',
+    'to_torch',
+    # PyTorch conversion (file - streaming)
+    'from_torch_file',
+    'to_torch_file',
+    'from_pytorch',  # legacy alias
+    'to_pytorch',    # legacy alias
+    
+    # SafeTensors conversion (memory - zero-copy)
+    'from_safetensors',
+    'to_safetensors',
+    # SafeTensors conversion (file - streaming)
+    'from_safetensors_file',
+    'to_safetensors_file',
+    'get_safetensors_metadata',
+    'iter_safetensors',
+    
+    # Arrow/Feather conversion (memory - zero-copy)
+    'from_arrow',
+    'to_arrow',
+    # Feather conversion (file - streaming)
+    'from_feather_file',
+    'to_feather_file',
+    'from_feather',  # legacy alias
+    'to_feather',    # legacy alias
+    
+    # Parquet conversion (memory - zero-copy)
+    'from_parquet_table',
+    'to_parquet_table',
+    # Parquet conversion (file - streaming)
+    'from_parquet_file',
+    'to_parquet_file',
+    'from_parquet',  # legacy alias
+    'to_parquet',    # legacy alias
     
     # S3 support
     'from_s3',
@@ -2172,6 +2204,18 @@ __all__ = [
     'LARGE_FILE_THRESHOLD',
     'DEFAULT_CHUNK_SIZE',
     'DEFAULT_BATCH_ROWS',
+    
+    # Zero-copy utilities
+    'DLPackBuffer',
+    'to_dlpack',
+    'from_dlpack',
+    'numpy_to_arrow_zero_copy',
+    'arrow_to_numpy_zero_copy',
+    'table_to_numpy_zero_copy',
+    'numpy_to_torch_zero_copy',
+    'torch_to_numpy_zero_copy',
+    'ZeroCopyArray',
+    'wrap_for_zero_copy',
 ]
 
 from .utils import (
@@ -2185,12 +2229,41 @@ from .utils import (
 )
 
 from .csv_io import from_csv, from_txt, to_csv, to_txt
-from .feather_io import from_feather, to_feather
+from .feather_io import (
+    from_arrow, to_arrow,
+    from_feather_file, to_feather_file,
+    from_feather, to_feather,
+)
 from .hdf5_io import from_hdf5, to_hdf5
 from .numpy_io import from_numpy, to_numpy
 from .pandas_io import from_pandas, to_pandas
-from .parquet_io import from_parquet, to_parquet
-from .pytorch_io import from_pytorch, to_pytorch
+from .parquet_io import (
+    from_parquet_table, to_parquet_table,
+    from_parquet_file, to_parquet_file,
+    from_parquet, to_parquet,
+)
+from .pytorch_io import (
+    from_torch, to_torch,
+    from_torch_file, to_torch_file,
+    from_pytorch, to_pytorch,
+)
+from .safetensors_io import (
+    from_safetensors, to_safetensors,
+    from_safetensors_file, to_safetensors_file,
+    get_safetensors_metadata, iter_safetensors,
+)
 from .s3_io import from_s3, to_s3
 from .zarr_io import from_zarr, to_zarr
 from .package_io import pack, unpack, get_package_info
+from .zero_copy import (
+    DLPackBuffer,
+    to_dlpack,
+    from_dlpack,
+    numpy_to_arrow_zero_copy,
+    arrow_to_numpy_zero_copy,
+    table_to_numpy_zero_copy,
+    numpy_to_torch_zero_copy,
+    torch_to_numpy_zero_copy,
+    ZeroCopyArray,
+    wrap_for_zero_copy,
+)
