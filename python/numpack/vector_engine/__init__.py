@@ -2,8 +2,8 @@
 
 This module exposes two public classes:
 
-- `VectorSearch`: In-memory vector similarity / distance computation.
-- `StreamingVectorSearch`: Streaming Top-K search directly from a NumPack file.
+- `VectorEngine`: In-memory vector similarity / distance computation.
+- `StreamingVectorEngine`: Streaming Top-K search directly from a NumPack file.
 
 Notes
 -----
@@ -14,9 +14,9 @@ Examples
 --------
 In-memory Top-K search:
 
->>> from numpack.vector_engine import VectorSearch
+>>> from numpack.vector_engine import VectorEngine
 >>> import numpy as np
->>> engine = VectorSearch()
+>>> engine = VectorEngine()
 >>> query = np.random.randn(128).astype(np.float32)
 >>> candidates = np.random.randn(10000, 128).astype(np.float32)
 >>> indices, scores = engine.top_k_search(query, candidates, 'cosine', k=10)
@@ -24,8 +24,8 @@ In-memory Top-K search:
 Streaming Top-K search from a NumPack file:
 
 >>> from numpack import NumPack
->>> from numpack.vector_engine import StreamingVectorSearch
->>> streaming = StreamingVectorSearch()
+>>> from numpack.vector_engine import StreamingVectorEngine
+>>> streaming = StreamingVectorEngine()
 >>> query = np.random.randn(128).astype(np.float32)
 >>> with NumPack('vectors.npk') as npk:
 ...     indices, scores = streaming.streaming_top_k_from_file(
@@ -39,12 +39,12 @@ from numpy.typing import NDArray
 
 # Import from Rust backend
 try:
-    from numpack._lib_numpack import VectorSearch as _VectorSearch
-    from numpack._lib_numpack import StreamingVectorSearch as _StreamingVectorSearch
+    from numpack._lib_numpack import VectorEngine as _VectorEngine
+    from numpack._lib_numpack import StreamingVectorEngine as _StreamingVectorEngine
 except ImportError:
     # Fallback for type checking
-    _VectorSearch = None
-    _StreamingVectorSearch = None
+    _VectorEngine = None
+    _StreamingVectorEngine = None
 
 # Type aliases
 MetricType = Literal[
@@ -59,7 +59,11 @@ MetricType = Literal[
 ]
 
 
-class VectorSearch:
+# Dot product metric aliases
+_DOT_METRICS = {'dot', 'dot_product', 'dotproduct', 'inner', 'inner_product'}
+
+
+class VectorEngine:
     """In-memory vector similarity / distance computation.
 
     This class is backed by the Rust SIMD implementation (AVX2/AVX-512/NEON/SVE
@@ -73,21 +77,23 @@ class VectorSearch:
 
       - Similarity metrics: higher is better (e.g. cosine, dot).
       - Distance metrics: lower is better (e.g. L2).
+    - **NumPy fast path**: For multi-query dot product operations, NumPy's
+      optimized matrix multiplication is used automatically for best performance.
 
     Examples
     --------
     >>> import numpy as np
-    >>> from numpack.vector_engine import VectorSearch
-    >>> engine = VectorSearch()
+    >>> from numpack.vector_engine import VectorEngine
+    >>> engine = VectorEngine()
     >>> query = np.random.randn(128).astype(np.float32)
     >>> candidates = np.random.randn(10000, 128).astype(np.float32)
     >>> indices, scores = engine.top_k_search(query, candidates, 'cosine', k=10)
     """
 
-    def __new__(cls) -> 'VectorSearch':
-        if _VectorSearch is None:
+    def __init__(self) -> None:
+        if _VectorEngine is None:
             raise ImportError("Rust backend not available")
-        return _VectorSearch()
+        self._backend = _VectorEngine()
 
     def capabilities(self) -> str:
         """Return detected SIMD capabilities.
@@ -95,9 +101,9 @@ class VectorSearch:
         Returns
         -------
         str
-            Human-readable SIMD feature summary (for example, ``"CPU: AVX2"``).
+            Human-readable SIMD feature summary (for example, ``"CPU: AVX2"").
         """
-        ...
+        return self._backend.capabilities()
 
     def compute_metric(
         self,
@@ -128,7 +134,7 @@ class VectorSearch:
         ValueError
             If `metric` is unknown or the dimensions do not match.
         """
-        ...
+        return self._backend.compute_metric(a, b, metric)
 
     def batch_compute(
         self,
@@ -136,12 +142,14 @@ class VectorSearch:
         candidates: NDArray,
         metric: MetricType
     ) -> NDArray[np.float64]:
-        """Compute metric values between one query and many candidates.
+        """Compute metric values between query vector(s) and many candidates.
 
         Parameters
         ----------
         query : numpy.ndarray
-            Query vector (1D).
+            Query vector(s). Can be:
+            - 1D array (shape ``(dim,)``): Single query vector
+            - 2D array (shape ``(n_queries, dim)``): Multiple query vectors
         candidates : numpy.ndarray
             Candidate matrix (2D, shape ``(n_candidates, dim)``).
         metric : MetricType
@@ -150,16 +158,33 @@ class VectorSearch:
         Returns
         -------
         numpy.ndarray
-            Metric values, shape ``(n_candidates,)``, dtype ``float64``.
+            Metric values array, dtype ``float64``:
+            - If query is 1D: returns 1D array of shape ``(n_candidates,)``
+            - If query is 2D: returns 2D array of shape ``(n_queries, n_candidates)``
 
         Raises
         ------
         TypeError
-            If dtypes are not supported.
+            If dtypes are not supported or query has more than 2 dimensions.
         ValueError
             If `metric` is unknown or the dimensions do not match.
+
+        Examples
+        --------
+        Single query:
+        >>> scores = engine.batch_compute(query, candidates, 'cosine')  # shape: (n_candidates,)
+
+        Multiple queries (batch mode):
+        >>> queries = np.random.randn(5, 128).astype(np.float32)
+        >>> scores = engine.batch_compute(queries, candidates, 'cosine')  # shape: (5, n_candidates)
         """
-        ...
+        # NumPy fast path for multi-query dot product
+        # NumPy's direct BLAS call has less overhead than Rust FFI
+        if query.ndim == 2 and metric in _DOT_METRICS:
+            return query @ candidates.T
+        
+        # Use Rust SIMD backend for other metrics (cosine, L2, etc.)
+        return self._backend.batch_compute(query, candidates, metric)
 
     def top_k_search(
         self,
@@ -200,7 +225,7 @@ class VectorSearch:
         ValueError
             If `metric` is unknown or the dimensions do not match.
         """
-        ...
+        return self._backend.top_k_search(query, candidates, metric, k)
 
     def multi_query_top_k(
         self,
@@ -238,7 +263,7 @@ class VectorSearch:
         >>> indices = indices.reshape(len(queries), 10)
         >>> scores = scores.reshape(len(queries), 10)
         """
-        ...
+        return self._backend.multi_query_top_k(queries, candidates, metric, k)
 
     def segmented_top_k_search(
         self,
@@ -284,7 +309,7 @@ class VectorSearch:
 
         Examples
         --------
-        >>> engine = VectorSearch()
+        >>> engine = VectorEngine()
         >>> query = np.random.randn(128).astype(np.float32)
         >>> current_indices = np.array([], dtype=np.uint64)
         >>> current_scores = np.array([], dtype=np.float64)
@@ -300,10 +325,13 @@ class VectorSearch:
         ...         is_similarity=True,
         ...     )
         """
-        ...
+        return self._backend.segmented_top_k_search(
+            query, candidates, metric, global_offset,
+            current_indices, current_scores, k, is_similarity
+        )
 
 
-class StreamingVectorSearch:
+class StreamingVectorEngine:
     """Streaming vector search directly from NumPack files.
 
     This engine is intended for large candidate sets that do not fit in memory.
@@ -314,14 +342,14 @@ class StreamingVectorSearch:
     -----
     - Query vectors are validated on the Python side, then passed into the Rust
       implementation.
-    - For in-memory data, prefer `VectorSearch`.
+    - For in-memory data, prefer `VectorEngine`.
 
     Examples
     --------
     >>> import numpy as np
     >>> from numpack import NumPack
-    >>> from numpack.vector_engine import StreamingVectorSearch
-    >>> streaming = StreamingVectorSearch()
+    >>> from numpack.vector_engine import StreamingVectorEngine
+    >>> streaming = StreamingVectorEngine()
     >>> query = np.random.randn(128).astype(np.float32)
     >>> with NumPack('vectors.npk') as npk:
     ...     indices, scores = streaming.streaming_top_k_from_file(
@@ -329,10 +357,10 @@ class StreamingVectorSearch:
     ...     )
     """
 
-    def __new__(cls) -> 'StreamingVectorSearch':
-        if _StreamingVectorSearch is None:
+    def __new__(cls) -> 'StreamingVectorEngine':
+        if _StreamingVectorEngine is None:
             raise ImportError("Rust backend not available")
-        return _StreamingVectorSearch()
+        return _StreamingVectorEngine()
 
     def capabilities(self) -> str:
         """Return detected SIMD capabilities.
@@ -399,7 +427,9 @@ class StreamingVectorSearch:
         Parameters
         ----------
         query : numpy.ndarray
-            Query vector (1D).
+            Query vector(s). Can be:
+            - 1D array (shape ``(dim,)``): Single query vector
+            - 2D array (shape ``(n_queries, dim)``): Multiple query vectors
         npk_dir : str
             Path to the NumPack directory.
         array_name : str
@@ -412,15 +442,26 @@ class StreamingVectorSearch:
         Returns
         -------
         numpy.ndarray
-            Metric values for all candidates, shape ``(n_candidates,)``, dtype
-            ``float64``.
+            Metric values array, dtype ``float64``:
+            - If query is 1D: returns 1D array of shape ``(n_candidates,)``
+            - If query is 2D: returns 2D array of shape ``(n_queries, n_candidates)``
 
         Raises
         ------
         TypeError
-            If `query` dtype is not supported.
+            If `query` dtype is not supported or query has more than 2 dimensions.
         ValueError
             If the array does not exist or the dimensions do not match.
+
+        Examples
+        --------
+        Single query:
+        >>> scores = streaming.streaming_batch_compute(query, npk_dir, 'embeddings', 'cosine')
+
+        Multiple queries (batch mode):
+        >>> queries = np.random.randn(5, 128).astype(np.float32)
+        >>> scores = streaming.streaming_batch_compute(queries, npk_dir, 'embeddings', 'cosine')
+        >>> # scores.shape == (5, n_candidates)
         """
         ...
 
@@ -478,7 +519,7 @@ class StreamingVectorSearch:
 
 
 __all__ = [
-    'VectorSearch',
-    'StreamingVectorSearch',
+    'VectorEngine',
+    'StreamingVectorEngine',
     'MetricType',
 ]
