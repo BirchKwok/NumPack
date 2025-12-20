@@ -83,17 +83,17 @@ with npk.writable_batch_mode() as wb:
 SIMD-accelerated similarity search (AVX2, AVX-512, NEON, SVE).
 
 ```python
-from numpack.vector_engine import VectorSearch, StreamingVectorSearch
+from numpack.vector_engine import VectorEngine, StreamingVectorEngine
 
 # In-memory search
-engine = VectorSearch()
+engine = VectorEngine()
 indices, scores = engine.top_k_search(query, candidates, 'cosine', k=10)
 
 # Multi-query batch (30-50% faster)
 all_indices, all_scores = engine.multi_query_top_k(queries, candidates, 'cosine', k=10)
 
 # Streaming from file (for large datasets)
-streaming = StreamingVectorSearch()
+streaming = StreamingVectorEngine()
 indices, scores = streaming.streaming_top_k_from_file(
     query, 'vectors.npk', 'embeddings', 'cosine', k=10
 )
