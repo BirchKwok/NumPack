@@ -226,6 +226,111 @@ impl VectorEngine {
     }
 }
 
+// ============== cdist / matmul optimized API ==============
+
+impl VectorEngine {
+    /// Compute pairwise distances/similarities between two matrices (cdist)
+    /// 
+    /// Equivalent to `scipy.spatial.distance.cdist`
+    /// 
+    /// # Arguments
+    /// * `a` - First matrix as contiguous slice, shape [M, D]
+    /// * `b` - Second matrix as contiguous slice, shape [N, D]
+    /// * `m` - Number of rows in A
+    /// * `n` - Number of rows in B
+    /// * `d` - Dimension (number of columns)
+    /// * `metric` - The distance/similarity metric to compute
+    /// 
+    /// # Returns
+    /// Result matrix as flat Vec<f64> in row-major order, shape [M, N]
+    pub fn cdist_f64(
+        &self,
+        a: &[f64],
+        b: &[f64],
+        m: usize,
+        n: usize,
+        d: usize,
+        metric: MetricType,
+    ) -> Result<Vec<f64>> {
+        self.cpu_backend.cdist_f64(a, b, m, n, d, metric)
+    }
+
+    /// Compute pairwise distances/similarities between two f32 matrices
+    pub fn cdist_f32(
+        &self,
+        a: &[f32],
+        b: &[f32],
+        m: usize,
+        n: usize,
+        d: usize,
+        metric: MetricType,
+    ) -> Result<Vec<f32>> {
+        self.cpu_backend.cdist_f32(a, b, m, n, d, metric)
+    }
+
+    /// Matrix multiplication using SimSIMD: C = A @ B.T
+    /// 
+    /// Computes the matrix product where each element C[i,j] = dot(A[i,:], B[j,:])
+    /// 
+    /// # Arguments
+    /// * `a` - First matrix as contiguous slice, shape [M, K]
+    /// * `b` - Second matrix as contiguous slice, shape [N, K]
+    /// * `m` - Number of rows in A
+    /// * `n` - Number of rows in B
+    /// * `k` - Shared dimension
+    /// 
+    /// # Returns
+    /// Result matrix as flat Vec<f64> in row-major order, shape [M, N]
+    pub fn matmul_f64(
+        &self,
+        a: &[f64],
+        b: &[f64],
+        m: usize,
+        n: usize,
+        k: usize,
+    ) -> Result<Vec<f64>> {
+        self.cpu_backend.matmul_f64(a, b, m, n, k)
+    }
+
+    /// Matrix multiplication for f32: C = A @ B.T
+    pub fn matmul_f32(
+        &self,
+        a: &[f32],
+        b: &[f32],
+        m: usize,
+        n: usize,
+        k: usize,
+    ) -> Result<Vec<f32>> {
+        self.cpu_backend.matmul_f32(a, b, m, n, k)
+    }
+
+    /// cdist for i8 vectors
+    pub fn cdist_i8(
+        &self,
+        a: &[i8],
+        b: &[i8],
+        m: usize,
+        n: usize,
+        d: usize,
+        metric: MetricType,
+    ) -> Result<Vec<f64>> {
+        self.cpu_backend.cdist_i8(a, b, m, n, d, metric)
+    }
+
+    /// cdist for u8 binary vectors
+    pub fn cdist_u8(
+        &self,
+        a: &[u8],
+        b: &[u8],
+        m: usize,
+        n: usize,
+        d: usize,
+        metric: MetricType,
+    ) -> Result<Vec<f64>> {
+        self.cpu_backend.cdist_u8(a, b, m, n, d, metric)
+    }
+}
+
 impl Default for VectorEngine {
     fn default() -> Self {
         Self::new()

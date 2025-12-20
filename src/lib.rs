@@ -4221,8 +4221,19 @@ impl NumPack {
         let dtype = meta.get_dtype();
         let itemsize = dtype.size_bytes() as usize;
         let row_size = shape[1..].iter().product::<usize>() * itemsize;
-        let total_rows = shape[0];
+        let physical_rows = shape[0];
         let modify_time = meta.last_modified as i64;
+        
+        // 检查是否存在deletion bitmap，获取逻辑行数
+        use crate::storage::deletion_bitmap::DeletionBitmap;
+        let base_dir = self.io.get_base_dir();
+        let bitmap_opt = if DeletionBitmap::exists(base_dir, array_name) {
+            Some(DeletionBitmap::new(base_dir, array_name, physical_rows)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?)
+        } else {
+            None
+        };
+        let logical_rows = bitmap_opt.as_ref().map_or(physical_rows, |b| b.active_count());
         
         // 构建数据文件路径
         let data_path = self.base_dir.join(format!("data_{}.npkd", array_name));
@@ -4245,7 +4256,7 @@ impl NumPack {
         let mmap_slice = &mmap_arc[..];
         let mmap_len = mmap_slice.len();
 
-        // 【快速路径】检测slice并使用单次memcpy
+        // 【快速路径】检测slice并使用单次memcpy（仅当无bitmap时）
         if let Ok(slice) = indices.downcast::<PySlice>() {
             let start = slice
                 .getattr("start")?
@@ -4254,7 +4265,7 @@ impl NumPack {
             let stop = slice
                 .getattr("stop")?
                 .extract::<Option<i64>>()?
-                .unwrap_or(meta.shape[0] as i64);
+                .unwrap_or(logical_rows as i64);
             let step = slice
                 .getattr("step")?
                 .extract::<Option<i64>>()?
@@ -4266,11 +4277,11 @@ impl NumPack {
                 ));
             }
 
-            // 标准化索引
-            let start_idx = if start < 0 { (total_rows as i64 + start).max(0) as usize } else { start as usize };
-            let stop_idx = if stop < 0 { (total_rows as i64 + stop).max(0) as usize } else { (stop as usize).min(total_rows) };
+            // 标准化逻辑索引
+            let start_idx = if start < 0 { (logical_rows as i64 + start).max(0) as usize } else { start as usize };
+            let stop_idx = if stop < 0 { (logical_rows as i64 + stop).max(0) as usize } else { (stop as usize).min(logical_rows) };
             
-            if start_idx >= stop_idx || start_idx >= total_rows {
+            if start_idx >= stop_idx || start_idx >= logical_rows {
                 // 空切片
                 let mut new_shape = shape.clone();
                 new_shape[0] = 0;
@@ -4278,6 +4289,54 @@ impl NumPack {
             }
             
             let num_rows = stop_idx - start_idx;
+            
+            // 如果存在bitmap，需要转换逻辑索引到物理索引
+            if let Some(ref bitmap) = bitmap_opt {
+                // 先转换所有逻辑索引到物理索引
+                let mut physical_indices: Vec<usize> = Vec::with_capacity(num_rows);
+                for logical_idx in start_idx..stop_idx {
+                    let physical_idx = bitmap.logical_to_physical(logical_idx)
+                        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                            format!("Logical index {} out of bounds", logical_idx)
+                        ))?;
+                    physical_indices.push(physical_idx);
+                }
+                
+                // 【优化】检测连续物理索引块，使用批量memcpy
+                let total_size = num_rows * row_size;
+                let mut data = vec![0u8; total_size];
+                let mut dst_offset = 0;
+                let mut i = 0;
+                
+                while i < physical_indices.len() {
+                    // 找到连续块的结束位置
+                    let block_start = i;
+                    let physical_start = physical_indices[i];
+                    while i + 1 < physical_indices.len() 
+                          && physical_indices[i + 1] == physical_indices[i] + 1 {
+                        i += 1;
+                    }
+                    let block_len = i - block_start + 1;
+                    
+                    // 批量复制整个连续块
+                    let src_offset = physical_start * row_size;
+                    let block_size = block_len * row_size;
+                    if src_offset + block_size > mmap_len {
+                        return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>("Data access out of bounds"));
+                    }
+                    data[dst_offset..dst_offset + block_size]
+                        .copy_from_slice(&mmap_slice[src_offset..src_offset + block_size]);
+                    
+                    dst_offset += block_size;
+                    i += 1;
+                }
+                
+                let mut new_shape = shape.clone();
+                new_shape[0] = num_rows;
+                return self.create_numpy_array_from_dtype(py, data, &new_shape, dtype);
+            }
+            
+            // 无bitmap时，直接连续读取
             let src_offset = start_idx * row_size;
             let total_size = num_rows * row_size;
             
@@ -4382,25 +4441,55 @@ impl NumPack {
         };
         
         let num_indices = indices.len();
-        let total_size = num_indices * row_size;
-        let mut data = vec![0u8; total_size];
         
-        for (i, &idx) in indices.iter().enumerate() {
-            let normalized = if idx < 0 { total_rows as i64 + idx } else { idx };
-            if normalized < 0 || normalized as usize >= total_rows {
+        // 先转换所有逻辑索引到物理索引
+        let mut physical_indices: Vec<usize> = Vec::with_capacity(num_indices);
+        for &idx in &indices {
+            let logical_idx = if idx < 0 { logical_rows as i64 + idx } else { idx };
+            if logical_idx < 0 || logical_idx as usize >= logical_rows {
                 return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
                     "Index {} is out of bounds", idx
                 )));
             }
-            let src_offset = normalized as usize * row_size;
-            if src_offset + row_size > mmap_len {
-                return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
-                    "Data access out of bounds"
-                ));
+            
+            let physical_idx = if let Some(ref bitmap) = bitmap_opt {
+                bitmap.logical_to_physical(logical_idx as usize)
+                    .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                        format!("Logical index {} out of bounds", logical_idx)
+                    ))?
+            } else {
+                logical_idx as usize
+            };
+            physical_indices.push(physical_idx);
+        }
+        
+        // 【优化】检测连续物理索引块，使用批量memcpy
+        let total_size = num_indices * row_size;
+        let mut data = vec![0u8; total_size];
+        let mut dst_offset = 0;
+        let mut i = 0;
+        
+        while i < physical_indices.len() {
+            // 找到连续块的结束位置
+            let block_start = i;
+            let physical_start = physical_indices[i];
+            while i + 1 < physical_indices.len() 
+                  && physical_indices[i + 1] == physical_indices[i] + 1 {
+                i += 1;
             }
-            let dst_offset = i * row_size;
-            data[dst_offset..dst_offset + row_size]
-                .copy_from_slice(&mmap_slice[src_offset..src_offset + row_size]);
+            let block_len = i - block_start + 1;
+            
+            // 批量复制整个连续块
+            let src_offset = physical_start * row_size;
+            let block_size = block_len * row_size;
+            if src_offset + block_size > mmap_len {
+                return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>("Data access out of bounds"));
+            }
+            data[dst_offset..dst_offset + block_size]
+                .copy_from_slice(&mmap_slice[src_offset..src_offset + block_size]);
+            
+            dst_offset += block_size;
+            i += 1;
         }
 
         // Calculate the new shape
