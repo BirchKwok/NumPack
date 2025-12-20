@@ -44,8 +44,7 @@ blas-src = { version = "0.10", features = ["openblas"] }
 libc = "0.2"
 io-uring = { version = "0.6", optional = true }
 
-[target.'cfg(target_os = "windows")'.dependencies]
-blas-src = { version = "0.10", features = ["openblas"] } 
+# Windows: No blas-src - ndarray uses matrixmultiply fallback 
 
 
 [build-dependencies]
