@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-StreamingVectorSearch 性能基准测试
+StreamingVectorEngine 性能基准测试
 
 测试目标：
 1. 比较流式计算 vs 直接计算的性能
@@ -20,7 +20,7 @@ from typing import Dict
 
 import numpack
 from numpack import NumPack
-from numpack.vector_engine import VectorSearch, StreamingVectorSearch
+from numpack.vector_engine import VectorEngine, StreamingVectorEngine
 
 
 def format_time(seconds: float) -> str:
@@ -74,7 +74,7 @@ class StreamingBenchmark:
     """流式计算基准测试"""
     
     def __init__(self):
-        self.engine = VectorSearch()
+        self.engine = VectorEngine()
         self.temp_dir = None
         
     def setup(self):
@@ -110,7 +110,7 @@ class StreamingBenchmark:
         results = {}
         
         with NumPack(npk_path) as npk:
-            streaming_searcher = StreamingVectorSearch()
+            streaming_searcher = StreamingVectorEngine()
             
             # 直接计算（全部加载到内存）
             loaded_candidates = npk.load('candidates', lazy=False)
@@ -158,7 +158,7 @@ class StreamingBenchmark:
         results = {}
         
         with NumPack(npk_path) as npk:
-            streaming_searcher = StreamingVectorSearch()
+            streaming_searcher = StreamingVectorEngine()
             loaded_candidates = npk.load('candidates', lazy=False)
             
             # 直接Top-K
@@ -215,7 +215,7 @@ class StreamingBenchmark:
         gc.collect()
         
         with NumPack(npk_path) as npk:
-            streaming_searcher = StreamingVectorSearch()
+            streaming_searcher = StreamingVectorEngine()
             
             # 测试1：全部加载
             gc.collect()
@@ -283,7 +283,7 @@ class StreamingBenchmark:
                         npk.append({'candidates': chunk})
             
             with NumPack(npk_path) as npk:
-                streaming_searcher = StreamingVectorSearch()
+                streaming_searcher = StreamingVectorEngine()
                 
                 # 流式Top-K
                 start = time.perf_counter()
@@ -310,7 +310,7 @@ class StreamingBenchmark:
             npk.save({'candidates': candidates})
         
         with NumPack(npk_path) as npk:
-            streaming_searcher = StreamingVectorSearch()
+            streaming_searcher = StreamingVectorEngine()
             loaded = npk.load('candidates', lazy=False)
             
             # 直接计算（每个query单独计算）
@@ -356,10 +356,10 @@ class StreamingBenchmark:
 def run_all_benchmarks():
     """运行所有基准测试"""
     print("=" * 70)
-    print("StreamingVectorSearch 性能基准测试")
+    print("StreamingVectorEngine 性能基准测试")
     print("=" * 70)
     
-    engine = VectorSearch()
+    engine = VectorEngine()
     print(f"\nSIMD能力: {engine.capabilities()}")
     print(f"NumPack版本: {numpack.__version__}")
     
