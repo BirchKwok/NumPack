@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-VectorSearch 数据传输性能基准测试
+VectorEngine 数据传输性能基准测试
 
 测试目标：
 1. 确认数据传输 vs 计算的时间占比
@@ -25,7 +25,7 @@ import gc
 # 导入numpack
 import numpack
 from numpack import NumPack
-from numpack.vector_engine import VectorSearch
+from numpack.vector_engine import VectorEngine
 
 
 def format_time(seconds: float) -> str:
@@ -92,7 +92,7 @@ def measure_time(func, warmup: int = 2, iterations: int = 10) -> Tuple[float, fl
     return np.mean(times), np.min(times), np.max(times)
 
 
-def benchmark_pure_computation(engine: VectorSearch, dim: int, n_candidates: int) -> Dict:
+def benchmark_pure_computation(engine: VectorEngine, dim: int, n_candidates: int) -> Dict:
     """基准测试1: 纯计算性能（数据已在内存中）"""
     print(f"\n[基准测试1] 纯计算性能 (dim={dim}, n_candidates={n_candidates})")
     print("-" * 60)
@@ -173,7 +173,7 @@ def benchmark_data_loading(ctx: BenchmarkContext, dim: int, n_candidates: int) -
     return results
 
 
-def benchmark_end_to_end_numpy(engine: VectorSearch, ctx: BenchmarkContext, 
+def benchmark_end_to_end_numpy(engine: VectorEngine, ctx: BenchmarkContext, 
                                dim: int, n_candidates: int) -> Dict:
     """基准测试3: 端到端性能 - NumPy数组"""
     print(f"\n[基准测试3] 端到端性能 - NumPy数组 (dim={dim}, n_candidates={n_candidates})")
@@ -220,7 +220,7 @@ def benchmark_end_to_end_numpy(engine: VectorSearch, ctx: BenchmarkContext,
     return results
 
 
-def benchmark_end_to_end_lazy(engine: VectorSearch, ctx: BenchmarkContext,
+def benchmark_end_to_end_lazy(engine: VectorEngine, ctx: BenchmarkContext,
                               dim: int, n_candidates: int) -> Dict:
     """基准测试4: 端到端性能 - LazyArray"""
     print(f"\n[基准测试4] 端到端性能 - LazyArray (dim={dim}, n_candidates={n_candidates})")
@@ -286,7 +286,7 @@ def benchmark_end_to_end_lazy(engine: VectorSearch, ctx: BenchmarkContext,
     return results
 
 
-def benchmark_breakdown(engine: VectorSearch, ctx: BenchmarkContext,
+def benchmark_breakdown(engine: VectorEngine, ctx: BenchmarkContext,
                         dim: int, n_candidates: int) -> Dict:
     """基准测试5: 时间分解分析"""
     print(f"\n[基准测试5] 时间分解分析 (dim={dim}, n_candidates={n_candidates})")
@@ -352,7 +352,7 @@ def benchmark_breakdown(engine: VectorSearch, ctx: BenchmarkContext,
     return results
 
 
-def benchmark_scale_analysis(engine: VectorSearch, ctx: BenchmarkContext) -> Dict:
+def benchmark_scale_analysis(engine: VectorEngine, ctx: BenchmarkContext) -> Dict:
     """基准测试6: 规模分析"""
     print(f"\n[基准测试6] 不同规模下的性能分析")
     print("=" * 60)
@@ -404,7 +404,7 @@ def benchmark_scale_analysis(engine: VectorSearch, ctx: BenchmarkContext) -> Dic
     return results
 
 
-def benchmark_dtype_comparison(engine: VectorSearch, dim: int, n_candidates: int) -> Dict:
+def benchmark_dtype_comparison(engine: VectorEngine, dim: int, n_candidates: int) -> Dict:
     """基准测试7: 不同数据类型的性能比较"""
     print(f"\n[基准测试7] 数据类型性能比较 (dim={dim}, n_candidates={n_candidates})")
     print("-" * 60)
@@ -451,11 +451,11 @@ def benchmark_dtype_comparison(engine: VectorSearch, dim: int, n_candidates: int
 def run_all_benchmarks():
     """运行所有基准测试"""
     print("=" * 70)
-    print("VectorSearch 数据传输性能基准测试")
+    print("VectorEngine 数据传输性能基准测试")
     print("=" * 70)
     
     # 显示环境信息
-    engine = VectorSearch()
+    engine = VectorEngine()
     print(f"\nSIMD能力: {engine.capabilities()}")
     print(f"NumPack版本: {numpack.__version__}")
     
