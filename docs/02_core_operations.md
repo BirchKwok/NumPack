@@ -12,6 +12,7 @@ This document covers all core NumPack operations including save, load, replace, 
 - [Drop Operations](#drop-operations)
 - [Random Access](#random-access)
 - [Metadata Operations](#metadata-operations)
+- [Array Operations](#array-operations)
 - [Stream Loading](#stream-loading)
 - [File Management](#file-management)
 
@@ -528,6 +529,65 @@ with NumPack("data.npk") as npk:
 - Original file is replaced after compaction
 - Uses batched approach (100K rows per batch) for large arrays
 - If no rows were deleted, operation is a no-op
+
+---
+
+## Array Operations
+
+### `clone(source_name, target_name)`
+
+Clone an existing array to a new array name.
+
+#### Parameters
+
+- `source_name` (str): Name of the source array to clone
+- `target_name` (str): Name for the cloned array
+
+#### Example
+
+```python
+with NumPack("data.npk") as npk:
+    # Save original data
+    npk.save({'original': np.random.rand(100, 50)})
+    
+    # Clone to new array
+    npk.clone('original', 'backup')
+    
+    # Modify the clone independently
+    backup = npk.load('backup')
+    backup *= 2.0
+    npk.save({'backup': backup})
+    
+    # Original is unchanged
+    original = npk.load('original')
+```
+
+#### Notes
+
+- The cloned array is independent of the original
+- Raises `KeyError` if source array doesn't exist
+- Raises `ValueError` if target array already exists
+
+### `get_io_stats()`
+
+Get I/O statistics for the NumPack instance.
+
+#### Returns
+
+- `Dict[str, Any]`: Dictionary containing backend statistics
+
+#### Example
+
+```python
+with NumPack("data.npk") as npk:
+    stats = npk.get_io_stats()
+    print(f"Backend: {stats['backend_type']}")
+```
+
+#### Notes
+
+- Currently returns basic backend information
+- Detailed per-call statistics may be added in future versions
 
 ---
 

@@ -296,7 +296,7 @@ def to_parquet_file(
             )
         else:
             arr = npk.load(array_name)
-            table = to_parquet_table(arr)
+            table = _numpy_to_arrow_table(arr)
             pq.write_table(
                 table, str(output_path),
                 compression=compression,
@@ -309,6 +309,30 @@ def to_parquet_file(
 # =============================================================================
 # Internal Helpers
 # =============================================================================
+
+def _numpy_to_arrow_table(arr: np.ndarray) -> Any:
+    """Convert a NumPy array to a PyArrow Table.
+    
+    Parameters
+    ----------
+    arr : numpy.ndarray
+        Input array.
+    
+    Returns
+    -------
+    pyarrow.Table
+        PyArrow Table.
+    """
+    import pyarrow as pa
+    
+    if arr.ndim == 1:
+        return pa.table({'data': arr})
+    elif arr.ndim == 2:
+        names = [f'col{i}' for i in range(arr.shape[1])]
+        return pa.table({names[i]: arr[:, i] for i in range(arr.shape[1])})
+    else:
+        return pa.table({'data': arr.ravel()})
+
 
 def _table_to_numpy_zero_copy(table) -> np.ndarray:
     """Convert a PyArrow Table to NumPy with zero-copy when possible.

@@ -201,7 +201,7 @@ to_torch_file('input.npk', 'output.pt')
 to_parquet_file('input.npk', 'output.parquet')
 ```
 
-### Metadata
+### Metadata & Array Operations
 
 ```python
 # Get shape
@@ -216,11 +216,17 @@ exists = npk.has_array('array')
 # Get modification time
 timestamp = npk.get_modify_time('array')
 
+# Clone an array
+npk.clone('source_array', 'target_array')
+
 # Reset (clear all)
 npk.reset()
 
 # Compact after deletions
 npk.update('array')
+
+# Get I/O statistics
+stats = npk.get_io_stats()
 ```
 
 ### Batch Modes

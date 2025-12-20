@@ -15,6 +15,11 @@ Welcome to the NumPack API documentation! NumPack is a high-performance array st
 
 ### API Reference
 
+- **[API Reference (Detailed)](./api_reference/README.md)** ⭐ NEW
+  - Complete function-level documentation
+  - Parameters, return values, and examples
+  - Organized by module (Core, IO, Utils)
+
 - **[02. Core Operations](./02_core_operations.md)**
   - Complete API reference for all basic operations
   - `save()`, `load()`, `replace()`, `append()`, `drop()`
@@ -76,7 +81,6 @@ Welcome to the NumPack API documentation! NumPack is a high-performance array st
 | **API lookup** | [Core Operations](./02_core_operations.md) | Complete API reference |
 | **Performance optimization** | [Batch Processing](./03_batch_processing.md), [Performance Guide](./05_performance_guide.md) | 25-174x speedup |
 | **Large datasets** | [Advanced Features](./04_advanced_features.md) | Lazy loading, streaming |
-｜ 
 | **Quick answers** | [Quick Reference](./06_quick_reference.md) | Cheatsheet, common patterns |
 | **Format conversion** | [IO Conversion](./07_io_conversion.md) | PyTorch, Arrow, Parquet, SafeTensors |
 

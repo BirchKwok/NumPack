@@ -2,6 +2,23 @@
 
 NumPack provides comprehensive format conversion utilities for seamless integration with popular data frameworks.
 
+## Table of Contents
+
+- [Overview](#overview)
+- [PyTorch Conversion](#pytorch-conversion)
+- [PyArrow/Feather Conversion](#pyarrowfeather-conversion)
+- [Parquet Conversion](#parquet-conversion)
+- [SafeTensors Conversion](#safetensors-conversion)
+- [Other Formats](#other-formats)
+- [Text File Conversion](#text-file-conversion)
+- [Pandas Conversion](#pandas-conversion)
+- [S3 Cloud Storage](#s3-cloud-storage)
+- [Zero-Copy Utilities](#zero-copy-utilities)
+- [Supported Formats Summary](#supported-formats-summary)
+- [Best Practices](#best-practices)
+
+---
+
 ## Overview
 
 NumPack supports two types of conversions:
@@ -333,6 +350,140 @@ print("Model conversion pipeline complete!")
 
 ---
 
+## Text File Conversion
+
+### TXT Files
+
+```python
+from numpack.io import from_txt, to_txt
+
+# .txt → .npk (whitespace-delimited)
+from_txt('data.txt', 'output.npk', array_name='data', delimiter=None)
+
+# .npk → .txt
+to_txt('input.npk', 'output.txt', array_name='data', delimiter='\t')
+```
+
+**Parameters:**
+- `delimiter`: Field separator (default: whitespace)
+- `skip_header`: Number of header rows to skip
+- `dtype`: Target data type
+
+---
+
+## Pandas Conversion
+
+### DataFrame ↔ .npk
+
+```python
+from numpack.io import from_pandas, to_pandas
+import pandas as pd
+
+# DataFrame → .npk
+df = pd.DataFrame({'a': [1, 2, 3], 'b': [4.0, 5.0, 6.0]})
+from_pandas(df, 'output.npk', array_name='dataframe')
+
+# .npk → DataFrame
+df = to_pandas('input.npk', array_name='dataframe')
+print(df.columns)
+```
+
+**Notes:**
+- Numeric columns are converted to NumPy arrays
+- String columns may require special handling
+
+---
+
+## S3 Cloud Storage
+
+NumPack supports direct reading and writing to Amazon S3.
+
+### S3 ↔ .npk
+
+```python
+from numpack.io import from_s3, to_s3
+
+# Download from S3 and convert to .npk (uses default AWS credentials)
+from_s3('s3://my-bucket/data.npy', 'output.npk')
+
+# Public bucket access
+from_s3('s3://public-bucket/data.csv', 'output.npk', anon=True)
+
+# Upload .npk to S3
+to_s3('input.npk', 's3://my-bucket/output.parquet')
+
+# Specify output format
+to_s3('input.npk', 's3://my-bucket/output.csv', format='csv')
+```
+
+**Parameters:**
+- `s3_path`: S3 URI in the form `s3://bucket/path/to/file`
+- `format`: Input/output format (`'auto'`, `'numpy'`, `'csv'`, `'txt'`, `'parquet'`, `'feather'`, `'hdf5'`)
+- `**s3_kwargs`: Keyword arguments forwarded to `s3fs.S3FileSystem` (e.g., `anon=True` for public buckets)
+
+**Dependencies:** `s3fs`
+
+---
+
+## Zero-Copy Utilities
+
+NumPack provides zero-copy utilities for efficient data exchange with other libraries.
+
+### DLPack Protocol
+
+```python
+from numpack.io import to_dlpack, from_dlpack
+
+# NumPy → DLPack capsule
+arr = np.random.rand(100, 50)
+capsule = to_dlpack(arr)
+
+# DLPack capsule → NumPy
+arr_restored = from_dlpack(capsule)
+```
+
+### Arrow Zero-Copy
+
+```python
+from numpack.io import numpy_to_arrow_zero_copy, arrow_to_numpy_zero_copy
+
+# NumPy → Arrow (zero-copy)
+arr = np.random.rand(100, 50).astype(np.float32)
+arrow_arr = numpy_to_arrow_zero_copy(arr)
+
+# Arrow → NumPy (zero-copy)
+numpy_arr = arrow_to_numpy_zero_copy(arrow_arr)
+```
+
+### PyTorch Zero-Copy
+
+```python
+from numpack.io import numpy_to_torch_zero_copy, torch_to_numpy_zero_copy
+
+# NumPy → PyTorch (shared memory)
+arr = np.random.rand(100, 50).astype(np.float32)
+tensor = numpy_to_torch_zero_copy(arr)
+
+# PyTorch → NumPy (shared memory)
+numpy_arr = torch_to_numpy_zero_copy(tensor)
+```
+
+### ZeroCopyArray Wrapper
+
+```python
+from numpack.io import ZeroCopyArray, wrap_for_zero_copy
+
+# Wrap array for zero-copy operations
+arr = np.random.rand(100, 50)
+zc_arr = wrap_for_zero_copy(arr)
+
+# Access as different formats
+torch_tensor = zc_arr.to_torch()
+arrow_array = zc_arr.to_arrow()
+```
+
+---
+
 ## Supported Formats Summary
 
 | Format | Import | Export | Dependencies |
@@ -345,7 +496,9 @@ print("Model conversion pipeline complete!")
 | HDF5 (.h5) | ✅ | ✅ | `h5py` |
 | Zarr | ✅ | ✅ | `zarr` |
 | CSV | ✅ | ✅ | - |
+| TXT | ✅ | ✅ | - |
 | Pandas | ✅ | ✅ | `pandas` |
+| S3 | ✅ | ✅ | `boto3`, `s3fs` |
 
 ---
 
