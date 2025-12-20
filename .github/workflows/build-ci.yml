@@ -112,7 +112,7 @@ jobs:
           
           # Install required packages
           sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev libopenblas-dev
           
           # Install ARM64 cross-compilation tools if target is ARM64
           if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
