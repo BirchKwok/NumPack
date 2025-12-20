@@ -6,12 +6,12 @@ A high-performance NumPy array storage library combining Rust's speed with Pytho
 
 | Feature | Performance |
 |---------|-------------|
-| Row Replacement | **318x faster** than NPY |
-| Data Append | **329x faster** than NPY |
-| Lazy Loading | **46x faster** than NPY mmap |
-| Full Load | **1.74x faster** than NPY |
-| Random Access | **27% faster** than NPY mmap |
+| Row Replacement | **344x faster** than NPY |
+| Data Append | **338x faster** than NPY |
+| Lazy Loading | **51x faster** than NPY mmap |
+| Full Load | **1.64x faster** than NPY |
 | Batch Mode | **21x speedup** |
+| Writable Batch | **92x speedup** |
 
 **Core Capabilities:**
 - Zero-copy mmap operations with minimal memory footprint
@@ -149,27 +149,52 @@ print(f"Files: {info['file_count']}, Compression: {info['compression_ratio']:.1%
 
 | Operation | NumPack | NPY | Advantage |
 |-----------|---------|-----|----------:|
-| Full Load | 3.81ms | 6.64ms | **1.74x** |
-| Lazy Load | 0.002ms | 0.107ms | **46x** |
-| Replace 100 rows | 0.042ms | 13.35ms | **318x** |
-| Append 100 rows | 0.056ms | 18.30ms | **329x** |
-| Random Access (100) | 0.002ms | 0.003ms | **27% faster** |
+| Full Load | 4.00ms | 6.56ms | **1.64x** |
+| Lazy Load | 0.002ms | 0.102ms | **51x** |
+| Replace 100 rows | 0.040ms | 13.74ms | **344x** |
+| Append 100 rows | 0.054ms | 18.26ms | **338x** |
+| Random Access (100) | 0.004ms | 0.002ms | ~equal |
 
 <details>
-<summary><b>Detailed Benchmarks</b></summary>
+<summary><b>Multi-Format Comparison</b></summary>
+
+**Core Operations (1M × 10, Float32, ~38.1MB):**
+
+| Operation | NumPack | NPY | Zarr | HDF5 | Parquet | Arrow |
+|-----------|--------:|----:|-----:|-----:|--------:|------:|
+| Save | 11.94ms | 6.48ms | 70.91ms | 58.07ms | 142.11ms | 16.85ms |
+| Full Load | 4.00ms | 6.56ms | 32.86ms | 53.99ms | 16.49ms | 12.39ms |
+| Lazy Load | 0.002ms | 0.102ms | 0.374ms | 0.082ms | N/A | N/A |
+| Replace 100 | 0.040ms | 13.74ms | 7.61ms | 0.29ms | 162.48ms | 26.93ms |
+| Append 100 | 0.054ms | 18.26ms | 9.05ms | 0.39ms | 173.45ms | 42.46ms |
+
+**Random Access Performance:**
+
+| Batch Size | NumPack | NPY (mmap) | Zarr | HDF5 | Parquet | Arrow |
+|------------|--------:|-----------:|-----:|-----:|--------:|------:|
+| 100 rows | 0.004ms | 0.002ms | 2.66ms | 0.66ms | 16.25ms | 12.43ms |
+| 1K rows | 0.025ms | 0.021ms | 2.86ms | 5.02ms | 16.48ms | 12.61ms |
+| 10K rows | 0.118ms | 0.112ms | 16.63ms | 505.71ms | 17.45ms | 12.81ms |
 
 **Batch Mode Performance (100 consecutive operations):**
 
 | Mode | Time | Speedup |
-|------|------|--------|
-| Normal | 417ms | - |
-| Batch Mode | 19.7ms | 21x |
-| Writable Batch | 3.8ms | 108x |
+|------|-----:|--------:|
+| Normal | 414ms | - |
+| Batch Mode | 20.1ms | **21x** |
+| Writable Batch | 4.5ms | **92x** |
 
-**Random/Sequential Access (mmap-optimized):**
-- Random access: Equal to NPY mmap for small/medium batches
-- Sequential access: Zero-copy optimized, equal to NPY mmap
-- 1280x faster than HDF5 for 10K random access
+**File Size:**
+
+| Format | Size | Compression |
+|--------|-----:|:-----------:|
+| NumPack | 38.15MB | - |
+| NPY | 38.15MB | - |
+| NPZ | 34.25MB | ✓ |
+| Zarr | 34.13MB | ✓ |
+| HDF5 | 38.18MB | - |
+| Parquet | 44.09MB | ✓ |
+| Arrow | 38.16MB | - |
 
 </details>
 
@@ -177,16 +202,16 @@ print(f"Files: {info['file_count']}, Compression: {info['compression_ratio']:.1%
 
 | Use Case | Recommendation |
 |----------|----------------|
-| Frequent modifications | ✅ **NumPack** (318x faster) |
+| Frequent modifications | ✅ **NumPack** (344x faster) |
 | ML/DL pipelines | ✅ **NumPack** (zero-copy random access, no full load) |
 | Vector similarity search | ✅ **NumPack** (SIMD) |
-| Write-once, read-many | ✅ **NumPack** (1.74x faster read) |
+| Write-once, read-many | ✅ **NumPack** (1.64x faster read) |
 | Extreme compression | ✅ **NumPack** `.npkg` (better ratio, streaming, high I/O) |
 | RAG/Embedding storage | ✅ **NumPack** (fast retrieval + SIMD search) |
 | Feature store | ✅ **NumPack** (real-time updates + low latency) |
 | Memory-constrained environments | ✅ **NumPack** (mmap + lazy loading) |
 | Multi-process data sharing | ✅ **NumPack** (zero-copy mmap) |
-| Incremental data pipelines | ✅ **NumPack** (329x faster append) |
+| Incremental data pipelines | ✅ **NumPack** (338x faster append) |
 | Real-time feature updates | ✅ **NumPack** (ms-level replace) |
 
 ## Documentation
