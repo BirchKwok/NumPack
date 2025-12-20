@@ -1,5 +1,5 @@
 """
-Test cases for vector_engine module: VectorSearch and StreamingVectorSearch classes
+Test cases for vector_engine module: VectorEngine and StreamingVectorEngine classes
 
 Covers:
 - All supported data types (float32, float64, int8, uint8)
@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 from numpack import NumPack
-from numpack.vector_engine import VectorSearch, StreamingVectorSearch
+from numpack.vector_engine import VectorEngine, StreamingVectorEngine
 
 # Import conftest utilities
 sys.path.insert(0, str(Path(__file__).parent))
@@ -33,14 +33,14 @@ def temp_dir():
 
 @pytest.fixture
 def vector_search():
-    """Create a VectorSearch instance fixture"""
-    return VectorSearch()
+    """Create a VectorEngine instance fixture"""
+    return VectorEngine()
 
 
 @pytest.fixture
 def streaming_search():
-    """Create a StreamingVectorSearch instance fixture"""
-    return StreamingVectorSearch()
+    """Create a StreamingVectorEngine instance fixture"""
+    return StreamingVectorEngine()
 
 
 # ============================================================================
@@ -100,11 +100,11 @@ METRIC_ALIASES = {
 
 
 # ============================================================================
-# VectorSearch class tests
+# VectorEngine class tests
 # ============================================================================
 
-class TestVectorSearchCapabilities:
-    """Test VectorSearch.capabilities() method"""
+class TestVectorEngineCapabilities:
+    """Test VectorEngine.capabilities() method"""
     
     def test_capabilities_returns_string(self, vector_search):
         """Test that capabilities() returns a non-empty string"""
@@ -119,8 +119,8 @@ class TestVectorSearchCapabilities:
         assert 'CPU' in caps or 'cpu' in caps.lower() or 'SIMD' in caps.upper() or len(caps) > 0
 
 
-class TestVectorSearchComputeMetric:
-    """Test VectorSearch.compute_metric() method"""
+class TestVectorEngineComputeMetric:
+    """Test VectorEngine.compute_metric() method"""
     
     @pytest.mark.parametrize("dtype", FLOAT_DTYPES)
     @pytest.mark.parametrize("metric", FLOAT_METRICS)
@@ -264,8 +264,8 @@ class TestVectorSearchComputeMetric:
         assert 0 <= score  # JS divergence is bounded
 
 
-class TestVectorSearchBatchCompute:
-    """Test VectorSearch.batch_compute() method"""
+class TestVectorEngineBatchCompute:
+    """Test VectorEngine.batch_compute() method"""
     
     @pytest.mark.parametrize("dtype", FLOAT_DTYPES)
     @pytest.mark.parametrize("metric", FLOAT_METRICS)
@@ -362,8 +362,8 @@ class TestVectorSearchBatchCompute:
             vector_search.batch_compute(query, candidates, 'cosine')
 
 
-class TestVectorSearchTopKSearch:
-    """Test VectorSearch.top_k_search() method"""
+class TestVectorEngineTopKSearch:
+    """Test VectorEngine.top_k_search() method"""
     
     @pytest.mark.parametrize("dtype", FLOAT_DTYPES)
     @pytest.mark.parametrize("metric", FLOAT_METRICS)
@@ -480,8 +480,8 @@ class TestVectorSearchTopKSearch:
         np.testing.assert_almost_equal(scores[0], 1.0, decimal=5)
 
 
-class TestVectorSearchMultiQueryTopK:
-    """Test VectorSearch.multi_query_top_k() method
+class TestVectorEngineMultiQueryTopK:
+    """Test VectorEngine.multi_query_top_k() method
     
     Note: These tests are skipped if multi_query_top_k is not available in the current build.
     """
@@ -563,8 +563,8 @@ class TestVectorSearchMultiQueryTopK:
         assert all_scores.shape == (k,)
 
 
-class TestVectorSearchSegmentedTopK:
-    """Test VectorSearch.segmented_top_k_search() method"""
+class TestVectorEngineSegmentedTopK:
+    """Test VectorEngine.segmented_top_k_search() method"""
     
     def test_segmented_top_k_search_basic(self, vector_search):
         """Test segmented_top_k_search basic functionality"""
@@ -611,11 +611,11 @@ class TestVectorSearchSegmentedTopK:
 
 
 # ============================================================================
-# StreamingVectorSearch class tests
+# StreamingVectorEngine class tests
 # ============================================================================
 
-class TestStreamingVectorSearchCapabilities:
-    """Test StreamingVectorSearch.capabilities() method"""
+class TestStreamingVectorEngineCapabilities:
+    """Test StreamingVectorEngine.capabilities() method"""
     
     def test_capabilities_returns_string(self, streaming_search):
         """Test that capabilities() returns a non-empty string"""
@@ -624,8 +624,8 @@ class TestStreamingVectorSearchCapabilities:
         assert len(caps) > 0
 
 
-class TestStreamingVectorSearchTopK:
-    """Test StreamingVectorSearch.streaming_top_k_from_file() method"""
+class TestStreamingVectorEngineTopK:
+    """Test StreamingVectorEngine.streaming_top_k_from_file() method"""
     
     @pytest.mark.parametrize("dtype", FLOAT_DTYPES)
     @pytest.mark.parametrize("metric", ['cosine', 'dot', 'l2'])
@@ -695,7 +695,7 @@ class TestStreamingVectorSearchTopK:
         )
         
         # In-memory search
-        vs = VectorSearch()
+        vs = VectorEngine()
         mem_indices, mem_scores = vs.top_k_search(query, candidates, 'cosine', k)
         
         # Results should match
@@ -750,8 +750,8 @@ class TestStreamingVectorSearchTopK:
             )
 
 
-class TestStreamingVectorSearchBatchCompute:
-    """Test StreamingVectorSearch.streaming_batch_compute() method"""
+class TestStreamingVectorEngineBatchCompute:
+    """Test StreamingVectorEngine.streaming_batch_compute() method"""
     
     @pytest.mark.parametrize("dtype", FLOAT_DTYPES)
     def test_streaming_batch_compute_basic(self, streaming_search, temp_dir, dtype):
@@ -792,14 +792,14 @@ class TestStreamingVectorSearchBatchCompute:
         )
         
         # In-memory batch compute
-        vs = VectorSearch()
+        vs = VectorEngine()
         mem_scores = vs.batch_compute(query, candidates, 'cosine')
         
         np.testing.assert_array_almost_equal(stream_scores, mem_scores, decimal=5)
 
 
-class TestStreamingVectorSearchMultiQuery:
-    """Test StreamingVectorSearch.streaming_multi_query_top_k() method
+class TestStreamingVectorEngineMultiQuery:
+    """Test StreamingVectorEngine.streaming_multi_query_top_k() method
     
     Note: These tests are skipped if streaming_multi_query_top_k is not available in the current build.
     """
@@ -899,8 +899,8 @@ class TestStreamingVectorSearchMultiQuery:
 # Edge cases and error handling tests
 # ============================================================================
 
-class TestVectorSearchEdgeCases:
-    """Test edge cases for VectorSearch"""
+class TestVectorEngineEdgeCases:
+    """Test edge cases for VectorEngine"""
     
     def test_zero_vector(self, vector_search):
         """Test with zero vectors"""
@@ -969,8 +969,8 @@ class TestVectorSearchEdgeCases:
         assert -1 <= score <= 1  # Cosine similarity is bounded
 
 
-class TestStreamingVectorSearchEdgeCases:
-    """Test edge cases for StreamingVectorSearch"""
+class TestStreamingVectorEngineEdgeCases:
+    """Test edge cases for StreamingVectorEngine"""
     
     def test_small_batch_size(self, streaming_search, temp_dir):
         """Test streaming search with very small batch size"""
