@@ -7,6 +7,8 @@ use crate::vector_engine::metrics::MetricType;
 use std::fmt;
 
 // BLAS support for matrix multiplication (Accelerate on macOS, OpenBLAS on Linux)
+// Windows uses matrixmultiply fallback, no blas_src needed
+#[cfg(not(target_os = "windows"))]
 extern crate blas_src;
 
 /// SimSIMD 计算错误
