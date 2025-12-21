@@ -873,7 +873,8 @@ impl SimdBackend {
     /// cosine(a, b) = dot(a, b) / (norm(a) * norm(b))
     #[inline]
     fn cdist_f32_cosine(&self, a: &[f32], b: &[f32], m: usize, n: usize, d: usize) -> Result<Vec<f32>> {
-        #[cfg(feature = "rayon")]
+        // On non-Windows with rayon: use BLAS-accelerated ndarray
+        #[cfg(all(feature = "rayon", not(target_os = "windows")))]
         {
             use rayon::prelude::*;
             use ndarray::ArrayView2;
@@ -901,7 +902,9 @@ impl SimdBackend {
             let b_view = ArrayView2::from_shape((n, d), b)
                 .map_err(|e| SimdError::Other(format!("Failed to create array view B: {}", e)))?;
             
+            #[allow(deprecated)]
             let dots = a_view.dot(&b_view.t());
+            #[allow(deprecated)]
             let mut result = dots.into_raw_vec();
             
             // Step 3: Normalize by precomputed norms in parallel
@@ -914,6 +917,28 @@ impl SimdBackend {
                         let b_norm = b_norms[j];
                         let denom = a_norm * b_norm;
                         *val = if denom > 1e-10 { *val / denom } else { 0.0 };
+                    }
+                });
+            
+            Ok(result)
+        }
+
+        // On Windows with rayon: use parallel SimSIMD (no BLAS)
+        #[cfg(all(feature = "rayon", target_os = "windows"))]
+        {
+            use rayon::prelude::*;
+            let mut result = vec![0.0f32; m * n];
+            
+            result
+                .par_chunks_mut(n)
+                .enumerate()
+                .for_each(|(i, row)| {
+                    let a_row = &a[i * d..(i + 1) * d];
+                    for (j, val) in row.iter_mut().enumerate() {
+                        let b_row = &b[j * d..(j + 1) * d];
+                        *val = simsimd::SpatialSimilarity::cosine(a_row, b_row)
+                            .map(|dist| (1.0 - dist) as f32)
+                            .unwrap_or(f32::NAN);
                     }
                 });
             
