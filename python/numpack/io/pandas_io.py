@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional, Union, TYPE_CHECKING
+from typing import Any, List, Optional, Union, TYPE_CHECKING
 
 import numpy as np
 
@@ -22,14 +22,15 @@ if TYPE_CHECKING:
 # Pandas DataFrame conversion
 # =============================================================================
 
-def from_pandas(
+def from_dataframe(
     df: "pd.DataFrame",
     output_path: Union[str, Path],
     array_name: str = 'data',
     drop_if_exists: bool = False,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
-) -> None:
-    """Import a pandas DataFrame into NumPack.
+    return_npk_obj: bool = False,
+) -> Any:
+    """Save a pandas DataFrame to NumPack format.
 
     Large DataFrames (by default > 1 GB) are streamed into NumPack in chunks.
 
@@ -38,13 +39,20 @@ def from_pandas(
     df : pandas.DataFrame
         Input DataFrame.
     output_path : str or Path
-        Output NumPack directory path.
+        Output NumPack directory path (.npk).
     array_name : str, optional
         Name of the output array.
     drop_if_exists : bool, optional
         If True, delete the output path first if it already exists.
     chunk_size : int, optional
         Chunk size in bytes used for streaming write.
+    return_npk_obj : bool, optional
+        If True, return an opened NumPack instance for output_path.
+
+    Returns
+    -------
+    NumPack or None
+        The NumPack instance if `return_npk_obj` is True, otherwise None.
 
     Raises
     ------
@@ -54,9 +62,9 @@ def from_pandas(
     Examples
     --------
     >>> import pandas as pd
-    >>> from numpack.io import from_pandas
+    >>> from numpack.io import from_dataframe
     >>> df = pd.DataFrame({'a': [1, 2, 3], 'b': [4, 5, 6]})
-    >>> from_pandas(df, 'output.npk')
+    >>> from_dataframe(df, 'output.npk')
     """
     _check_pandas()
 
@@ -74,18 +82,22 @@ def from_pandas(
     finally:
         npk.close()
 
+    if return_npk_obj:
+        return _open_numpack_for_read(output_path)
+    return None
 
-def to_pandas(
+
+def to_dataframe(
     input_path: Union[str, Path],
     array_name: Optional[str] = None,
     columns: Optional[List[str]] = None,
 ) -> "pd.DataFrame":
-    """Export a NumPack array as a pandas DataFrame.
+    """Load a NumPack array as a pandas DataFrame.
 
     Parameters
     ----------
     input_path : str or Path
-        Input NumPack directory path.
+        Input NumPack directory path (.npk).
     array_name : str, optional
         Name of the array to export. If None, the array is inferred only when
         the NumPack file contains exactly one array.
@@ -106,8 +118,8 @@ def to_pandas(
 
     Examples
     --------
-    >>> from numpack.io import to_pandas
-    >>> df = to_pandas('input.npk')
+    >>> from numpack.io import to_dataframe
+    >>> df = to_dataframe('input.npk')
     """
     pd = _check_pandas()
 
@@ -131,3 +143,30 @@ def to_pandas(
         return pd.DataFrame(arr, columns=columns)
     finally:
         npk.close()
+
+
+# =============================================================================
+# Legacy Aliases (deprecated, will be removed in 0.6.0)
+# =============================================================================
+
+from .utils import deprecated_alias
+
+from_pandas = deprecated_alias('from_dataframe', from_dataframe)
+from_pandas.__name__ = 'from_pandas'
+
+to_pandas = deprecated_alias('to_dataframe', to_dataframe)
+to_pandas.__name__ = 'to_pandas'
+
+
+# =============================================================================
+# Exports
+# =============================================================================
+
+__all__ = [
+    # Primary names (recommended)
+    'from_dataframe',
+    'to_dataframe',
+    # Legacy aliases (deprecated, will be removed in 0.6.0)
+    'from_pandas',
+    'to_pandas',
+]

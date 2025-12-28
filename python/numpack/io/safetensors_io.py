@@ -6,13 +6,14 @@ used for storing ML model weights.
 
 This module provides two types of conversions:
 
-1. **Memory-to-file / File-to-memory conversions**:
-   - `from_safetensors(tensors, npk_path)` - Save SafeTensors dict to .npk file
-   - `to_safetensors(npk_path, array_names)` - Load from .npk file and return dict
-
-2. **File-to-file conversions (streaming)**:
+1. **File conversions**:
    - `from_safetensors_file(st_path, npk_path)` - Convert .safetensors to .npk
    - `to_safetensors_file(npk_path, st_path)` - Convert .npk to .safetensors
+
+2. **Memory-to-file / File-to-memory conversions**:
+   - `from_tensor_dict(tensors, npk_path)` - Save tensor dict to .npk file
+   - `to_tensor_dict(npk_path, array_names)` - Load from .npk file and return dict
+   - `from_safetensors` / `to_safetensors` - Legacy aliases for above
 """
 
 from __future__ import annotations
@@ -49,40 +50,49 @@ def _check_safetensors():
 # Memory-to-File / File-to-Memory Conversions
 # =============================================================================
 
-def from_safetensors(
+def from_tensor_dict(
     tensors: Dict[str, Any],
     output_path: Union[str, Path],
     drop_if_exists: bool = False,
-) -> None:
-    """Save SafeTensors tensors (from memory) to a NumPack file.
+    return_npk_obj: bool = False,
+) -> Any:
+    """Save a tensor dict (from memory) to a NumPack file.
     
     Parameters
     ----------
     tensors : dict
         Dictionary of tensor name to tensor data. Can be:
-        - Dict from `safetensors.numpy.load_file()` (already numpy arrays)
+        - Dict of numpy arrays
+        - Dict from `safetensors.numpy.load_file()` (memory-mapped numpy arrays)
         - Dict from `safetensors.torch.load_file()` (torch tensors)
     output_path : str or Path
         Output NumPack directory path (.npk).
     drop_if_exists : bool, optional
         If True, delete the output path first if it already exists.
+    return_npk_obj : bool, optional
+        If True, return an opened NumPack instance for output_path.
+    
+    Returns
+    -------
+    NumPack or None
+        The NumPack instance if `return_npk_obj` is True, otherwise None.
     
     Raises
     ------
     DependencyError
-        If safetensors is not installed.
+        If safetensors is not installed (only when tensors contain torch tensors).
     
     Notes
     -----
-    SafeTensors numpy format already provides memory-mapped numpy arrays,
-    so conversion is typically zero-copy.
+    For numpy arrays and SafeTensors memory-mapped arrays, conversion is 
+    typically zero-copy.
     
     Examples
     --------
     >>> from safetensors.numpy import load_file
-    >>> from numpack.io import from_safetensors
+    >>> from numpack.io import from_tensor_dict
     >>> tensors = load_file('model.safetensors')
-    >>> from_safetensors(tensors, 'output.npk')
+    >>> from_tensor_dict(tensors, 'output.npk')
     """
     _check_safetensors()
     
@@ -108,12 +118,16 @@ def from_safetensors(
     finally:
         npk.close()
 
+    if return_npk_obj:
+        return _open_numpack_for_read(output_path)
+    return None
 
-def to_safetensors(
+
+def to_tensor_dict(
     input_path: Union[str, Path],
     array_names: Optional[List[str]] = None,
 ) -> Dict[str, np.ndarray]:
-    """Load arrays from a NumPack file and return as a dict (SafeTensors-compatible).
+    """Load arrays from a NumPack file and return as a dict.
     
     Parameters
     ----------
@@ -128,21 +142,15 @@ def to_safetensors(
         Dictionary mapping array names to NumPy arrays.
         This dict can be directly saved with `safetensors.numpy.save_file()`.
     
-    Raises
-    ------
-    DependencyError
-        If safetensors is not installed.
-    
     Notes
     -----
-    SafeTensors requires contiguous arrays. Non-contiguous arrays will
-    be converted to contiguous format.
+    All arrays are returned in contiguous format (C-order).
     
     Examples
     --------
     >>> from safetensors.numpy import save_file
-    >>> from numpack.io import to_safetensors
-    >>> arrays = to_safetensors('input.npk')
+    >>> from numpack.io import to_tensor_dict
+    >>> arrays = to_tensor_dict('input.npk')
     >>> save_file(arrays, 'model.safetensors')
     """
     _check_safetensors()
@@ -176,7 +184,8 @@ def from_safetensors_file(
     keys: Optional[List[str]] = None,
     drop_if_exists: bool = False,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
-) -> None:
+    return_npk_obj: bool = False,
+) -> Any:
     """Convert a SafeTensors file to NumPack format with streaming.
     
     Parameters
@@ -191,6 +200,8 @@ def from_safetensors_file(
         If True, delete the output path first if it already exists.
     chunk_size : int, optional
         Chunk size in bytes for streaming large tensors.
+    return_npk_obj : bool, optional
+        If True, return an opened NumPack instance for output_path.
     
     Raises
     ------
@@ -227,6 +238,10 @@ def from_safetensors_file(
             _save_array_streaming(npk, name, arr, chunk_size)
     finally:
         npk.close()
+
+    if return_npk_obj:
+        return _open_numpack_for_read(output_path)
+    return None
 
 
 def to_safetensors_file(
@@ -409,16 +424,32 @@ def _save_array_streaming(
 
 
 # =============================================================================
+# Aliases for backward compatibility (deprecated, will be removed in 0.6.0)
+# =============================================================================
+
+from .utils import deprecated_alias
+
+# Legacy aliases for memory conversions
+from_safetensors = deprecated_alias('from_tensor_dict', from_tensor_dict)
+from_safetensors.__name__ = 'from_safetensors'
+
+to_safetensors = deprecated_alias('to_tensor_dict', to_tensor_dict)
+to_safetensors.__name__ = 'to_safetensors'
+
+
+# =============================================================================
 # Exports
 # =============================================================================
 
 __all__ = [
-    # Memory conversions
-    'from_safetensors',
-    'to_safetensors',
-    # File conversions
+    # File conversions (.safetensors <-> .npk)
     'from_safetensors_file',
     'to_safetensors_file',
+    # Memory conversions (dict <-> .npk)
+    'from_tensor_dict',      # Primary name (recommended)
+    'to_tensor_dict',        # Primary name (recommended)
+    'from_safetensors',      # Legacy alias (deprecated, will be removed in 0.6.0)
+    'to_safetensors',        # Legacy alias (deprecated, will be removed in 0.6.0)
     # Utilities
     'get_safetensors_metadata',
     'iter_safetensors',

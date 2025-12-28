@@ -94,6 +94,21 @@ class TestNumpyConversion:
         with NumPack(npk_path) as npk:
             loaded = npk.load("test")
             np.testing.assert_array_almost_equal(arr, loaded)
+
+    def test_from_npy_small_return_npk_obj(self, tmp_path):
+        arr = np.random.rand(100, 10).astype(np.float64)
+        npy_path = tmp_path / "test.npy"
+        npk_path = tmp_path / "test.npk"
+
+        np.save(npy_path, arr)
+
+        npk = from_numpy(npy_path, npk_path, drop_if_exists=True, return_npk_obj=True)
+        assert isinstance(npk, NumPack)
+        try:
+            loaded = npk.load("test")
+            np.testing.assert_array_almost_equal(arr, loaded)
+        finally:
+            npk.close()
     
     def test_from_npy_with_name(self, tmp_path):
         """Test importing with an explicit array name."""
@@ -200,6 +215,22 @@ class TestCsvConversion:
         with NumPack(npk_path) as npk:
             loaded = npk.load("test")
             np.testing.assert_array_almost_equal(arr, loaded)
+
+    def test_from_csv_small_return_npk_obj(self, tmp_path):
+        arr = np.random.rand(100, 5).astype(np.float64)
+        csv_path = tmp_path / "test.csv"
+        npk_path = tmp_path / "test.npk"
+
+        np.savetxt(csv_path, arr, delimiter=',')
+
+        # pandas treats the first line as a header by default, so pass header=None
+        npk = from_csv(csv_path, npk_path, drop_if_exists=True, header=None, return_npk_obj=True)
+        assert isinstance(npk, NumPack)
+        try:
+            loaded = npk.load("test")
+            np.testing.assert_array_almost_equal(arr, loaded)
+        finally:
+            npk.close()
     
     def test_from_csv_with_delimiter(self, tmp_path):
         """Test importing with a custom delimiter."""
@@ -261,6 +292,21 @@ class TestTxtConversion:
         with NumPack(npk_path) as npk:
             loaded = npk.load("test")
             np.testing.assert_array_almost_equal(arr, loaded)
+
+    def test_from_txt_return_npk_obj(self, tmp_path):
+        arr = np.random.rand(50, 3).astype(np.float64)
+        txt_path = tmp_path / "test.txt"
+        npk_path = tmp_path / "test.npk"
+
+        np.savetxt(txt_path, arr, delimiter=' ')
+
+        npk = from_txt(txt_path, npk_path, drop_if_exists=True, return_npk_obj=True)
+        assert isinstance(npk, NumPack)
+        try:
+            loaded = npk.load("test")
+            np.testing.assert_array_almost_equal(arr, loaded)
+        finally:
+            npk.close()
     
     def test_to_txt(self, tmp_path):
         """Test exporting to a text file."""

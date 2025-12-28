@@ -31,8 +31,9 @@ def from_csv(
     skiprows: int = 0,
     max_rows: Optional[int] = None,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
+    return_npk_obj: bool = False,
     **kwargs,
-) -> None:
+) -> Any:
     """Import a CSV file into NumPack.
 
     For large files (by default > 1 GB), this function uses pandas chunked I/O
@@ -58,6 +59,8 @@ def from_csv(
         Maximum number of rows to read. If None, reads all rows.
     chunk_size : int, optional
         Target chunk size in bytes for streaming conversion.
+    return_npk_obj : bool, optional
+        If True, return an opened NumPack instance for output_path.
     **kwargs
         Additional keyword arguments forwarded to `pandas.read_csv` (preferred) or
         `numpy.loadtxt` (fallback).
@@ -131,6 +134,10 @@ def from_csv(
             npk.save({array_name: arr})
         finally:
             npk.close()
+
+    if return_npk_obj:
+        return _open_numpack_for_read(output_path)
+    return None
 
 
 def _from_csv_streaming(
@@ -328,8 +335,9 @@ def from_txt(
     delimiter: Optional[str] = None,
     skiprows: int = 0,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
+    return_npk_obj: bool = False,
     **kwargs,
-) -> None:
+) -> Any:
     """Import a whitespace-delimited text file into NumPack.
 
     This function is equivalent to `from_csv` but uses whitespace as the default
@@ -353,6 +361,8 @@ def from_txt(
         Number of rows to skip.
     chunk_size : int, optional
         Chunk size in bytes used for streaming conversion.
+    return_npk_obj : bool, optional
+        If True, return an opened NumPack instance for output_path.
     **kwargs
         Additional keyword arguments forwarded to the underlying reader.
 
@@ -369,7 +379,7 @@ def from_txt(
     >>> from_txt('data.txt', 'output.npk')
     """
     # Use from_csv but default delimiter is whitespace
-    from_csv(
+    return from_csv(
         input_path,
         output_path,
         array_name,
@@ -379,6 +389,7 @@ def from_txt(
         skiprows,
         None,
         chunk_size,
+        return_npk_obj=return_npk_obj,
         **kwargs,
     )
 

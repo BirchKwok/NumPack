@@ -21,14 +21,15 @@ from .utils import (
 # NumPy format conversion (npy/npz)
 # =============================================================================
 
-def from_numpy(
+def from_npy(
     input_path: Union[str, Path],
     output_path: Union[str, Path],
     array_name: Optional[str] = None,
     drop_if_exists: bool = False,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
-) -> None:
-    """Import a NumPy ``.npy``/``.npz`` file into NumPack.
+    return_npk_obj: bool = False,
+) -> Any:
+    """Convert a NumPy ``.npy``/``.npz`` file to NumPack format.
 
     For large files (by default > 1 GB), this function uses NumPy memory mapping
     and streams data into NumPack in chunks.
@@ -38,7 +39,7 @@ def from_numpy(
     input_path : str or Path
         Path to the input ``.npy`` or ``.npz`` file.
     output_path : str or Path
-        Output NumPack directory path.
+        Output NumPack directory path (.npk).
     array_name : str, optional
         Array name used for ``.npy`` input. If None, defaults to the file stem.
         For ``.npz`` input, this parameter is ignored and the keys inside the
@@ -47,6 +48,13 @@ def from_numpy(
         If True, delete the output path first if it already exists.
     chunk_size : int, optional
         Chunk size in bytes used for streaming write.
+    return_npk_obj : bool, optional
+        If True, return an opened NumPack instance for output_path.
+
+    Returns
+    -------
+    NumPack or None
+        The NumPack instance if `return_npk_obj` is True, otherwise None.
 
     Raises
     ------
@@ -57,9 +65,9 @@ def from_numpy(
 
     Examples
     --------
-    >>> from numpack.io import from_numpy
-    >>> from_numpy('data.npy', 'output.npk')
-    >>> from_numpy('data.npz', 'output.npk')
+    >>> from numpack.io import from_npy
+    >>> from_npy('data.npy', 'output.npk')
+    >>> from_npy('data.npz', 'output.npk')
     """
     input_path = Path(input_path)
 
@@ -74,6 +82,10 @@ def from_numpy(
         _from_npz(input_path, output_path, drop_if_exists, chunk_size)
     else:
         raise ValueError(f"Unsupported file format: {suffix}. Supported: .npy and .npz")
+
+    if return_npk_obj:
+        return _open_numpack_for_read(output_path)
+    return None
 
 
 def _from_npy(
@@ -166,14 +178,14 @@ def _from_npz(
         npk.close()
 
 
-def to_numpy(
+def to_npy(
     input_path: Union[str, Path],
     output_path: Union[str, Path],
     array_names: Optional[List[str]] = None,
     compressed: bool = True,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
 ) -> None:
-    """Export NumPack arrays to NumPy ``.npy``/``.npz``.
+    """Convert NumPack to NumPy ``.npy``/``.npz`` format.
 
     For large arrays (by default > 1 GB), this function streams reads from NumPack
     and writes the output in chunks.
@@ -181,7 +193,7 @@ def to_numpy(
     Parameters
     ----------
     input_path : str or Path
-        Input NumPack directory path.
+        Input NumPack directory path (.npk).
     output_path : str or Path
         Output ``.npy`` or ``.npz`` file path.
     array_names : list of str, optional
@@ -200,9 +212,9 @@ def to_numpy(
 
     Examples
     --------
-    >>> from numpack.io import to_numpy
-    >>> to_numpy('input.npk', 'output.npz')
-    >>> to_numpy('input.npk', 'single_array.npy', array_names=['my_array'])
+    >>> from numpack.io import to_npy
+    >>> to_npy('input.npk', 'output.npz')
+    >>> to_npy('input.npk', 'single_array.npy', array_names=['my_array'])
     """
     output_path = Path(output_path)
     suffix = output_path.suffix.lower()
@@ -324,3 +336,30 @@ def _to_npz(
         np.savez_compressed(str(output_path), **arrays)
     else:
         np.savez(str(output_path), **arrays)
+
+
+# =============================================================================
+# Legacy Aliases (deprecated, will be removed in 0.6.0)
+# =============================================================================
+
+from .utils import deprecated_alias
+
+from_numpy = deprecated_alias('from_npy', from_npy)
+from_numpy.__name__ = 'from_numpy'
+
+to_numpy = deprecated_alias('to_npy', to_npy)
+to_numpy.__name__ = 'to_numpy'
+
+
+# =============================================================================
+# Exports
+# =============================================================================
+
+__all__ = [
+    # Primary names (recommended)
+    'from_npy',
+    'to_npy',
+    # Legacy aliases (deprecated, will be removed in 0.6.0)
+    'from_numpy',
+    'to_numpy',
+]

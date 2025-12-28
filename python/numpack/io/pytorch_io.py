@@ -32,12 +32,13 @@ from .utils import (
 # Memory-to-File / File-to-Memory Conversions
 # =============================================================================
 
-def from_torch(
+def from_tensor(
     tensor: Any,
     output_path: Union[str, Path],
     array_name: Optional[str] = None,
     drop_if_exists: bool = False,
-) -> None:
+    return_npk_obj: bool = False,
+) -> Any:
     """Save a PyTorch tensor (from memory) to a NumPack file.
     
     Parameters
@@ -50,6 +51,13 @@ def from_torch(
         Name of the array in the NumPack file. Default is 'data'.
     drop_if_exists : bool, optional
         If True, delete the output path first if it already exists.
+    return_npk_obj : bool, optional
+        If True, return an opened NumPack instance for output_path.
+    
+    Returns
+    -------
+    NumPack or None
+        The NumPack instance if `return_npk_obj` is True, otherwise None.
     
     Raises
     ------
@@ -66,9 +74,9 @@ def from_torch(
     Examples
     --------
     >>> import torch
-    >>> from numpack.io import from_torch
+    >>> from numpack.io import from_tensor
     >>> tensor = torch.randn(1000, 128)
-    >>> from_torch(tensor, 'output.npk', array_name='embeddings')
+    >>> from_tensor(tensor, 'output.npk', array_name='embeddings')
     """
     torch = _check_torch()
     
@@ -89,8 +97,12 @@ def from_torch(
     finally:
         npk.close()
 
+    if return_npk_obj:
+        return _open_numpack_for_read(output_path)
+    return None
 
-def to_torch(
+
+def to_tensor(
     input_path: Union[str, Path],
     array_name: Optional[str] = None,
     device: Optional[str] = None,
@@ -124,9 +136,9 @@ def to_torch(
     
     Examples
     --------
-    >>> from numpack.io import to_torch
-    >>> tensor = to_torch('input.npk', array_name='embeddings')
-    >>> tensor = to_torch('input.npk', device='cuda')
+    >>> from numpack.io import to_tensor
+    >>> tensor = to_tensor('input.npk', array_name='embeddings')
+    >>> tensor = to_tensor('input.npk', device='cuda')
     """
     torch = _check_torch()
     
@@ -167,14 +179,15 @@ def to_torch(
 # File-to-File Conversions (Streaming)
 # =============================================================================
 
-def from_torch_file(
+def from_pt(
     input_path: Union[str, Path],
     output_path: Union[str, Path],
     key: Optional[str] = None,
     drop_if_exists: bool = False,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
-) -> None:
-    """Convert a PyTorch .pt/.pth file to NumPack format with streaming.
+    return_npk_obj: bool = False,
+) -> Any:
+    """Convert a PyTorch ``.pt``/``.pth`` file to NumPack format.
     
     Parameters
     ----------
@@ -188,6 +201,13 @@ def from_torch_file(
         If True, delete the output path first if it already exists.
     chunk_size : int, optional
         Chunk size in bytes for streaming large tensors.
+    return_npk_obj : bool, optional
+        If True, return an opened NumPack instance for output_path.
+    
+    Returns
+    -------
+    NumPack or None
+        The NumPack instance if `return_npk_obj` is True, otherwise None.
     
     Raises
     ------
@@ -200,9 +220,9 @@ def from_torch_file(
     
     Examples
     --------
-    >>> from numpack.io import from_torch_file
-    >>> from_torch_file('model.pt', 'output.npk')
-    >>> from_torch_file('data.pt', 'output.npk', key='features')
+    >>> from numpack.io import from_pt
+    >>> from_pt('model.pt', 'output.npk')
+    >>> from_pt('data.pt', 'output.npk', key='features')
     """
     torch = _check_torch()
     input_path = Path(input_path)
@@ -236,15 +256,19 @@ def from_torch_file(
     finally:
         npk.close()
 
+    if return_npk_obj:
+        return _open_numpack_for_read(output_path)
+    return None
 
-def to_torch_file(
+
+def to_pt(
     input_path: Union[str, Path],
     output_path: Union[str, Path],
     array_names: Optional[List[str]] = None,
     as_dict: bool = True,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
 ) -> None:
-    """Convert a NumPack file to PyTorch .pt format with streaming.
+    """Convert a NumPack file to PyTorch ``.pt`` format.
     
     Parameters
     ----------
@@ -266,8 +290,8 @@ def to_torch_file(
     
     Examples
     --------
-    >>> from numpack.io import to_torch_file
-    >>> to_torch_file('input.npk', 'output.pt')
+    >>> from numpack.io import to_pt
+    >>> to_pt('input.npk', 'output.pt')
     """
     torch = _check_torch()
     
@@ -332,9 +356,48 @@ def _save_tensor_streaming(
 
 
 # =============================================================================
-# Legacy Aliases (for backward compatibility)
+# Legacy Aliases (deprecated, will be removed in 0.6.0)
 # =============================================================================
 
-# These aliases maintain backward compatibility with existing code
-from_pytorch = from_torch_file
-to_pytorch = to_torch_file
+from .utils import deprecated_alias
+
+# Memory conversion aliases
+from_torch = deprecated_alias('from_tensor', from_tensor)
+from_torch.__name__ = 'from_torch'
+
+to_torch = deprecated_alias('to_tensor', to_tensor)
+to_torch.__name__ = 'to_torch'
+
+# File conversion aliases
+from_torch_file = deprecated_alias('from_pt', from_pt)
+from_torch_file.__name__ = 'from_torch_file'
+
+to_torch_file = deprecated_alias('to_pt', to_pt)
+to_torch_file.__name__ = 'to_torch_file'
+
+from_pytorch = deprecated_alias('from_pt', from_pt)
+from_pytorch.__name__ = 'from_pytorch'
+
+to_pytorch = deprecated_alias('to_pt', to_pt)
+to_pytorch.__name__ = 'to_pytorch'
+
+
+# =============================================================================
+# Exports
+# =============================================================================
+
+__all__ = [
+    # Primary names (recommended) - Memory conversions
+    'from_tensor',
+    'to_tensor',
+    # Primary names (recommended) - File conversions
+    'from_pt',
+    'to_pt',
+    # Legacy aliases (deprecated, will be removed in 0.6.0)
+    'from_torch',
+    'to_torch',
+    'from_torch_file',
+    'to_torch_file',
+    'from_pytorch',
+    'to_pytorch',
+]

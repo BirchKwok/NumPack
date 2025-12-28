@@ -10,7 +10,7 @@ None (NumPy is a core dependency of NumPack).
 
 ## Functions
 
-### `from_numpy(input_path, output_path, array_name=None, drop_if_exists=False, chunk_size=DEFAULT_CHUNK_SIZE)`
+### `from_npy(input_path, output_path, array_name=None, drop_if_exists=False, chunk_size=DEFAULT_CHUNK_SIZE)`
 
 Import a NumPy `.npy` or `.npz` file into NumPack.
 
@@ -37,19 +37,19 @@ Import a NumPy `.npy` or `.npz` file into NumPack.
 #### Example
 
 ```python
-from numpack.io import from_numpy
+from numpack.io import from_npy
 
 # Import .npy file
-from_numpy('data.npy', 'output.npk')
-from_numpy('data.npy', 'output.npk', array_name='features')
+from_npy('data.npy', 'output.npk')
+from_npy('data.npy', 'output.npk', array_name='features')
 
 # Import .npz file (all arrays)
-from_numpy('data.npz', 'output.npk')
+from_npy('data.npz', 'output.npk')
 ```
 
 ---
 
-### `to_numpy(input_path, output_path, array_names=None, single_file=None, chunk_size=DEFAULT_CHUNK_SIZE)`
+### `to_npy(input_path, output_path, array_names=None, single_file=None, chunk_size=DEFAULT_CHUNK_SIZE)`
 
 Export NumPack arrays to NumPy `.npy` or `.npz` format.
 
@@ -76,17 +76,26 @@ Export NumPack arrays to NumPy `.npy` or `.npz` format.
 #### Example
 
 ```python
-from numpack.io import to_numpy
+from numpack.io import to_npy
 
 # Export single array to .npy
-to_numpy('input.npk', 'output.npy', array_names=['features'])
+to_npy('input.npk', 'output.npy', array_names=['features'])
 
 # Export multiple arrays to .npz
-to_numpy('input.npk', 'output.npz')
+to_npy('input.npk', 'output.npz')
 
 # Export all arrays to .npz
-to_numpy('input.npk', 'all_data.npz')
+to_npy('input.npk', 'all_data.npz')
 ```
+
+---
+
+## Deprecated Aliases
+
+The following functions are deprecated and will be removed in version 0.6.0:
+
+- `from_numpy` -> Use `from_npy` instead
+- `to_numpy` -> Use `to_npy` instead
 
 ---
 
@@ -96,40 +105,40 @@ to_numpy('input.npk', 'all_data.npz')
 
 ```python
 import numpy as np
-from numpack.io import from_numpy, to_numpy
+from numpack.io import from_npy, to_npy
 
 # Save original NumPy data
 np.save('legacy_data.npy', large_array)
 
 # Convert to NumPack for better performance
-from_numpy('legacy_data.npy', 'data.npk')
+from_npy('legacy_data.npy', 'data.npk')
 
 # Work with NumPack...
 # Later, export back if needed
-to_numpy('data.npk', 'exported.npy')
+to_npy('data.npk', 'exported.npy')
 ```
 
 ### Batch Conversion
 
 ```python
 from pathlib import Path
-from numpack.io import from_numpy
+from numpack.io import from_npy
 
 # Convert all .npy files in a directory
 for npy_file in Path('npy_files').glob('*.npy'):
     output = f'npk_files/{npy_file.stem}.npk'
-    from_numpy(npy_file, output)
+    from_npy(npy_file, output)
 ```
 
 ### NPZ File Handling
 
 ```python
-from numpack.io import from_numpy, to_numpy
+from numpack.io import from_npy, to_npy
 
 # Import NPZ with multiple arrays
-from_numpy('model_weights.npz', 'model.npk')
+from_npy('model_weights.npz', 'model.npk')
 # Creates: model.npk with arrays named by NPZ keys
 
 # Export back to NPZ
-to_numpy('model.npk', 'exported_weights.npz')
+to_npy('model.npk', 'exported_weights.npz')
 ```

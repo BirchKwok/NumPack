@@ -1,3 +1,24 @@
+# =============================================================================
+# TODO [0.6.0]: Remove deprecated IO function aliases
+# The following legacy aliases in numpack.io are deprecated and should be
+# removed in version 0.6.0:
+#   - from_numpy, to_numpy        -> use from_npy, to_npy
+#   - from_pandas, to_pandas      -> use from_dataframe, to_dataframe
+#   - from_torch, to_torch        -> use from_tensor, to_tensor
+#   - from_torch_file, to_torch_file -> use from_pt, to_pt
+#   - from_pytorch, to_pytorch    -> use from_pt, to_pt
+#   - from_arrow, to_arrow        -> use from_table, to_table
+#   - from_safetensors, to_safetensors -> use from_tensor_dict, to_tensor_dict
+#
+# Files to update:
+#   - python/numpack/io/numpy_io.py
+#   - python/numpack/io/pandas_io.py
+#   - python/numpack/io/pytorch_io.py
+#   - python/numpack/io/feather_io.py
+#   - python/numpack/io/safetensors_io.py
+#   - python/numpack/io/__init__.py
+# =============================================================================
+
 import shutil
 
 import platform

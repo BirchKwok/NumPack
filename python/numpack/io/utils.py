@@ -1,10 +1,54 @@
 from __future__ import annotations
 
+import functools
 import os
+import warnings
 from pathlib import Path
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Callable, Optional, Tuple, Union
 
 import numpy as np
+
+
+# =============================================================================
+# Deprecation utilities
+# =============================================================================
+
+def deprecated_alias(
+    new_name: str,
+    new_func: Callable,
+    removal_version: str = "0.6.0",
+) -> Callable:
+    """Create a deprecated alias that warns users to use the new function name.
+
+    Parameters
+    ----------
+    new_name : str
+        Name of the new function to use instead.
+    new_func : Callable
+        The new function that this alias wraps.
+    removal_version : str, optional
+        Version in which the deprecated function will be removed.
+
+    Returns
+    -------
+    Callable
+        A wrapper function that emits a DeprecationWarning when called.
+
+    Examples
+    --------
+    >>> from_numpy = deprecated_alias('from_npy', from_npy)
+    >>> from_numpy.__name__ = 'from_numpy'
+    """
+    @functools.wraps(new_func)
+    def wrapper(*args, **kwargs):
+        warnings.warn(
+            f"{wrapper.__name__}() is deprecated and will be removed in "
+            f"version {removal_version}. Use {new_name}() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return new_func(*args, **kwargs)
+    return wrapper
 
 # Large file threshold: 1GB
 LARGE_FILE_THRESHOLD = 1 * 1024 * 1024 * 1024  # 1GB in bytes

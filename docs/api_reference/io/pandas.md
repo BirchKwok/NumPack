@@ -12,7 +12,7 @@ pip install pandas
 
 ## Functions
 
-### `from_pandas(df, output_path, array_name='data', drop_if_exists=False, chunk_size=DEFAULT_CHUNK_SIZE)`
+### `from_dataframe(df, output_path, array_name='data', drop_if_exists=False, chunk_size=DEFAULT_CHUNK_SIZE)`
 
 Import a Pandas DataFrame into NumPack.
 
@@ -46,7 +46,7 @@ Import a Pandas DataFrame into NumPack.
 
 ```python
 import pandas as pd
-from numpack.io import from_pandas
+from numpack.io import from_dataframe
 
 df = pd.DataFrame({
     'feature1': [1.0, 2.0, 3.0],
@@ -54,12 +54,12 @@ df = pd.DataFrame({
     'label': [0, 1, 0]
 })
 
-from_pandas(df, 'data.npk', array_name='dataset')
+from_dataframe(df, 'data.npk', array_name='dataset')
 ```
 
 ---
 
-### `to_pandas(input_path, array_name=None, columns=None)`
+### `to_dataframe(input_path, array_name=None, columns=None)`
 
 Export a NumPack array as a Pandas DataFrame.
 
@@ -89,15 +89,24 @@ Export a NumPack array as a Pandas DataFrame.
 #### Example
 
 ```python
-from numpack.io import to_pandas
+from numpack.io import to_dataframe
 
 # Load as DataFrame
-df = to_pandas('data.npk', array_name='dataset')
+df = to_dataframe('data.npk', array_name='dataset')
 print(df.head())
 
 # With custom column names
-df = to_pandas('data.npk', columns=['feature1', 'feature2', 'label'])
+df = to_dataframe('data.npk', columns=['feature1', 'feature2', 'label'])
 ```
+
+---
+
+## Deprecated Aliases
+
+The following functions are deprecated and will be removed in version 0.6.0:
+
+- `from_pandas` -> Use `from_dataframe` instead
+- `to_pandas` -> Use `to_dataframe` instead
 
 ---
 
@@ -107,14 +116,14 @@ df = to_pandas('data.npk', columns=['feature1', 'feature2', 'label'])
 
 ```python
 import pandas as pd
-from numpack.io import from_pandas, to_pandas
+from numpack.io import from_dataframe, to_dataframe
 from numpack import NumPack
 
 # Start with a DataFrame
 df = pd.read_csv('raw_data.csv')
 
 # Convert to NumPack for efficient processing
-from_pandas(df, 'data.npk')
+from_dataframe(df, 'data.npk')
 
 # Use NumPack's efficient operations
 with NumPack('data.npk') as npk:
@@ -125,17 +134,17 @@ with NumPack('data.npk') as npk:
         npk.save({'data': data})
 
 # Convert back to DataFrame for analysis
-result_df = to_pandas('data.npk', columns=df.columns.tolist())
+result_df = to_dataframe('data.npk', columns=df.columns.tolist())
 print(result_df.describe())
 ```
 
 ### Selective Column Export
 
 ```python
-from numpack.io import to_pandas
+from numpack.io import to_dataframe
 
 # Export with meaningful column names
-df = to_pandas(
+df = to_dataframe(
     'model_features.npk',
     array_name='features',
     columns=['age', 'income', 'score', 'category']
@@ -150,7 +159,7 @@ print(df.groupby('category').mean())
 ```python
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from numpack.io import from_pandas, to_pandas
+from numpack.io import from_dataframe, to_dataframe
 from numpack import NumPack
 
 # Load and split data
@@ -158,9 +167,9 @@ df = pd.read_csv('dataset.csv')
 train_df, test_df = train_test_split(df, test_size=0.2)
 
 # Store efficiently
-from_pandas(train_df, 'train.npk', array_name='data')
-from_pandas(test_df, 'test.npk', array_name='data')
+from_dataframe(train_df, 'train.npk', array_name='data')
+from_dataframe(test_df, 'test.npk', array_name='data')
 
 # Later, load for training
-train_data = to_pandas('train.npk')
+train_data = to_dataframe('train.npk')
 ```

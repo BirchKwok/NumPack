@@ -6,39 +6,43 @@ The `numpack.io` module provides format conversion utilities for seamless integr
 
 ```python
 from numpack.io import (
-    # PyTorch
-    from_torch, to_torch,
-    from_torch_file, to_torch_file,
+    # PyTorch (memory conversion)
+    from_tensor, to_tensor,
+    # PyTorch (file conversion)
+    from_pt, to_pt,
     
-    # Arrow/Feather
-    from_arrow, to_arrow,
-    from_feather_file, to_feather_file,
+    # Arrow/Feather (memory conversion)
+    from_table, to_table,
+    # Feather (file conversion)
+    from_feather, to_feather,
     
-    # Parquet
+    # Parquet (memory conversion)
     from_parquet_table, to_parquet_table,
-    from_parquet_file, to_parquet_file,
+    # Parquet (file conversion)
+    from_parquet, to_parquet,
     
-    # SafeTensors
-    from_safetensors, to_safetensors,
+    # SafeTensors (memory conversion)
+    from_tensor_dict, to_tensor_dict,
+    # SafeTensors (file conversion)
     from_safetensors_file, to_safetensors_file,
     
-    # NumPy
-    from_numpy, to_numpy,
+    # NumPy (file conversion)
+    from_npy, to_npy,
     
-    # HDF5
+    # HDF5 (file conversion)
     from_hdf5, to_hdf5,
     
-    # Zarr
+    # Zarr (file conversion)
     from_zarr, to_zarr,
     
-    # CSV/TXT
+    # CSV/TXT (file conversion)
     from_csv, to_csv,
     from_txt, to_txt,
     
-    # Pandas
-    from_pandas, to_pandas,
+    # Pandas (memory conversion)
+    from_dataframe, to_dataframe,
     
-    # S3
+    # S3 (file conversion)
     from_s3, to_s3,
     
     # Zero-copy utilities
@@ -52,12 +56,14 @@ from numpack.io import (
 
 All conversion functions follow a consistent naming pattern:
 
-| Pattern | Description | Example |
-|---------|-------------|---------|
-| `from_xx(data, npk_path)` | Memory object → .npk file | `from_torch(tensor, 'out.npk')` |
-| `to_xx(npk_path)` | .npk file → Memory object | `to_torch('in.npk')` |
-| `from_xx_file(xx_path, npk_path)` | .xx file → .npk file | `from_torch_file('model.pt', 'out.npk')` |
-| `to_xx_file(npk_path, xx_path)` | .npk file → .xx file | `to_torch_file('in.npk', 'model.pt')` |
+| Type | Pattern | Description | Example |
+|------|---------|-------------|---------|
+| File | `from_ext(file_path, npk_path)` | .ext file -> .npk file | `from_pt('model.pt', 'out.npk')` |
+| File | `to_ext(npk_path, file_path)` | .npk file -> .ext file | `to_pt('in.npk', 'model.pt')` |
+| Memory | `from_object(data, npk_path)` | Memory object -> .npk file | `from_tensor(tensor, 'out.npk')` |
+| Memory | `to_object(npk_path)` | .npk file -> Memory object | `to_tensor('in.npk')` |
+
+> **Note:** Some legacy function names (`from_torch`, `to_torch`, `from_arrow`, `to_arrow`, `from_pandas`, `to_pandas`, `from_numpy`, `to_numpy`, `from_safetensors`, `to_safetensors`) are deprecated and will be removed in version 0.6.0.
 
 ## Streaming vs Memory
 

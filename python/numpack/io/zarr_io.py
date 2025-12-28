@@ -26,7 +26,8 @@ def from_zarr(
     group: str = '/',
     drop_if_exists: bool = False,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
-) -> None:
+    return_npk_obj: bool = False,
+) -> Any:
     """Import arrays from a Zarr store into NumPack.
 
     Zarr stores are chunked natively. Large arrays are imported in batches and
@@ -46,6 +47,8 @@ def from_zarr(
         If True, delete the output path first if it already exists.
     chunk_size : int, optional
         Chunk size in bytes used for streaming conversion.
+    return_npk_obj : bool, optional
+        If True, return an opened NumPack instance for output_path.
 
     Raises
     ------
@@ -85,6 +88,10 @@ def from_zarr(
                 npk.save({name: arr[...]})
     finally:
         npk.close()
+
+    if return_npk_obj:
+        return _open_numpack_for_read(output_path)
+    return None
 
 
 def _from_zarr_array_streaming(

@@ -12,7 +12,7 @@ pip install safetensors
 
 ## Memory Functions
 
-### `from_safetensors(tensors, output_path, drop_if_exists=False)`
+### `from_tensor_dict(tensors, output_path, drop_if_exists=False)`
 
 Save a dictionary of tensors to NumPack.
 
@@ -32,18 +32,18 @@ Save a dictionary of tensors to NumPack.
 
 ```python
 import numpy as np
-from numpack.io import from_safetensors
+from numpack.io import from_tensor_dict
 
 tensors = {
     'weight': np.random.rand(768, 768).astype(np.float32),
     'bias': np.random.rand(768).astype(np.float32)
 }
-from_safetensors(tensors, 'model.npk')
+from_tensor_dict(tensors, 'model.npk')
 ```
 
 ---
 
-### `to_safetensors(input_path, array_names=None)`
+### `to_tensor_dict(input_path, array_names=None)`
 
 Load NumPack arrays as a dictionary of tensors.
 
@@ -61,11 +61,20 @@ Load NumPack arrays as a dictionary of tensors.
 #### Example
 
 ```python
-from numpack.io import to_safetensors
+from numpack.io import to_tensor_dict
 
-tensors = to_safetensors('model.npk')
+tensors = to_tensor_dict('model.npk')
 print(tensors.keys())
 ```
+
+---
+
+## Deprecated Aliases
+
+The following functions are deprecated and will be removed in version 0.6.0:
+
+- `from_safetensors` -> Use `from_tensor_dict` instead (memory conversion)
+- `to_safetensors` -> Use `to_tensor_dict` instead (memory conversion)
 
 ---
 

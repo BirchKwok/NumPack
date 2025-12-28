@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 from .utils import DEFAULT_CHUNK_SIZE, _check_s3fs, _safe_unlink
 
@@ -17,8 +17,9 @@ def from_s3(
     format: str = 'auto',
     drop_if_exists: bool = False,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
+    return_npk_obj: bool = False,
     **s3_kwargs,
-) -> None:
+) -> Any:
     """Download an object from S3 and import it into NumPack.
 
     Supported formats include NumPy (``.npy``/``.npz``), CSV/TXT, Parquet,
@@ -36,6 +37,8 @@ def from_s3(
         If True, delete the output path first if it already exists.
     chunk_size : int, optional
         Chunk size in bytes used for streaming conversion.
+    return_npk_obj : bool, optional
+        If True, return the opened NumPack instance.
     **s3_kwargs
         Keyword arguments forwarded to ``s3fs.S3FileSystem`` (for example,
         ``anon=True`` for public buckets).
@@ -101,7 +104,13 @@ def from_s3(
         if handler is None:
             raise ValueError(f"Unsupported format: {format}")
 
-        handler(tmp_path, output_path, drop_if_exists=drop_if_exists, chunk_size=chunk_size)
+        return handler(
+            tmp_path,
+            output_path,
+            drop_if_exists=drop_if_exists,
+            chunk_size=chunk_size,
+            return_npk_obj=return_npk_obj,
+        )
     finally:
         # Clean up temporary file
         _safe_unlink(tmp_path)

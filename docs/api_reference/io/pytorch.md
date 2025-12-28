@@ -12,7 +12,7 @@ pip install torch
 
 ## Memory Functions
 
-### `from_torch(tensor, output_path, array_name=None, drop_if_exists=False)`
+### `from_tensor(tensor, output_path, array_name=None, drop_if_exists=False)`
 
 Save a PyTorch tensor to a NumPack file.
 
@@ -39,15 +39,15 @@ Save a PyTorch tensor to a NumPack file.
 
 ```python
 import torch
-from numpack.io import from_torch
+from numpack.io import from_tensor
 
 tensor = torch.randn(1000, 128)
-from_torch(tensor, 'output.npk', array_name='embeddings')
+from_tensor(tensor, 'output.npk', array_name='embeddings')
 ```
 
 ---
 
-### `to_torch(input_path, array_name=None, device=None)`
+### `to_tensor(input_path, array_name=None, device=None)`
 
 Load a NumPack array as a PyTorch tensor.
 
@@ -73,17 +73,17 @@ Load a NumPack array as a PyTorch tensor.
 #### Example
 
 ```python
-from numpack.io import to_torch
+from numpack.io import to_tensor
 
-tensor = to_torch('input.npk', array_name='embeddings')
-tensor = to_torch('input.npk', device='cuda:0')
+tensor = to_tensor('input.npk', array_name='embeddings')
+tensor = to_tensor('input.npk', device='cuda:0')
 ```
 
 ---
 
 ## File Functions (Streaming)
 
-### `from_torch_file(input_path, output_path, key=None, drop_if_exists=False, chunk_size=DEFAULT_CHUNK_SIZE)`
+### `from_pt(input_path, output_path, key=None, drop_if_exists=False, chunk_size=DEFAULT_CHUNK_SIZE)`
 
 Convert a `.pt` file to NumPack (streaming for large files).
 
@@ -104,18 +104,18 @@ Convert a `.pt` file to NumPack (streaming for large files).
 #### Example
 
 ```python
-from numpack.io import from_torch_file
+from numpack.io import from_pt
 
 # Convert entire file
-from_torch_file('model.pt', 'output.npk')
+from_pt('model.pt', 'output.npk')
 
 # Convert specific key from state dict
-from_torch_file('model.pt', 'output.npk', key='encoder.weight')
+from_pt('model.pt', 'output.npk', key='encoder.weight')
 ```
 
 ---
 
-### `to_torch_file(input_path, output_path, array_names=None, chunk_size=DEFAULT_CHUNK_SIZE)`
+### `to_pt(input_path, output_path, array_names=None, chunk_size=DEFAULT_CHUNK_SIZE)`
 
 Export NumPack arrays to a `.pt` file.
 
@@ -135,23 +135,27 @@ Export NumPack arrays to a `.pt` file.
 #### Example
 
 ```python
-from numpack.io import to_torch_file
+from numpack.io import to_pt
 
 # Export all arrays
-to_torch_file('input.npk', 'output.pt')
+to_pt('input.npk', 'output.pt')
 
 # Export specific arrays
-to_torch_file('input.npk', 'output.pt', array_names=['weights', 'biases'])
+to_pt('input.npk', 'output.pt', array_names=['weights', 'biases'])
 ```
 
 ---
 
-## Legacy Aliases
+## Deprecated Aliases
 
-```python
-from_pytorch = from_torch_file  # Alias for compatibility
-to_pytorch = to_torch_file      # Alias for compatibility
-```
+The following functions are deprecated and will be removed in version 0.6.0:
+
+- `from_torch` -> Use `from_tensor` instead (memory conversion)
+- `to_torch` -> Use `to_tensor` instead (memory conversion)
+- `from_torch_file` -> Use `from_pt` instead (file conversion)
+- `to_torch_file` -> Use `to_pt` instead (file conversion)
+- `from_pytorch` -> Use `from_pt` instead (file conversion)
+- `to_pytorch` -> Use `to_pt` instead (file conversion)
 
 ---
 
@@ -161,29 +165,29 @@ to_pytorch = to_torch_file      # Alias for compatibility
 
 ```python
 import torch
-from numpack.io import from_torch
+from numpack.io import from_tensor
 
 model = MyModel()
 for name, param in model.named_parameters():
-    from_torch(param.data, 'model.npk', array_name=name)
+    from_tensor(param.data, 'model.npk', array_name=name)
 ```
 
 ### Load to GPU
 
 ```python
-from numpack.io import to_torch
+from numpack.io import to_tensor
 
-weights = to_torch('model.npk', array_name='encoder.weight', device='cuda:0')
+weights = to_tensor('model.npk', array_name='encoder.weight', device='cuda:0')
 ```
 
 ### Batch Conversion
 
 ```python
-from numpack.io import from_torch_file, to_torch_file
+from numpack.io import from_pt, to_pt
 
 # Convert PyTorch checkpoint to NumPack
-from_torch_file('checkpoint.pt', 'model.npk')
+from_pt('checkpoint.pt', 'model.npk')
 
 # Later, export back to PyTorch
-to_torch_file('model.npk', 'restored.pt')
+to_pt('model.npk', 'restored.pt')
 ```

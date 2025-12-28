@@ -27,7 +27,8 @@ def from_hdf5(
     group: str = '/',
     drop_if_exists: bool = False,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
-) -> None:
+    return_npk_obj: bool = False,
+) -> Any:
     """Import datasets from an HDF5 file into NumPack.
 
     Large datasets (by default > 1 GB) are imported using batched reads and
@@ -48,6 +49,8 @@ def from_hdf5(
         If True, delete the output path first if it already exists.
     chunk_size : int, optional
         Chunk size in bytes used for streaming conversion.
+    return_npk_obj : bool, optional
+        If True, return an opened NumPack instance for output_path.
 
     Raises
     ------
@@ -96,6 +99,10 @@ def from_hdf5(
                     npk.save({name: arr})
     finally:
         npk.close()
+
+    if return_npk_obj:
+        return _open_numpack_for_read(output_path)
+    return None
 
 
 def _from_hdf5_dataset_streaming(

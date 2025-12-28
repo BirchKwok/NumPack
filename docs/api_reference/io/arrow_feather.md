@@ -12,7 +12,7 @@ pip install pyarrow
 
 ## Memory Functions (Zero-Copy)
 
-### `from_arrow(table_or_array, output_path, array_name=None, drop_if_exists=False)`
+### `from_table(table_or_array, output_path, array_name=None, drop_if_exists=False)`
 
 Save a PyArrow Table or Array to NumPack.
 
@@ -39,22 +39,22 @@ Save a PyArrow Table or Array to NumPack.
 
 ```python
 import pyarrow as pa
-from numpack.io import from_arrow
+from numpack.io import from_table
 
 # From Table
 table = pa.table({'col1': [1, 2, 3], 'col2': [4, 5, 6]})
-from_arrow(table, 'output.npk')
+from_table(table, 'output.npk')
 
 # From Array
 arr = pa.array([1.0, 2.0, 3.0, 4.0])
-from_arrow(arr, 'output.npk', array_name='values')
+from_table(arr, 'output.npk', array_name='values')
 ```
 
 ---
 
-### `to_arrow(input_path, array_name=None)`
+### `to_table(input_path, array_name=None)`
 
-Load a NumPack array as a PyArrow Array.
+Load a NumPack array as a PyArrow Table.
 
 #### Parameters
 
@@ -65,7 +65,7 @@ Load a NumPack array as a PyArrow Array.
 
 #### Returns
 
-- `pa.Array`: The loaded PyArrow array
+- `pa.Table`: The loaded PyArrow table
 
 #### Raises
 
@@ -77,17 +77,17 @@ Load a NumPack array as a PyArrow Array.
 #### Example
 
 ```python
-from numpack.io import to_arrow
+from numpack.io import to_table
 
-arrow_arr = to_arrow('input.npk', array_name='values')
-print(arrow_arr.type)
+arrow_table = to_table('input.npk', array_name='values')
+print(arrow_table.column_names)
 ```
 
 ---
 
 ## File Functions (Streaming)
 
-### `from_feather_file(input_path, output_path, columns=None, drop_if_exists=False, chunk_size=DEFAULT_CHUNK_SIZE)`
+### `from_feather(input_path, output_path, columns=None, drop_if_exists=False, chunk_size=DEFAULT_CHUNK_SIZE)`
 
 Convert a Feather file to NumPack.
 
@@ -108,18 +108,18 @@ Convert a Feather file to NumPack.
 #### Example
 
 ```python
-from numpack.io import from_feather_file
+from numpack.io import from_feather
 
 # Import all columns
-from_feather_file('data.feather', 'output.npk')
+from_feather('data.feather', 'output.npk')
 
 # Import specific columns
-from_feather_file('data.feather', 'output.npk', columns=['col1', 'col2'])
+from_feather('data.feather', 'output.npk', columns=['col1', 'col2'])
 ```
 
 ---
 
-### `to_feather_file(input_path, output_path, array_name=None, chunk_size=DEFAULT_CHUNK_SIZE)`
+### `to_feather(input_path, output_path, array_name=None, chunk_size=DEFAULT_CHUNK_SIZE)`
 
 Export NumPack arrays to a Feather file.
 
@@ -139,19 +139,24 @@ Export NumPack arrays to a Feather file.
 #### Example
 
 ```python
-from numpack.io import to_feather_file
+from numpack.io import to_feather
 
-to_feather_file('input.npk', 'output.feather')
+to_feather('input.npk', 'output.feather')
 ```
 
 ---
 
-## Legacy Aliases
+## Deprecated Aliases
 
-```python
-from_feather = from_feather_file  # Alias
-to_feather = to_feather_file      # Alias
-```
+The following functions are deprecated and will be removed in version 0.6.0:
+
+- `from_arrow` -> Use `from_table` instead (memory conversion)
+- `to_arrow` -> Use `to_table` instead (memory conversion)
+
+Aliases for clarity (not deprecated):
+
+- `from_feather_file` = `from_feather`
+- `to_feather_file` = `to_feather`
 
 ---
 
@@ -161,7 +166,7 @@ to_feather = to_feather_file      # Alias
 
 ```python
 import pyarrow as pa
-from numpack.io import from_arrow, to_arrow
+from numpack.io import from_table, to_table
 
 # Create Arrow table
 table = pa.table({
@@ -170,20 +175,20 @@ table = pa.table({
 })
 
 # Save to NumPack (uses zero-copy where possible)
-from_arrow(table, 'data.npk')
+from_table(table, 'data.npk')
 
 # Load back
-features = to_arrow('data.npk', array_name='features')
+features_table = to_table('data.npk', array_name='features')
 ```
 
 ### Feather File Conversion
 
 ```python
-from numpack.io import from_feather_file, to_feather_file
+from numpack.io import from_feather, to_feather
 
 # Import from Feather
-from_feather_file('dataset.feather', 'dataset.npk')
+from_feather('dataset.feather', 'dataset.npk')
 
 # Export back to Feather
-to_feather_file('dataset.npk', 'exported.feather')
+to_feather('dataset.npk', 'exported.feather')
 ```

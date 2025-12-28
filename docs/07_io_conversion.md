@@ -42,38 +42,38 @@ to_xx_file(npk_path, xx_path)    # .npk file → .xx file
 
 ## PyTorch Conversion
 
-### Memory ↔ .npk
+### Memory <-> .npk
 
 ```python
-from numpack.io import from_torch, to_torch
+from numpack.io import from_tensor, to_tensor
 import torch
 
 # Save PyTorch tensor to .npk
 tensor = torch.randn(1000, 128)
-from_torch(tensor, 'output.npk', array_name='embeddings')
+from_tensor(tensor, 'output.npk', array_name='embeddings')
 
 # Load from .npk as PyTorch tensor
-tensor = to_torch('input.npk', array_name='embeddings')
-tensor = to_torch('input.npk', array_name='embeddings', device='cuda')  # GPU
+tensor = to_tensor('input.npk', array_name='embeddings')
+tensor = to_tensor('input.npk', array_name='embeddings', device='cuda')  # GPU
 ```
 
-### File ↔ .npk (Streaming)
+### File <-> .npk (Streaming)
 
 ```python
-from numpack.io import from_torch_file, to_torch_file
+from numpack.io import from_pt, to_pt
 
 # Convert .pt file to .npk (streaming for large files)
-from_torch_file('model.pt', 'output.npk')
-from_torch_file('model.pt', 'output.npk', key='weights')  # specific key
+from_pt('model.pt', 'output.npk')
+from_pt('model.pt', 'output.npk', key='weights')  # specific key
 
 # Convert .npk to .pt file
-to_torch_file('input.npk', 'output.pt')
-to_torch_file('input.npk', 'output.pt', array_names=['layer1', 'layer2'])
+to_pt('input.npk', 'output.pt')
+to_pt('input.npk', 'output.pt', array_names=['layer1', 'layer2'])
 ```
 
 ### API Reference
 
-#### `from_torch(tensor, output_path, array_name=None, drop_if_exists=False)`
+#### `from_tensor(tensor, output_path, array_name=None, drop_if_exists=False)`
 
 Save a PyTorch tensor to a NumPack file.
 
@@ -83,7 +83,7 @@ Save a PyTorch tensor to a NumPack file.
 - `array_name`: Name in NumPack file (default: 'data')
 - `drop_if_exists`: Overwrite if exists
 
-#### `to_torch(input_path, array_name=None, device=None, dtype=None)`
+#### `to_tensor(input_path, array_name=None, device=None, dtype=None)`
 
 Load from NumPack and return as PyTorch tensor.
 
@@ -95,40 +95,42 @@ Load from NumPack and return as PyTorch tensor.
 
 **Returns:** `torch.Tensor`
 
+> **Note:** `from_torch`, `to_torch`, `from_torch_file`, `to_torch_file`, `from_pytorch`, `to_pytorch` are deprecated aliases and will be removed in version 0.6.0.
+
 ---
 
 ## PyArrow/Feather Conversion
 
-### Memory ↔ .npk
+### Memory <-> .npk
 
 ```python
-from numpack.io import from_arrow, to_arrow
+from numpack.io import from_table, to_table
 import pyarrow as pa
 
 # Save PyArrow Table to .npk
 table = pa.table({'a': [1, 2, 3], 'b': [4.0, 5.0, 6.0]})
-from_arrow(table, 'output.npk', array_name='my_table')
+from_table(table, 'output.npk', array_name='my_table')
 
 # Load from .npk as PyArrow Table
-table = to_arrow('input.npk', array_name='my_table')
+table = to_table('input.npk', array_name='my_table')
 print(table.column_names)  # ['col0', 'col1', ...]
 ```
 
-### File ↔ .npk
+### File <-> .npk
 
 ```python
-from numpack.io import from_feather_file, to_feather_file
+from numpack.io import from_feather, to_feather
 
 # Convert .feather to .npk
-from_feather_file('data.feather', 'output.npk')
+from_feather('data.feather', 'output.npk')
 
 # Convert .npk to .feather
-to_feather_file('input.npk', 'output.feather', compression='zstd')
+to_feather('input.npk', 'output.feather', compression='zstd')
 ```
 
 ### API Reference
 
-#### `from_arrow(table, output_path, array_name=None, columns=None, drop_if_exists=False)`
+#### `from_table(table, output_path, array_name=None, columns=None, drop_if_exists=False)`
 
 Save a PyArrow Table to a NumPack file.
 
@@ -139,7 +141,7 @@ Save a PyArrow Table to a NumPack file.
 - `columns`: Specific columns to save
 - `drop_if_exists`: Overwrite if exists
 
-#### `to_arrow(input_path, array_name=None, column_names=None)`
+#### `to_table(input_path, array_name=None, column_names=None)`
 
 Load from NumPack and return as PyArrow Table.
 
@@ -149,6 +151,8 @@ Load from NumPack and return as PyArrow Table.
 - `column_names`: Names for table columns
 
 **Returns:** `pyarrow.Table`
+
+> **Note:** `from_arrow` and `to_arrow` are deprecated aliases and will be removed in version 0.6.0.
 
 ---
 
@@ -211,20 +215,22 @@ Convert a NumPack file to Parquet format.
 
 SafeTensors is a safe, fast tensor format by Hugging Face, commonly used for ML model weights.
 
-### Memory ↔ .npk
+### Memory <-> .npk
 
 ```python
-from numpack.io import from_safetensors, to_safetensors
+from numpack.io import from_tensor_dict, to_tensor_dict
 from safetensors.numpy import load_file, save_file
 
 # Load SafeTensors into memory, save to .npk
 tensors = load_file('model.safetensors')
-from_safetensors(tensors, 'output.npk')
+from_tensor_dict(tensors, 'output.npk')
 
 # Load from .npk as dict (SafeTensors-compatible)
-arrays = to_safetensors('input.npk')
+arrays = to_tensor_dict('input.npk')
 save_file(arrays, 'output.safetensors')
 ```
+
+> **Note:** `from_safetensors` and `to_safetensors` are deprecated aliases and will be removed in version 0.6.0.
 
 ### File ↔ .npk
 
@@ -263,14 +269,16 @@ for name, tensor in iter_safetensors('model.safetensors'):
 ### NumPy (.npy)
 
 ```python
-from numpack.io import from_numpy, to_numpy
+from numpack.io import from_npy, to_npy
 
-# .npy → .npk
-from_numpy('data.npy', 'output.npk')
+# .npy -> .npk
+from_npy('data.npy', 'output.npk')
 
-# .npk → .npy
-to_numpy('input.npk', 'output.npy', array_name='data')
+# .npk -> .npy
+to_npy('input.npk', 'output.npy', array_name='data')
 ```
+
+> **Note:** `from_numpy` and `to_numpy` are deprecated aliases and will be removed in version 0.6.0.
 
 ### HDF5 (.h5)
 
@@ -317,7 +325,7 @@ import torch
 import numpy as np
 from numpack import NumPack
 from numpack.io import (
-    from_torch, to_torch,
+    from_tensor, to_tensor,
     from_safetensors_file, to_safetensors_file,
 )
 
@@ -330,13 +338,13 @@ state_dict = model.state_dict()
 # 2. Save each tensor to NumPack
 with NumPack('model.npk', drop_if_exists=True) as npk:
     for name, tensor in state_dict.items():
-        from_torch(tensor, 'model.npk', array_name=name)
+        from_tensor(tensor, 'model.npk', array_name=name)
 
 # 3. Load back as PyTorch tensors
 loaded_state = {}
 with NumPack('model.npk') as npk:
     for name in npk.get_member_list():
-        loaded_state[name] = to_torch('model.npk', array_name=name)
+        loaded_state[name] = to_tensor('model.npk', array_name=name)
 
 # 4. Export to SafeTensors for sharing
 to_safetensors_file('model.npk', 'model.safetensors',
@@ -373,24 +381,26 @@ to_txt('input.npk', 'output.txt', array_name='data', delimiter='\t')
 
 ## Pandas Conversion
 
-### DataFrame ↔ .npk
+### DataFrame <-> .npk
 
 ```python
-from numpack.io import from_pandas, to_pandas
+from numpack.io import from_dataframe, to_dataframe
 import pandas as pd
 
-# DataFrame → .npk
+# DataFrame -> .npk
 df = pd.DataFrame({'a': [1, 2, 3], 'b': [4.0, 5.0, 6.0]})
-from_pandas(df, 'output.npk', array_name='dataframe')
+from_dataframe(df, 'output.npk', array_name='dataframe')
 
-# .npk → DataFrame
-df = to_pandas('input.npk', array_name='dataframe')
+# .npk -> DataFrame
+df = to_dataframe('input.npk', array_name='dataframe')
 print(df.columns)
 ```
 
 **Notes:**
 - Numeric columns are converted to NumPy arrays
 - String columns may require special handling
+
+> **Note:** `from_pandas` and `to_pandas` are deprecated aliases and will be removed in version 0.6.0.
 
 ---
 
@@ -509,22 +519,22 @@ arrow_array = zc_arr.to_arrow()
 ```python
 # Good: Small tensor, use memory function
 tensor = torch.randn(1000, 128)
-from_torch(tensor, 'output.npk')
+from_tensor(tensor, 'output.npk')
 ```
 
 ### 2. Use File Functions for Large Files
 
 ```python
 # Good: Large file, use streaming file function
-from_torch_file('large_model.pt', 'output.npk')  # Streams in chunks
+from_pt('large_model.pt', 'output.npk')  # Streams in chunks
 ```
 
 ### 3. Specify Array Names
 
 ```python
 # Good: Explicit array names
-from_torch(tensor, 'output.npk', array_name='embeddings')
-loaded = to_torch('output.npk', array_name='embeddings')
+from_tensor(tensor, 'output.npk', array_name='embeddings')
+loaded = to_tensor('output.npk', array_name='embeddings')
 ```
 
 ### 4. Handle Multiple Arrays
@@ -532,9 +542,9 @@ loaded = to_torch('output.npk', array_name='embeddings')
 ```python
 # Save multiple tensors
 with NumPack('model.npk', drop_if_exists=True) as npk:
-    from_torch(weights, 'model.npk', array_name='weights')
-    from_torch(biases, 'model.npk', array_name='biases')
+    from_tensor(weights, 'model.npk', array_name='weights')
+    from_tensor(biases, 'model.npk', array_name='biases')
 
 # Load specific array
-weights = to_torch('model.npk', array_name='weights')
+weights = to_tensor('model.npk', array_name='weights')
 ```

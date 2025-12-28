@@ -5,13 +5,13 @@ with excellent compression and support for streaming I/O.
 
 This module provides two types of conversions:
 
-1. **Memory-to-file / File-to-memory conversions**:
+1. **File conversions (streaming)**:
+   - `from_parquet(parquet_path, npk_path)` - Convert .parquet to .npk
+   - `to_parquet(npk_path, parquet_path)` - Convert .npk to .parquet
+
+2. **Memory-to-file / File-to-memory conversions**:
    - `from_parquet_table(table, npk_path)` - Save PyArrow Table to .npk file
    - `to_parquet_table(npk_path, array_name)` - Load from .npk file and return PyArrow Table
-
-2. **File-to-file conversions (streaming)**:
-   - `from_parquet_file(parquet_path, npk_path)` - Convert .parquet to .npk
-   - `to_parquet_file(npk_path, parquet_path)` - Convert .npk to .parquet
 """
 
 from __future__ import annotations
@@ -42,7 +42,8 @@ def from_parquet_table(
     array_name: Optional[str] = None,
     columns: Optional[List[str]] = None,
     drop_if_exists: bool = False,
-) -> None:
+    return_npk_obj: bool = False,
+) -> Any:
     """Save a PyArrow Table (from memory) to a NumPack file.
     
     Parameters
@@ -57,6 +58,8 @@ def from_parquet_table(
         Specific columns to save. If None, saves all columns as a 2D array.
     drop_if_exists : bool, optional
         If True, delete the output path first if it already exists.
+    return_npk_obj : bool, optional
+        If True, return an opened NumPack instance for output_path.
     
     Raises
     ------
@@ -91,6 +94,10 @@ def from_parquet_table(
         npk.save({array_name: arr})
     finally:
         npk.close()
+
+    if return_npk_obj:
+        return _open_numpack_for_read(output_path)
+    return None
 
 
 def to_parquet_table(
@@ -171,7 +178,8 @@ def from_parquet_file(
     columns: Optional[List[str]] = None,
     drop_if_exists: bool = False,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
-) -> None:
+    return_npk_obj: bool = False,
+) -> Any:
     """Convert a Parquet file to NumPack format with streaming.
     
     Large Parquet files (> 1 GB) are imported by iterating record batches
@@ -191,6 +199,8 @@ def from_parquet_file(
         If True, delete the output path first if it already exists.
     chunk_size : int, optional
         Chunk size in bytes for streaming.
+    return_npk_obj : bool, optional
+        If True, return an opened NumPack instance for output_path.
     
     Raises
     ------
@@ -225,6 +235,10 @@ def from_parquet_file(
             npk.save({array_name: arr})
     finally:
         npk.close()
+
+    if return_npk_obj:
+        return _open_numpack_for_read(output_path)
+    return None
 
 
 def to_parquet_file(
@@ -309,6 +323,63 @@ def to_parquet_file(
 # =============================================================================
 # Internal Helpers
 # =============================================================================
+
+def _from_parquet_streaming(
+    npk: Any,
+    parquet_file: Any,  # pyarrow.parquet.ParquetFile
+    array_name: str,
+    columns: Optional[List[str]]
+) -> None:
+    """Stream-import a Parquet file using record batches."""
+    first_batch = True
+    
+    for batch in parquet_file.iter_batches(columns=columns):
+        arr = _record_batch_to_numpy_zero_copy(batch)
+        
+        if first_batch:
+            npk.save({array_name: arr})
+            first_batch = False
+        else:
+            npk.append({array_name: arr})
+
+
+def _to_parquet_streaming(
+    npk: Any,
+    output_path: Union[str, Path],
+    array_name: str,
+    shape: Tuple[int, ...],
+    dtype: np.dtype,
+    compression: str,
+    row_group_size: int,
+    chunk_size: int,
+) -> None:
+    """Stream-export a large array to Parquet file."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    
+    batch_rows = estimate_chunk_rows(shape, dtype, chunk_size)
+    total_rows = shape[0]
+    
+    writer = None
+    
+    try:
+        for start_idx in range(0, total_rows, batch_rows):
+            end_idx = min(start_idx + batch_rows, total_rows)
+            chunk = npk.getitem(array_name, slice(start_idx, end_idx))
+            table = _numpy_to_arrow_table(chunk)
+            
+            if writer is None:
+                writer = pq.ParquetWriter(
+                    str(output_path),
+                    table.schema,
+                    compression=compression,
+                )
+            
+            writer.write_table(table, row_group_size=row_group_size)
+    finally:
+        if writer is not None:
+            writer.close()
+
 
 def _numpy_to_arrow_table(arr: np.ndarray) -> Any:
     """Convert a NumPy array to a PyArrow Table.
@@ -449,9 +520,10 @@ def _record_batch_to_numpy_zero_copy(batch) -> np.ndarray:
 
 
 # =============================================================================
-# Legacy Aliases (for backward compatibility)
+# Primary Names and Aliases
 # =============================================================================
 
+# Primary names for file conversion (recommended)
 from_parquet = from_parquet_file
 to_parquet = to_parquet_file
 
@@ -461,19 +533,14 @@ to_parquet = to_parquet_file
 # =============================================================================
 
 __all__ = [
-    # Memory conversions
-    'from_parquet_table',
-    'to_parquet_table',
-    # File conversions
-    'from_parquet_file',
-    'to_parquet_file',
-    # Legacy aliases
+    # Primary names (recommended) - File conversions
     'from_parquet',
     'to_parquet',
+    # Primary names (recommended) - Memory conversions
+    'from_parquet_table',
+    'to_parquet_table',
+    # Verbose aliases (for clarity)
+    'from_parquet_file',
+    'to_parquet_file',
 ]
-
-
-# NOTE: The following old code has been replaced by the new functions above.
-# Keeping this comment for reference during the transition period.
-# Old functions from_parquet and to_parquet are now aliases to from_parquet_file and to_parquet_file.
 
