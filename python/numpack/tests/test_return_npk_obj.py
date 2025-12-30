@@ -16,41 +16,41 @@ class TestReturnNpkObjNumpy:
     """Tests for return_npk_obj in NumPy conversion functions."""
 
     def test_from_numpy_npy_return_none_by_default(self, tmp_path):
-        """Test that from_numpy returns None by default."""
-        from numpack.io import from_numpy
+        """Test that from_npy returns None by default."""
+        from numpack.io import from_npy
 
         arr = np.random.rand(50, 10).astype(np.float64)
         npy_path = tmp_path / "test.npy"
         npk_path = tmp_path / "test.npk"
 
         np.save(npy_path, arr)
-        result = from_numpy(npy_path, npk_path, drop_if_exists=True)
+        result = from_npy(npy_path, npk_path, drop_if_exists=True)
 
         assert result is None
 
     def test_from_numpy_npy_return_npk_obj_false(self, tmp_path):
-        """Test that from_numpy returns None when return_npk_obj=False."""
-        from numpack.io import from_numpy
+        """Test that from_npy returns None when return_npk_obj=False."""
+        from numpack.io import from_npy
 
         arr = np.random.rand(50, 10).astype(np.float64)
         npy_path = tmp_path / "test.npy"
         npk_path = tmp_path / "test.npk"
 
         np.save(npy_path, arr)
-        result = from_numpy(npy_path, npk_path, drop_if_exists=True, return_npk_obj=False)
+        result = from_npy(npy_path, npk_path, drop_if_exists=True, return_npk_obj=False)
 
         assert result is None
 
     def test_from_numpy_npy_return_npk_obj_true(self, tmp_path):
-        """Test that from_numpy returns a valid NumPack object when return_npk_obj=True."""
-        from numpack.io import from_numpy
+        """Test that from_npy returns a valid NumPack object when return_npk_obj=True."""
+        from numpack.io import from_npy
 
         arr = np.random.rand(50, 10).astype(np.float64)
         npy_path = tmp_path / "test.npy"
         npk_path = tmp_path / "test.npk"
 
         np.save(npy_path, arr)
-        result = from_numpy(npy_path, npk_path, drop_if_exists=True, return_npk_obj=True)
+        result = from_npy(npy_path, npk_path, drop_if_exists=True, return_npk_obj=True)
 
         try:
             assert result is not None
@@ -64,8 +64,8 @@ class TestReturnNpkObjNumpy:
             result.close()
 
     def test_from_numpy_npz_return_npk_obj_true(self, tmp_path):
-        """Test from_numpy with .npz file and return_npk_obj=True."""
-        from numpack.io import from_numpy
+        """Test from_npy with .npz file and return_npk_obj=True."""
+        from numpack.io import from_npy
 
         arr1 = np.random.rand(30, 5).astype(np.float64)
         arr2 = np.random.randint(0, 100, (20, 10)).astype(np.int32)
@@ -73,7 +73,7 @@ class TestReturnNpkObjNumpy:
         npk_path = tmp_path / "test.npk"
 
         np.savez(npz_path, array1=arr1, array2=arr2)
-        result = from_numpy(npz_path, npk_path, drop_if_exists=True, return_npk_obj=True)
+        result = from_npy(npz_path, npk_path, drop_if_exists=True, return_npk_obj=True)
 
         try:
             assert isinstance(result, NumPack)
@@ -283,9 +283,9 @@ class TestReturnNpkObjPandas:
         pytest.importorskip("pandas")
 
     def test_from_pandas_return_none_by_default(self, tmp_path):
-        """Test that from_pandas returns None by default."""
+        """Test that from_dataframe returns None by default."""
         import pandas as pd
-        from numpack.io import from_pandas
+        from numpack.io import from_dataframe
 
         df = pd.DataFrame({
             'a': np.random.rand(50),
@@ -293,13 +293,13 @@ class TestReturnNpkObjPandas:
         })
         npk_path = tmp_path / "test.npk"
 
-        result = from_pandas(df, npk_path, drop_if_exists=True)
+        result = from_dataframe(df, npk_path, drop_if_exists=True)
         assert result is None
 
     def test_from_pandas_return_npk_obj_true(self, tmp_path):
-        """Test that from_pandas returns a valid NumPack object when return_npk_obj=True."""
+        """Test that from_dataframe returns a valid NumPack object when return_npk_obj=True."""
         import pandas as pd
-        from numpack.io import from_pandas
+        from numpack.io import from_dataframe
 
         df = pd.DataFrame({
             'a': np.random.rand(50),
@@ -307,7 +307,7 @@ class TestReturnNpkObjPandas:
         })
         npk_path = tmp_path / "test.npk"
 
-        result = from_pandas(df, npk_path, drop_if_exists=True, return_npk_obj=True)
+        result = from_dataframe(df, npk_path, drop_if_exists=True, return_npk_obj=True)
 
         try:
             assert isinstance(result, NumPack)
@@ -474,16 +474,16 @@ class TestReturnNpkObjFeather:
             result.close()
 
     def test_from_arrow_return_npk_obj_true(self, tmp_path):
-        """Test that from_arrow returns a valid NumPack object when return_npk_obj=True."""
+        """Test that from_table returns a valid NumPack object when return_npk_obj=True."""
         import pyarrow as pa
-        from numpack.io import from_arrow
+        from numpack.io import from_table
 
         arr = np.random.rand(50, 5).astype(np.float64)
         npk_path = tmp_path / "test.npk"
 
         table = pa.table({f'col{i}': arr[:, i] for i in range(arr.shape[1])})
 
-        result = from_arrow(table, npk_path, drop_if_exists=True, return_npk_obj=True)
+        result = from_table(table, npk_path, drop_if_exists=True, return_npk_obj=True)
 
         try:
             assert isinstance(result, NumPack)
@@ -502,25 +502,25 @@ class TestReturnNpkObjPytorch:
         pytest.importorskip("torch")
 
     def test_from_torch_return_none_by_default(self, tmp_path):
-        """Test that from_torch returns None by default."""
+        """Test that from_tensor returns None by default."""
         import torch
-        from numpack.io import from_torch
+        from numpack.io import from_tensor
 
         tensor = torch.rand(50, 10, dtype=torch.float32)
         npk_path = tmp_path / "test.npk"
 
-        result = from_torch(tensor, npk_path, drop_if_exists=True)
+        result = from_tensor(tensor, npk_path, drop_if_exists=True)
         assert result is None
 
     def test_from_torch_return_npk_obj_true(self, tmp_path):
-        """Test that from_torch returns a valid NumPack object when return_npk_obj=True."""
+        """Test that from_tensor returns a valid NumPack object when return_npk_obj=True."""
         import torch
-        from numpack.io import from_torch
+        from numpack.io import from_tensor
 
         tensor = torch.rand(50, 10, dtype=torch.float32)
         npk_path = tmp_path / "test.npk"
 
-        result = from_torch(tensor, npk_path, drop_if_exists=True, return_npk_obj=True)
+        result = from_tensor(tensor, npk_path, drop_if_exists=True, return_npk_obj=True)
 
         try:
             assert isinstance(result, NumPack)
@@ -530,29 +530,29 @@ class TestReturnNpkObjPytorch:
             result.close()
 
     def test_from_torch_file_return_none_by_default(self, tmp_path):
-        """Test that from_torch_file returns None by default."""
+        """Test that from_pt returns None by default."""
         import torch
-        from numpack.io import from_torch_file
+        from numpack.io import from_pt
 
         tensor = torch.rand(50, 10, dtype=torch.float32)
         pt_path = tmp_path / "test.pt"
         npk_path = tmp_path / "test.npk"
 
         torch.save(tensor, pt_path)
-        result = from_torch_file(pt_path, npk_path, drop_if_exists=True)
+        result = from_pt(pt_path, npk_path, drop_if_exists=True)
         assert result is None
 
     def test_from_torch_file_return_npk_obj_true(self, tmp_path):
-        """Test that from_torch_file returns a valid NumPack object when return_npk_obj=True."""
+        """Test that from_pt returns a valid NumPack object when return_npk_obj=True."""
         import torch
-        from numpack.io import from_torch_file
+        from numpack.io import from_pt
 
         tensor = torch.rand(50, 10, dtype=torch.float32)
         pt_path = tmp_path / "test.pt"
         npk_path = tmp_path / "test.npk"
 
         torch.save(tensor, pt_path)
-        result = from_torch_file(pt_path, npk_path, drop_if_exists=True, return_npk_obj=True)
+        result = from_pt(pt_path, npk_path, drop_if_exists=True, return_npk_obj=True)
 
         try:
             assert isinstance(result, NumPack)
@@ -562,16 +562,16 @@ class TestReturnNpkObjPytorch:
             result.close()
 
     def test_from_pytorch_legacy_alias_return_npk_obj_true(self, tmp_path):
-        """Test the legacy from_pytorch alias with return_npk_obj=True."""
+        """Test the from_pt function with return_npk_obj=True."""
         import torch
-        from numpack.io import from_pytorch
+        from numpack.io import from_pt
 
         tensor = torch.rand(30, 8, dtype=torch.float32)
         pt_path = tmp_path / "test.pt"
         npk_path = tmp_path / "test.npk"
 
         torch.save(tensor, pt_path)
-        result = from_pytorch(pt_path, npk_path, drop_if_exists=True, return_npk_obj=True)
+        result = from_pt(pt_path, npk_path, drop_if_exists=True, return_npk_obj=True)
 
         try:
             assert isinstance(result, NumPack)
@@ -581,9 +581,9 @@ class TestReturnNpkObjPytorch:
             result.close()
 
     def test_from_torch_file_dict_return_npk_obj_true(self, tmp_path):
-        """Test from_torch_file with dict input and return_npk_obj=True."""
+        """Test from_pt with dict input and return_npk_obj=True."""
         import torch
-        from numpack.io import from_torch_file
+        from numpack.io import from_pt
 
         tensors = {
             'features': torch.rand(50, 10, dtype=torch.float32),
@@ -593,7 +593,7 @@ class TestReturnNpkObjPytorch:
         npk_path = tmp_path / "test.npk"
 
         torch.save(tensors, pt_path)
-        result = from_torch_file(pt_path, npk_path, drop_if_exists=True, return_npk_obj=True)
+        result = from_pt(pt_path, npk_path, drop_if_exists=True, return_npk_obj=True)
 
         try:
             assert isinstance(result, NumPack)
@@ -616,8 +616,8 @@ class TestReturnNpkObjSafetensors:
         pytest.importorskip("safetensors")
 
     def test_from_safetensors_return_none_by_default(self, tmp_path):
-        """Test that from_safetensors returns None by default."""
-        from numpack.io import from_safetensors
+        """Test that from_tensor_dict returns None by default."""
+        from numpack.io import from_tensor_dict
 
         tensors = {
             'weights': np.random.rand(50, 10).astype(np.float32),
@@ -625,12 +625,12 @@ class TestReturnNpkObjSafetensors:
         }
         npk_path = tmp_path / "test.npk"
 
-        result = from_safetensors(tensors, npk_path, drop_if_exists=True)
+        result = from_tensor_dict(tensors, npk_path, drop_if_exists=True)
         assert result is None
 
     def test_from_safetensors_return_npk_obj_true(self, tmp_path):
-        """Test that from_safetensors returns a valid NumPack object when return_npk_obj=True."""
-        from numpack.io import from_safetensors
+        """Test that from_tensor_dict returns a valid NumPack object when return_npk_obj=True."""
+        from numpack.io import from_tensor_dict
 
         tensors = {
             'weights': np.random.rand(50, 10).astype(np.float32),
@@ -638,7 +638,7 @@ class TestReturnNpkObjSafetensors:
         }
         npk_path = tmp_path / "test.npk"
 
-        result = from_safetensors(tensors, npk_path, drop_if_exists=True, return_npk_obj=True)
+        result = from_tensor_dict(tensors, npk_path, drop_if_exists=True, return_npk_obj=True)
 
         try:
             assert isinstance(result, NumPack)
@@ -702,7 +702,7 @@ class TestReturnNpkObjDataIntegrity:
     ])
     def test_from_numpy_various_dtypes(self, tmp_path, dtype):
         """Test return_npk_obj with various dtypes."""
-        from numpack.io import from_numpy
+        from numpack.io import from_npy
 
         if np.issubdtype(dtype, np.integer):
             arr = np.random.randint(0, 100, (50, 10)).astype(dtype)
@@ -713,7 +713,7 @@ class TestReturnNpkObjDataIntegrity:
         npk_path = tmp_path / "test.npk"
 
         np.save(npy_path, arr)
-        result = from_numpy(npy_path, npk_path, drop_if_exists=True, return_npk_obj=True)
+        result = from_npy(npy_path, npk_path, drop_if_exists=True, return_npk_obj=True)
 
         try:
             assert isinstance(result, NumPack)
@@ -725,7 +725,7 @@ class TestReturnNpkObjDataIntegrity:
 
     def test_return_npk_obj_multiple_operations(self, tmp_path):
         """Test that the returned NumPack object supports multiple operations."""
-        from numpack.io import from_numpy
+        from numpack.io import from_npy
 
         arr1 = np.random.rand(50, 10).astype(np.float64)
         arr2 = np.random.rand(30, 10).astype(np.float64)  # Same column count as arr1
@@ -734,7 +734,7 @@ class TestReturnNpkObjDataIntegrity:
         npk_path = tmp_path / "test.npk"
 
         np.save(npy_path, arr1)
-        result = from_numpy(npy_path, npk_path, drop_if_exists=True, return_npk_obj=True)
+        result = from_npy(npy_path, npk_path, drop_if_exists=True, return_npk_obj=True)
 
         try:
             # Test various operations on the returned NumPack object
@@ -767,14 +767,14 @@ class TestReturnNpkObjEdgeCases:
 
     def test_empty_array(self, tmp_path):
         """Test return_npk_obj with an empty array."""
-        from numpack.io import from_numpy
+        from numpack.io import from_npy
 
         arr = np.array([]).reshape(0, 5)
         npy_path = tmp_path / "test.npy"
         npk_path = tmp_path / "test.npk"
 
         np.save(npy_path, arr)
-        result = from_numpy(npy_path, npk_path, drop_if_exists=True, return_npk_obj=True)
+        result = from_npy(npy_path, npk_path, drop_if_exists=True, return_npk_obj=True)
 
         try:
             assert isinstance(result, NumPack)
@@ -785,14 +785,14 @@ class TestReturnNpkObjEdgeCases:
 
     def test_single_element_array(self, tmp_path):
         """Test return_npk_obj with a single-element array."""
-        from numpack.io import from_numpy
+        from numpack.io import from_npy
 
         arr = np.array([[42.0]])
         npy_path = tmp_path / "test.npy"
         npk_path = tmp_path / "test.npk"
 
         np.save(npy_path, arr)
-        result = from_numpy(npy_path, npk_path, drop_if_exists=True, return_npk_obj=True)
+        result = from_npy(npy_path, npk_path, drop_if_exists=True, return_npk_obj=True)
 
         try:
             assert isinstance(result, NumPack)
@@ -803,14 +803,14 @@ class TestReturnNpkObjEdgeCases:
 
     def test_1d_array(self, tmp_path):
         """Test return_npk_obj with a 1D array."""
-        from numpack.io import from_numpy
+        from numpack.io import from_npy
 
         arr = np.random.rand(100).astype(np.float64)
         npy_path = tmp_path / "test.npy"
         npk_path = tmp_path / "test.npk"
 
         np.save(npy_path, arr)
-        result = from_numpy(npy_path, npk_path, drop_if_exists=True, return_npk_obj=True)
+        result = from_npy(npy_path, npk_path, drop_if_exists=True, return_npk_obj=True)
 
         try:
             assert isinstance(result, NumPack)
@@ -821,14 +821,14 @@ class TestReturnNpkObjEdgeCases:
 
     def test_3d_array(self, tmp_path):
         """Test return_npk_obj with a 3D array."""
-        from numpack.io import from_numpy
+        from numpack.io import from_npy
 
         arr = np.random.rand(10, 20, 30).astype(np.float32)
         npy_path = tmp_path / "test.npy"
         npk_path = tmp_path / "test.npk"
 
         np.save(npy_path, arr)
-        result = from_numpy(npy_path, npk_path, drop_if_exists=True, return_npk_obj=True)
+        result = from_npy(npy_path, npk_path, drop_if_exists=True, return_npk_obj=True)
 
         try:
             assert isinstance(result, NumPack)
@@ -840,4 +840,5 @@ class TestReturnNpkObjEdgeCases:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
 

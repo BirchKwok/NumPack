@@ -46,29 +46,27 @@ def _is_windows():
     """Detect if running on Windows platform"""
     return platform.system().lower() == 'windows'
 
-# Backend selection and import - always use Rust backend for highest performance
+# Import Rust extension
 try:
-    import numpack._lib_numpack as rust_backend
-    _NumPack = rust_backend.NumPack
-    LazyArray = rust_backend.LazyArray
-    _BACKEND_TYPE = "rust"
+    import numpack._lib_numpack as _lib
+    _NumPack = _lib.NumPack
+    LazyArray = _lib.LazyArray
 except ImportError as e:
     raise ImportError(
-        f"Failed to import Rust backend: {e}\n"
-        "NumPack now only uses the high-performance Rust backend. Please ensure:\n"
-        "1. Rust extension is correctly compiled and installed\n"
+        f"Failed to import NumPack extension: {e}\n"
+        "Please ensure:\n"
+        "1. Extension is correctly compiled and installed\n"
         "2. Run 'python build.py' to rebuild the project"
     )
 
 
 class NumPack:
-    """High-performance array storage backed by the Rust implementation.
+    """High-performance array storage.
 
     This class provides a Python interface to the NumPack on-disk format.
 
     Notes
     -----
-    - The storage backend is provided by the Rust extension module.
     - Files are not opened automatically. Call `open` or use a context manager.
     """
     
@@ -102,7 +100,6 @@ class NumPack:
             If True, run garbage collection on close. Default False for best
             performance.
         """
-        self._backend_type = _BACKEND_TYPE  # Always "rust"
         self._strict_context_mode = strict_context_mode
         self._context_entered = False
         self._closed = False
@@ -132,7 +129,7 @@ class NumPack:
                 stacklevel=2
             )
         
-        # Initialize backend instance to None - not automatically opened
+        # Initialize instance to None - not automatically opened
         # Users must explicitly call open() or use context manager
         self._npk = None
     
@@ -163,7 +160,7 @@ class NumPack:
         # Create directory
         self._filename.mkdir(parents=True, exist_ok=True)
         
-        # Initialize Rust backend (only accepts one parameter)
+        # Initialize NumPack instance
         self._npk = _NumPack(str(self._filename))
         
         # Update state
@@ -304,7 +301,6 @@ class NumPack:
         elif not isinstance(indexes, (list, slice)):
             raise ValueError("The indexes must be int or list or numpy.ndarray or slice.")
             
-        # Rust backend
         self._npk.replace(arrays, indexes)
 
     def append(self, arrays: Dict[str, np.ndarray]) -> None:
@@ -328,7 +324,6 @@ class NumPack:
         if not isinstance(arrays, dict):
             raise ValueError("arrays must be a dictionary")
         
-        # Rust backend expects dictionary parameters
         self._npk.append(arrays)
         
         # 关键修复：清理受影响数组的内存缓存
@@ -417,7 +412,6 @@ class NumPack:
         elif isinstance(indexes, np.ndarray):
             indexes = indexes.tolist()
         
-        # Rust backend
         return self._npk.getitem(array_name, indexes)
     
     def get_shape(self, array_name: str) -> Tuple[int, int]:
@@ -547,7 +541,7 @@ class NumPack:
         Returns
         -------
         dict
-            Metadata dictionary returned by the backend.
+            Metadata dictionary.
 
         Raises
         ------
@@ -594,7 +588,6 @@ class NumPack:
         if buffer_size is not None and buffer_size <= 0:
             raise ValueError("buffer_size must be greater than 0")
         
-        # Rust backend: Use stream_load method
         effective_buffer_size = buffer_size if buffer_size is not None else 1
         return self._npk.stream_load(array_name, effective_buffer_size)
 
@@ -603,16 +596,6 @@ class NumPack:
         self._check_context_mode()
         return array_name in self._npk.get_member_list()
 
-    @property 
-    def backend_type(self) -> str:
-        """Backend identifier string.
-
-        Notes
-        -----
-        The current implementation always uses the Rust backend.
-        """
-        return self._backend_type
-    
     @property
     def is_opened(self) -> bool:
         """Whether the NumPack instance is currently opened."""
@@ -629,12 +612,10 @@ class NumPack:
         Returns
         -------
         dict
-            Backend statistics payload. The Rust backend currently does not
-            expose detailed per-call statistics via this API.
+            Statistics payload. Currently no detailed per-call statistics
+            are exposed via this API.
         """
-        # Rust backend performance statistics
         return {
-            "backend_type": self._backend_type,
             "stats_available": False
         }
 
@@ -737,7 +718,7 @@ class NumPack:
         if self._cache_enabled:
             self._flush_cache()
         
-        # Performance optimization: Call Rust close to flush metadata, but no extra cleanup
+        # Close to flush metadata
         if self._npk is not None and hasattr(self._npk, 'close'):
             try:
                 self._npk.close()
@@ -747,7 +728,7 @@ class NumPack:
         # Update state
         self._closed = True
         self._opened = False
-        self._npk = None  # Release reference, Rust's Drop will automatically clean up
+        self._npk = None
         
         # Only execute GC when user explicitly requests (usually not needed)
         if force_gc or (force_gc is None and self._force_gc_on_close):
@@ -755,13 +736,12 @@ class NumPack:
             gc.collect()
     
     def _windows_comprehensive_cleanup(self):
-        """Windows-specific comprehensive resource cleanup
+        """Windows-specific comprehensive resource cleanup.
         
-        Note: With Rust backend, most cleanup is handled automatically by Rust's Drop trait.
-        Only one GC pass is needed to clean up Python-side circular references.
+        Most cleanup is handled automatically. Only one GC pass is needed to
+        clean up Python-side circular references.
         """
         import gc
-        # Only execute one GC pass, Rust backend will automatically handle the rest of the cleanup
         gc.collect()
     
     def __del__(self):
@@ -799,7 +779,6 @@ class NumPack:
         return False
 
     def __repr__(self) -> str:
-        backend_info = f"backend={self._backend_type}"
         # Try to get filename
         filename = str(self._filename) if hasattr(self, '_filename') else 'unknown'
         
@@ -807,23 +786,23 @@ class NumPack:
         if self.is_opened:
             try:
                 arrays_count = len(self.get_member_list())
-                return f"NumPack({filename}, arrays={arrays_count}, {backend_info})"
+                return f"NumPack({filename}, arrays={arrays_count})"
             except:
                 pass
         
         status = "opened" if self.is_opened else "closed"
-        return f"NumPack({filename}, status={status}, {backend_info})"
+        return f"NumPack({filename}, status={status})"
 
 
 
-# Backward compatible no-op function (Rust backend manages memory automatically)
+# Backward compatible no-op function (memory is managed automatically)
 def force_cleanup_windows_handles():
     """Force cleanup of Windows file handles.
 
     Notes
     -----
-    This function is kept for backward compatibility. With the Rust backend,
-    most resource cleanup is handled automatically.
+    This function is kept for backward compatibility. Most resource cleanup
+    is handled automatically.
     """
     import gc
     gc.collect()
@@ -944,7 +923,6 @@ __all__ = [
     'NumPack', 
     'LazyArray', 
     'force_cleanup_windows_handles', 
-    'get_backend_info', 
     'BatchModeContext',
     'pack',
     'unpack',
@@ -953,23 +931,3 @@ __all__ = [
 
 # Package operations (convenience imports at top level)
 from .io.package_io import pack, unpack, get_package_info
-
-# Backend information query
-def get_backend_info():
-    """Return information about the active backend.
-
-    Returns
-    -------
-    dict
-        Dictionary containing backend type, platform, version, and platform
-        flags.
-    """
-    info = {
-        'backend_type': _BACKEND_TYPE,
-        'platform': platform.system(),
-        'is_windows': _is_windows(),
-        'version': __version__,
-    }
-    
-    
-    return info

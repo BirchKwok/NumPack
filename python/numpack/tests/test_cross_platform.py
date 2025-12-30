@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 import sys
 
-from numpack import NumPack, get_backend_info
+from numpack import NumPack
 
 
 @pytest.fixture
@@ -22,12 +22,6 @@ def temp_dir():
 
 class TestCrossPlatformConsistency:
     """Verify cross-platform consistency."""
-    
-    def test_same_backend_all_platforms(self):
-        """All platforms should use the same backend (Rust)."""
-        info = get_backend_info()
-        # Verify backend type
-        assert info['backend_type'] == 'rust'
     
     def test_file_format_compatibility(self, temp_dir):
         """File format should be cross-platform compatible."""
@@ -148,23 +142,6 @@ class TestCrossPlatformConsistency:
 
 class TestPerformanceConsistency:
     """Test performance consistency."""
-    
-    def test_backend_info(self):
-        """Verify backend info is correct."""
-        info = get_backend_info()
-        
-        assert 'backend_type' in info
-        assert 'platform' in info
-        assert 'is_windows' in info
-        assert 'version' in info
-        
-
-        
-        # Platform should be a valid value
-        assert info['platform'] in ['Windows', 'Darwin', 'Linux']
-        
-        # is_windows should match platform
-        assert info['is_windows'] == (info['platform'] == 'Windows')
     
     def test_batch_operations_work(self, temp_dir):
         """Verify batch operations work on all platforms."""

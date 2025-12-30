@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 # Import NumPack
-from numpack import NumPack, get_backend_info
+from numpack import NumPack
 
 
 # Run certain tests only on Windows
@@ -238,20 +238,8 @@ class TestExceptionHandling:
             npk.close()  # Should be safe
 
 
-class TestBackendConsistency:
-    """Test backend consistency."""
-    
-    def test_backend_available(self):
-        """Verify NumPack backend is available."""
-        info = get_backend_info()
-        
-        # Verify backend info is accessible
-        assert 'backend_type' in info
-        assert 'platform' in info
-        assert 'version' in info
-        
-        # Verify backend type is consistent (now only Rust backend)
-        assert info['backend_type'] == 'rust'
+class TestLargeFileOperations:
+    """Test large file operations."""
     
     def test_large_file_operations(self, temp_dir):
         """Test large file operation reliability."""

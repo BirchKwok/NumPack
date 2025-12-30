@@ -16,8 +16,8 @@ from numpack.io import (
     get_file_size,
     is_large_file,
     estimate_chunk_rows,
-    from_numpy,
-    to_numpy,
+    from_npy,
+    to_npy,
     from_csv,
     to_csv,
     from_txt,
@@ -88,7 +88,7 @@ class TestNumpyConversion:
         np.save(npy_path, arr)
         
         # Convert
-        from_numpy(npy_path, npk_path, drop_if_exists=True)
+        from_npy(npy_path, npk_path, drop_if_exists=True)
         
         # Verify
         with NumPack(npk_path) as npk:
@@ -102,7 +102,7 @@ class TestNumpyConversion:
 
         np.save(npy_path, arr)
 
-        npk = from_numpy(npy_path, npk_path, drop_if_exists=True, return_npk_obj=True)
+        npk = from_npy(npy_path, npk_path, drop_if_exists=True, return_npk_obj=True)
         assert isinstance(npk, NumPack)
         try:
             loaded = npk.load("test")
@@ -118,7 +118,7 @@ class TestNumpyConversion:
         
         np.save(npy_path, arr)
         
-        from_numpy(npy_path, npk_path, array_name="my_array", drop_if_exists=True)
+        from_npy(npy_path, npk_path, array_name="my_array", drop_if_exists=True)
         
         with NumPack(npk_path) as npk:
             loaded = npk.load("my_array")
@@ -134,7 +134,7 @@ class TestNumpyConversion:
         
         np.savez(npz_path, array1=arr1, array2=arr2)
         
-        from_numpy(npz_path, npk_path, drop_if_exists=True)
+        from_npy(npz_path, npk_path, drop_if_exists=True)
         
         with NumPack(npk_path) as npk:
             members = npk.get_member_list()
@@ -158,7 +158,7 @@ class TestNumpyConversion:
             npk.save({"data": arr})
         
         # Export
-        to_numpy(npk_path, npy_path, array_names=["data"])
+        to_npy(npk_path, npy_path, array_names=["data"])
         
         # Verify
         loaded = np.load(npy_path)
@@ -175,7 +175,7 @@ class TestNumpyConversion:
         with NumPack(npk_path, drop_if_exists=True) as npk:
             npk.save({"array1": arr1, "array2": arr2})
         
-        to_numpy(npk_path, npz_path)
+        to_npy(npk_path, npz_path)
         
         with np.load(npz_path) as data:
             np.testing.assert_array_almost_equal(arr1, data["array1"])
@@ -190,8 +190,8 @@ class TestNumpyConversion:
         npy2 = tmp_path / "final.npy"
         
         np.save(npy1, original)
-        from_numpy(npy1, npk_path, drop_if_exists=True)
-        to_numpy(npk_path, npy2, array_names=["original"])
+        from_npy(npy1, npk_path, drop_if_exists=True)
+        to_npy(npk_path, npy2, array_names=["original"])
         
         final = np.load(npy2)
         np.testing.assert_array_almost_equal(original, final)
@@ -343,8 +343,8 @@ class TestDifferentDtypes:
         npy_out = tmp_path / "output.npy"
         
         np.save(npy_path, arr)
-        from_numpy(npy_path, npk_path, drop_if_exists=True)
-        to_numpy(npk_path, npy_out, array_names=["test"])
+        from_npy(npy_path, npk_path, drop_if_exists=True)
+        to_npy(npk_path, npy_out, array_names=["test"])
         
         loaded = np.load(npy_out)
         assert loaded.dtype == arr.dtype
@@ -357,7 +357,7 @@ class TestErrorHandling:
     def test_file_not_found(self, tmp_path):
         """Test FileNotFoundError."""
         with pytest.raises(FileNotFoundError):
-            from_numpy(tmp_path / "nonexistent.npy", tmp_path / "out.npk")
+            from_npy(tmp_path / "nonexistent.npy", tmp_path / "out.npk")
     
     def test_invalid_format(self, tmp_path):
         """Test unsupported format."""
@@ -365,7 +365,7 @@ class TestErrorHandling:
         test_file.write_text("test")
         
         with pytest.raises(ValueError):
-            from_numpy(test_file, tmp_path / "out.npk")
+            from_npy(test_file, tmp_path / "out.npk")
     
     def test_npy_multiple_arrays_error(self, tmp_path):
         """Test error when exporting multiple arrays to .npy."""
@@ -379,7 +379,7 @@ class TestErrorHandling:
             npk.save({"arr1": arr1, "arr2": arr2})
         
         with pytest.raises(ValueError, match=r"can only store one array"):
-            to_numpy(npk_path, npy_path)
+            to_npy(npk_path, npy_path)
 
 
 class TestOptionalDependencies:
@@ -449,7 +449,7 @@ class TestPandasConversion:
     def test_from_pandas(self, tmp_path):
         """Test importing from a DataFrame."""
         import pandas as pd
-        from numpack.io import from_pandas
+        from numpack.io import from_dataframe
         
         df = pd.DataFrame({
             'a': np.random.rand(100),
@@ -458,7 +458,7 @@ class TestPandasConversion:
         })
         npk_path = tmp_path / "test.npk"
         
-        from_pandas(df, npk_path, drop_if_exists=True)
+        from_dataframe(df, npk_path, drop_if_exists=True)
         
         with NumPack(npk_path) as npk:
             loaded = npk.load("data")
@@ -467,7 +467,7 @@ class TestPandasConversion:
     def test_to_pandas(self, tmp_path):
         """Test exporting to a DataFrame."""
         import pandas as pd
-        from numpack.io import to_pandas
+        from numpack.io import to_dataframe
         
         arr = np.random.rand(100, 3).astype(np.float64)
         npk_path = tmp_path / "test.npk"
@@ -475,7 +475,7 @@ class TestPandasConversion:
         with NumPack(npk_path, drop_if_exists=True) as npk:
             npk.save({"data": arr})
         
-        df = to_pandas(npk_path)
+        df = to_dataframe(npk_path)
         np.testing.assert_array_almost_equal(arr, df.values)
 
 
@@ -584,7 +584,7 @@ class TestPytorchConversion:
     def test_from_pytorch(self, tmp_path):
         """Test importing from PyTorch."""
         import torch
-        from numpack.io import from_pytorch
+        from numpack.io import from_pt
         
         tensor = torch.rand(100, 10, dtype=torch.float32)
         pt_path = tmp_path / "test.pt"
@@ -592,7 +592,7 @@ class TestPytorchConversion:
         
         torch.save(tensor, pt_path)
         
-        from_pytorch(pt_path, npk_path, drop_if_exists=True)
+        from_pt(pt_path, npk_path, drop_if_exists=True)
         
         with NumPack(npk_path) as npk:
             loaded = npk.load("test")
@@ -601,7 +601,7 @@ class TestPytorchConversion:
     def test_from_pytorch_dict(self, tmp_path):
         """Test importing from a PyTorch dict."""
         import torch
-        from numpack.io import from_pytorch
+        from numpack.io import from_pt
         
         tensors = {
             'features': torch.rand(100, 10),
@@ -612,7 +612,7 @@ class TestPytorchConversion:
         
         torch.save(tensors, pt_path)
         
-        from_pytorch(pt_path, npk_path, drop_if_exists=True)
+        from_pt(pt_path, npk_path, drop_if_exists=True)
         
         with NumPack(npk_path) as npk:
             members = npk.get_member_list()
@@ -622,7 +622,7 @@ class TestPytorchConversion:
     def test_to_pytorch(self, tmp_path):
         """Test exporting to PyTorch."""
         import torch
-        from numpack.io import to_pytorch
+        from numpack.io import to_pt
         
         arr = np.random.rand(100, 10).astype(np.float32)
         npk_path = tmp_path / "test.npk"
@@ -631,7 +631,7 @@ class TestPytorchConversion:
         with NumPack(npk_path, drop_if_exists=True) as npk:
             npk.save({"data": arr})
         
-        to_pytorch(npk_path, pt_path)
+        to_pt(npk_path, pt_path)
         
         loaded = torch.load(pt_path, weights_only=False)
         assert isinstance(loaded, dict)

@@ -37,7 +37,7 @@ from typing import Tuple, Union, Literal, overload
 import numpy as np
 from numpy.typing import NDArray
 
-# Import from Rust backend
+# Import native extension
 try:
     from numpack._lib_numpack import VectorEngine as _VectorEngine
     from numpack._lib_numpack import StreamingVectorEngine as _StreamingVectorEngine
@@ -92,8 +92,8 @@ class VectorEngine:
 
     def __init__(self) -> None:
         if _VectorEngine is None:
-            raise ImportError("Rust backend not available")
-        self._backend = _VectorEngine()
+            raise ImportError("NumPack extension not available")
+        self._engine = _VectorEngine()
 
     def capabilities(self) -> str:
         """Return detected SIMD capabilities.
@@ -103,7 +103,7 @@ class VectorEngine:
         str
             Human-readable SIMD feature summary (for example, ``"CPU: AVX2"").
         """
-        return self._backend.capabilities()
+        return self._engine.capabilities()
 
     def compute_metric(
         self,
@@ -134,7 +134,7 @@ class VectorEngine:
         ValueError
             If `metric` is unknown or the dimensions do not match.
         """
-        return self._backend.compute_metric(a, b, metric)
+        return self._engine.compute_metric(a, b, metric)
 
     def batch_compute(
         self,
@@ -179,12 +179,11 @@ class VectorEngine:
         >>> scores = engine.batch_compute(queries, candidates, 'cosine')  # shape: (5, n_candidates)
         """
         # NumPy fast path for multi-query dot product
-        # NumPy's direct BLAS call has less overhead than Rust FFI
         if query.ndim == 2 and metric in _DOT_METRICS:
             return query @ candidates.T
         
-        # Use Rust SIMD backend for other metrics (cosine, L2, etc.)
-        return self._backend.batch_compute(query, candidates, metric)
+        # Use SIMD optimized path for other metrics (cosine, L2, etc.)
+        return self._engine.batch_compute(query, candidates, metric)
 
     def top_k_search(
         self,
@@ -225,7 +224,7 @@ class VectorEngine:
         ValueError
             If `metric` is unknown or the dimensions do not match.
         """
-        return self._backend.top_k_search(query, candidates, metric, k)
+        return self._engine.top_k_search(query, candidates, metric, k)
 
     def multi_query_top_k(
         self,
@@ -263,7 +262,7 @@ class VectorEngine:
         >>> indices = indices.reshape(len(queries), 10)
         >>> scores = scores.reshape(len(queries), 10)
         """
-        return self._backend.multi_query_top_k(queries, candidates, metric, k)
+        return self._engine.multi_query_top_k(queries, candidates, metric, k)
 
     def segmented_top_k_search(
         self,
@@ -325,7 +324,7 @@ class VectorEngine:
         ...         is_similarity=True,
         ...     )
         """
-        return self._backend.segmented_top_k_search(
+        return self._engine.segmented_top_k_search(
             query, candidates, metric, global_offset,
             current_indices, current_scores, k, is_similarity
         )
@@ -359,7 +358,7 @@ class StreamingVectorEngine:
 
     def __new__(cls) -> 'StreamingVectorEngine':
         if _StreamingVectorEngine is None:
-            raise ImportError("Rust backend not available")
+            raise ImportError("NumPack extension not available")
         return _StreamingVectorEngine()
 
     def capabilities(self) -> str:
@@ -386,7 +385,7 @@ class StreamingVectorEngine:
         Parameters
         ----------
         query : numpy.ndarray
-            Query vector (1D). Must be a floating dtype supported by the backend.
+            Query vector (1D). Must be a floating dtype.
         npk_dir : str
             Path to the NumPack directory.
         array_name : str

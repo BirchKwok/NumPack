@@ -493,7 +493,7 @@ class TestDropScenarios:
 class TestDropErrorHandling:
     """Test drop API error handling.
     
-    Note: Some error handling may be implemented in Rust backend; behavior may differ from expectations.
+    Note: Some error handling is implemented in native code; behavior may differ from expectations.
     """
     
     def test_drop_nonexistent_array_silent(self):
