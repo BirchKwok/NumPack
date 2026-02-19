@@ -2,14 +2,29 @@
 name = "numpack"
 version = "0.5.0"
 edition = "2021"
+description = "A high-performance array storage and manipulation library"
+authors = ["NumPack Contributors"]
+license = "Apache-2.0"
+readme = "README.md"
+keywords = ["numpy", "array", "storage", "performance"]
+categories = ["data-structures", "filesystem", "science"]
+repository = "https://github.com/BirchKwok/NumPack"
+exclude = [
+    "python/",
+    "benchmarks/",
+    "docs/",
+    "*.ipynb",
+    ".github/",
+    "test*",
+]
 
 [lib]
 name = "numpack"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-pyo3 = { version = "0.25.0", features = ["extension-module"] }
-numpy = { version = "0.25.0", features = ["half"] }
+pyo3 = { version = "0.25.0", optional = true }
+numpy = { version = "0.25.0", features = ["half"], optional = true }
 ndarray = { version = "0.16", features = ["blas"] }
 matrixmultiply = "0.3"
 num-complex = "0.4"
@@ -48,10 +63,11 @@ io-uring = { version = "0.6", optional = true }
 
 
 [build-dependencies]
-pyo3-build-config = "0.25.0"
+pyo3-build-config = { version = "0.25.0", optional = true }
 
 [features]
-extension-module = ["pyo3/extension-module"]
+python = ["dep:pyo3", "dep:numpy", "dep:pyo3-build-config"]
+extension-module = ["python", "pyo3/extension-module"]
 default = ["extension-module", "rayon"]
 avx512 = []
 rayon = ["dep:rayon"]

@@ -2,6 +2,7 @@
 //!
 //! 提供智能的GIL释放策略，在I/O密集型操作期间释放GIL以实现真正的并行性
 
+#[cfg(feature = "python")]
 use pyo3::prelude::*;
 
 /// GIL释放配置
@@ -80,6 +81,7 @@ impl GILOptimizer {
     ///     }
     /// )?;
     /// ```
+    #[cfg(feature = "python")]
     pub fn execute_with_gil_release<F, R>(
         &mut self,
         py: Python,

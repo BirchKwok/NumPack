@@ -6,18 +6,19 @@ pub mod core;
 pub mod simd_ops;
 pub mod traits;
 
-// 不同LazyArray实现
-pub mod iterator;
-pub mod standard;
-
 // 索引处理
 pub mod indexing;
 
 // FFI通信优化
 pub mod ffi_optimization;
 
-// Python绑定
+// Python 专用模块
+#[cfg(feature = "python")]
+pub mod iterator;
+#[cfg(feature = "python")]
 pub mod python_bindings;
+#[cfg(feature = "python")]
+pub mod standard;
 
 // 重新导出主要类型（对外API，内部未直接使用时忽略未用警告）
 #[allow(unused_imports)]
@@ -30,14 +31,18 @@ pub use ffi_optimization::{
 #[allow(unused_imports)]
 pub use indexing::{AccessPattern, AccessStrategy, IndexResult, IndexType, SliceInfo};
 #[allow(unused_imports)]
-pub use iterator::LazyArrayIterator;
-#[allow(unused_imports)]
 pub use simd_ops::*;
 #[allow(unused_imports)]
+pub use traits::*;
+
+#[cfg(feature = "python")]
+#[allow(unused_imports)]
+pub use iterator::LazyArrayIterator;
+#[cfg(feature = "python")]
+#[allow(unused_imports)]
 pub use standard::LazyArray;
+#[cfg(feature = "python")]
 #[allow(unused_imports)]
 pub use standard::LogicalRowMap;
-#[allow(unused_imports)]
-pub use traits::*;
 
 // Python绑定不重新导出，仅供lib.rs使用

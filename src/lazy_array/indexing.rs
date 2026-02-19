@@ -2,8 +2,11 @@
 //!
 //! 从lib.rs中提取的索引解析和处理逻辑
 
+#[cfg(feature = "python")]
 use pyo3::exceptions::PyValueError;
+#[cfg(feature = "python")]
 use pyo3::prelude::*;
+#[cfg(feature = "python")]
 use pyo3::types::{PyList, PySlice, PyTuple};
 
 /// 索引类型枚举
@@ -60,6 +63,7 @@ impl SliceInfo {
     }
 
     /// 从PySlice对象解析
+    #[cfg(feature = "python")]
     pub fn from_pyslice(slice: &Bound<'_, PySlice>, length: usize) -> PyResult<Self> {
         let indices = slice.indices(length as isize)?;
         Ok(Self {
@@ -139,12 +143,14 @@ impl SliceInfo {
     }
 
     /// 生成切片索引
+    #[cfg(feature = "python")]
     pub fn generate_indices(&self, length: usize) -> PyResult<Vec<usize>> {
         resolve_slice(self, length)
     }
 }
 
 /// 将SliceInfo解析为实际的索引序列
+#[cfg(feature = "python")]
 #[inline]
 pub fn resolve_slice(slice_info: &SliceInfo, dim_size: usize) -> PyResult<Vec<usize>> {
     let start = slice_info.start.unwrap_or(0);
@@ -235,8 +241,10 @@ impl IndexResult {
 }
 
 /// 索引解析器
+#[cfg(feature = "python")]
 pub struct IndexParser;
 
+#[cfg(feature = "python")]
 impl IndexParser {
     /// 解析单个索引
     pub fn parse_single_index(key: &Bound<'_, PyAny>) -> PyResult<IndexType> {

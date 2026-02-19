@@ -3,8 +3,31 @@
 // 本文件仅保留核心数据类型定义
 // 实际元数据存储使用 binary_metadata.rs 中的 BinaryMetadataStore
 
+use half::f16;
+use num_complex::{Complex32, Complex64};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
+
+/// NumPack 支持的元素类型标记 trait
+///
+/// 该 trait 作为泛型约束，标记所有 NumPack 支持的数组元素类型。
+/// 实现了此 trait 的类型可以安全地用于 NumPack 的读写操作。
+pub trait NpkElement: Copy + Send + Sync + 'static {}
+
+impl NpkElement for bool {}
+impl NpkElement for u8 {}
+impl NpkElement for u16 {}
+impl NpkElement for u32 {}
+impl NpkElement for u64 {}
+impl NpkElement for i8 {}
+impl NpkElement for i16 {}
+impl NpkElement for i32 {}
+impl NpkElement for i64 {}
+impl NpkElement for f16 {}
+impl NpkElement for f32 {}
+impl NpkElement for f64 {}
+impl NpkElement for Complex32 {}
+impl NpkElement for Complex64 {}
 
 /// NumPack数据类型，对应NumPy的数据类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

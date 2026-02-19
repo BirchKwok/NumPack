@@ -9,8 +9,12 @@
 //! 4. Cached Metadata - 缓存元数据访问
 
 use memmap2::Mmap;
-use ndarray::{ArrayD, ArrayViewD, IxDyn};
+use ndarray::IxDyn;
+#[cfg(feature = "python")]
+use ndarray::{ArrayD, ArrayViewD};
+#[cfg(feature = "python")]
 use numpy::ToPyArray;
+#[cfg(feature = "python")]
 use pyo3::prelude::*;
 use std::sync::Arc;
 
@@ -75,6 +79,7 @@ impl BatchDataCollector {
     }
 
     /// 转换为NumPy数组（单次FFI调用）
+    #[cfg(feature = "python")]
     pub fn into_numpy_array(self, py: Python) -> PyResult<PyObject> {
         // 使用ndarray创建正确形状的数组
         let shape_ixdyn = IxDyn(&self.shape);
@@ -121,6 +126,7 @@ impl ZeroCopyArrayBuilder {
     /// 1. offset和size在mmap范围内
     /// 2. 数据对齐正确
     /// 3. mmap在数组生命周期内有效
+    #[cfg(feature = "python")]
     pub unsafe fn create_view(
         &self,
         py: Python,
@@ -187,6 +193,7 @@ impl BatchIndexOptimizer {
     /// 批量获取行数据（优化版本）
     ///
     /// 此方法在Rust侧完成所有数据聚合，然后单次FFI调用返回
+    #[cfg(feature = "python")]
     pub fn batch_get_rows(
         &self,
         py: Python,
@@ -237,6 +244,7 @@ impl BatchIndexOptimizer {
     }
 
     /// 批量获取指定索引的元素（点访问优化）
+    #[cfg(feature = "python")]
     pub fn batch_get_elements(
         &self,
         py: Python,

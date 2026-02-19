@@ -1,7 +1,10 @@
-use pyo3::exceptions::PyRuntimeError;
-use pyo3::PyErr;
 use std::io;
 use thiserror::Error;
+
+#[cfg(feature = "python")]
+use pyo3::exceptions::PyRuntimeError;
+#[cfg(feature = "python")]
+use pyo3::PyErr;
 
 #[derive(Error, Debug)]
 pub enum NpkError {
@@ -30,6 +33,7 @@ pub enum NpkError {
     IndexOutOfBounds(i64, u64),
 }
 
+#[cfg(feature = "python")]
 impl From<NpkError> for PyErr {
     fn from(err: NpkError) -> PyErr {
         PyRuntimeError::new_err(err.to_string())

@@ -24,11 +24,17 @@ use half::f16;
 use memmap2::{Mmap, MmapOptions};
 use ndarray::ArrayD;
 use num_complex::{Complex32, Complex64};
+#[cfg(feature = "python")]
 use numpy::{IntoPyArray, PyArrayDyn, PyArrayMethods};
+#[cfg(feature = "python")]
 use pyo3::exceptions::PyKeyError;
+#[cfg(feature = "python")]
 use pyo3::ffi::Py_buffer;
+#[cfg(feature = "python")]
 use pyo3::prelude::*;
+#[cfg(feature = "python")]
 use pyo3::types::PySlice;
+#[cfg(feature = "python")]
 use pyo3::types::{PyDict, PyList, PyTuple};
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
@@ -39,19 +45,23 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
 
-use crate::core::DataType;
-use crate::io::ParallelIO;
+pub use crate::core::DataType;
+pub use crate::io::ParallelIO;
+#[cfg(feature = "python")]
 use crate::lazy_array::indexing::{
     AccessPattern, AccessStrategy, IndexParser, IndexResult, IndexType, SliceInfo,
 };
+#[cfg(feature = "python")]
 use crate::lazy_array::OptimizedLazyArray;
 
 // Windows 平台专用：mmap 清理函数
-#[cfg(windows)]
+#[cfg(all(windows, feature = "python"))]
 use crate::numpack::core::clear_mmap_cache_for_array;
 
+#[cfg(feature = "python")]
 use crate::lazy_array::LogicalRowMap;
 // use crate::storage::DeletionBitmap; // 未使用，暂时注释
+#[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
 #[cfg(target_family = "unix")]
@@ -73,6 +83,7 @@ fn clear_temp_files_from_cache() {
     cache.clear();
 }
 
+#[cfg(feature = "python")]
 #[allow(dead_code)]
 #[pyclass]
 struct NumPack {
@@ -80,6 +91,7 @@ struct NumPack {
     base_dir: PathBuf,
 }
 
+#[cfg(feature = "python")]
 #[pyclass]
 pub struct LazyArray {
     mmap: Arc<Mmap>,
@@ -94,6 +106,7 @@ pub struct LazyArray {
     logical_rows: Option<LogicalRowMap>,
 }
 
+#[cfg(feature = "python")]
 #[allow(dead_code)]
 #[pyclass]
 struct StreamLoader {
@@ -107,6 +120,7 @@ struct StreamLoader {
 }
 
 /// Iterator for LazyArray that yields rows
+#[cfg(feature = "python")]
 #[pyclass]
 pub struct LazyArrayIterator {
     array: LazyArray,
@@ -114,6 +128,7 @@ pub struct LazyArrayIterator {
     total_rows: usize,
 }
 
+#[cfg(feature = "python")]
 #[pymethods]
 impl LazyArrayIterator {
     fn __iter__(slf: PyRef<Self>) -> PyRef<Self> {
@@ -140,6 +155,7 @@ impl LazyArrayIterator {
 }
 
 // 新增：用户意图分类
+#[cfg(feature = "python")]
 #[derive(Debug, Clone)]
 enum UserIntent {
     SingleAccess(i64),     // 单次访问：lazy_array[i]
@@ -148,6 +164,7 @@ enum UserIntent {
 }
 
 /// 批量访问模式枚举 - 用于动态策略选择
+#[cfg(feature = "python")]
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum BatchAccessPattern {
     /// 顺序访问：索引连续或近似连续
@@ -162,6 +179,7 @@ enum BatchAccessPattern {
     Hot,
 }
 
+#[cfg(feature = "python")]
 #[pyclass]
 struct ArrayMetadata {
     #[pyo3(get)]
@@ -172,6 +190,7 @@ struct ArrayMetadata {
     data_file: String,
 }
 
+#[cfg(feature = "python")]
 #[pymethods]
 impl LazyArray {
     unsafe fn __getbuffer__(
@@ -1003,6 +1022,7 @@ impl LazyArray {
 }
 
 // 实现Drop特性以确保资源正确释放
+#[cfg(feature = "python")]
 impl Drop for LazyArray {
     fn drop(&mut self) {
         // 清理缓存中的引用
@@ -1017,6 +1037,7 @@ impl Drop for LazyArray {
 }
 
 // 新增：LazyArray的内部方法实现
+#[cfg(feature = "python")]
 impl LazyArray {
     fn logical_rows_mut(&mut self) -> Option<&mut LogicalRowMap> {
         self.logical_rows.as_mut()
@@ -2184,6 +2205,7 @@ impl LazyArray {
 }
 
 // LazyArray内部方法实现（非Python接口）
+#[cfg(feature = "python")]
 impl LazyArray {
     /// 用户意图分类（内部方法）
     fn classify_user_intent(&self, key: &Bound<'_, PyAny>) -> UserIntent {
@@ -2911,6 +2933,7 @@ unsafe fn safe_memory_copy(src: *const u8, dst: *mut u8, size: usize) {
     std::ptr::copy_nonoverlapping(src, dst, size);
 }
 
+#[cfg(feature = "python")]
 fn get_array_dtype(array: &Bound<'_, PyAny>) -> PyResult<DataType> {
     let dtype_str = array
         .getattr("dtype")?
@@ -2939,6 +2962,7 @@ fn get_array_dtype(array: &Bound<'_, PyAny>) -> PyResult<DataType> {
 }
 
 // 辅助函数（非PyO3方法）
+#[cfg(feature = "python")]
 impl NumPack {
     #[inline]
     fn safe_cast_vec_numpack<T: bytemuck::Pod + bytemuck::AnyBitPattern + bytemuck::NoUninit>(data: Vec<u8>) -> Vec<T> {
@@ -3077,6 +3101,7 @@ impl NumPack {
     }
 }
 
+#[cfg(feature = "python")]
 #[pymethods]
 impl NumPack {
     #[new]
@@ -4898,6 +4923,7 @@ impl NumPack {
     }
 }
 
+#[cfg(feature = "python")]
 #[pymethods]
 impl StreamLoader {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -5080,6 +5106,7 @@ impl StreamLoader {
     }
 }
 
+#[cfg(feature = "python")]
 fn create_optimized_mmap(
     path: &Path,
     modify_time: i64,
@@ -5136,6 +5163,7 @@ fn create_optimized_mmap(
     Ok(mmap)
 }
 
+#[cfg(feature = "python")]
 #[pymodule]
 fn _lib_numpack(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // 注册核心类
@@ -5159,6 +5187,7 @@ fn _lib_numpack(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 // 通用清理函数
+#[cfg(feature = "python")]
 #[pyfunction]
 fn force_cleanup_windows_handles() -> PyResult<()> {
     // 清理临时文件缓存
@@ -5173,6 +5202,7 @@ fn release_windows_file_handle(_path: &Path) {
 }
 
 /// 安全创建内存 slice 的辅助函数
+#[cfg(feature = "python")]
 #[allow(dead_code)]
 fn safe_slice_from_mmap(mmap: &Mmap, offset: usize, size: usize) -> Result<&[u8], PyErr> {
     if offset + size > mmap.len() {
@@ -5184,6 +5214,7 @@ fn safe_slice_from_mmap(mmap: &Mmap, offset: usize, size: usize) -> Result<&[u8]
 }
 
 /// 安全复制内存数据的辅助函数 - 防止 Windows 内存访问冲突
+#[cfg(feature = "python")]
 #[allow(dead_code)]
 fn safe_copy_from_mmap(mmap: &Mmap, offset: usize, size: usize) -> Result<Vec<u8>, PyErr> {
     if offset + size > mmap.len() {
@@ -5199,3 +5230,19 @@ fn safe_copy_from_mmap(mmap: &Mmap, offset: usize, size: usize) -> Result<Vec<u8
     }
     Ok(result)
 }
+
+// ============================================================================
+// 纯 Rust 公开 API（不依赖 Python）
+// Pure Rust public API (no Python dependency required)
+// ============================================================================
+
+/// NumPack 核心错误类型
+pub use crate::core::error::{NpkError, NpkResult};
+
+/// NumPack 支持的元素类型标记 trait
+pub use crate::core::metadata::NpkElement;
+
+/// 向量计算引擎（不依赖 Python）
+pub use crate::vector_engine::core::VectorEngine;
+pub use crate::vector_engine::metrics::MetricType;
+pub use crate::vector_engine::simd_backend::{SIMDCapabilities, SimdBackend};

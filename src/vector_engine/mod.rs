@@ -7,8 +7,10 @@
 
 pub mod core;
 pub mod metrics;
-pub mod python_bindings;
 pub mod simd_backend;
+
+#[cfg(feature = "python")]
+pub mod python_bindings;
 
 // 重新导出主要类型
 #[allow(unused_imports)]

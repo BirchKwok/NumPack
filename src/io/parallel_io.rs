@@ -1,7 +1,8 @@
 use memmap2::MmapOptions;
 use ndarray::{ArrayD, ArrayViewD, IxDyn};
-use numpy::Element;
 use rayon::prelude::*;
+
+use crate::core::metadata::NpkElement;
 use std::collections::{HashSet, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
@@ -183,7 +184,7 @@ impl ArrayView {
         retained
     }
 
-    pub fn into_array<T: Element + Copy>(
+    pub fn into_array<T: NpkElement>(
         &mut self,
         excluded_indices: Option<&[i64]>,
     ) -> NpkResult<ArrayD<T>> {
@@ -652,7 +653,7 @@ impl ParallelIO {
     /// 1. 智能路径选择：已存在且形状相同 → replace路径（最快）
     /// 2. 自适应缓冲区：根据数据大小选择最优缓冲区
     /// 3. SIMD加速写入：对于大数据使用SIMD拷贝
-    fn save_single_array<T: Element + Copy + Send + Sync>(
+    fn save_single_array<T: NpkElement>(
         &self,
         name: &str,
         array: &ArrayD<T>,
@@ -738,7 +739,7 @@ impl ParallelIO {
         total_size: usize,
     ) -> NpkResult<()>
     where
-        T: Element + Copy + Send + Sync,
+        T: NpkElement,
     {
         let buffer_size = Self::LARGE_BUFFER_SIZE;
         let mut writer = BufWriter::with_capacity(buffer_size, file);
@@ -771,7 +772,7 @@ impl ParallelIO {
         Ok(())
     }
 
-    pub fn save_arrays<T: Element + Copy + Send + Sync>(
+    pub fn save_arrays<T: NpkElement>(
         &self,
         arrays: &[(String, ArrayD<T>, DataType)],
     ) -> NpkResult<()> {
@@ -1087,7 +1088,7 @@ impl ParallelIO {
         groups
     }
 
-    pub fn replace_rows<T: Element + Copy + Send + Sync>(
+    pub fn replace_rows<T: NpkElement>(
         &self,
         name: &str,
         data: &ArrayD<T>,
