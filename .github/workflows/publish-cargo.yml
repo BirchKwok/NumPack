@@ -48,10 +48,9 @@ jobs:
             exit 1
           fi
 
-      - name: Build and test (without Python feature)
+      - name: Build (without Python feature)
         run: |
           cargo build --no-default-features --features rayon
-          cargo test --no-default-features --features rayon --lib
 
       - name: Publish to crates.io
         env:

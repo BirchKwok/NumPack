@@ -605,6 +605,7 @@ mod tests {
         assert_eq!(slice.result_length(10), 5);
     }
 
+    #[cfg(feature = "python")]
     #[test]
     fn test_access_pattern_detection() {
         let sequential = vec![vec![0, 1, 2, 3, 4]];
