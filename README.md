@@ -21,11 +21,29 @@ A high-performance NumPy array storage library combining Rust's speed with Pytho
 
 ## Installation
 
+### Python
+
 ```bash
 pip install numpack
 ```
 
 **Requirements:** Python ≥ 3.9, NumPy ≥ 1.26.0
+
+### Rust
+
+Add to your `Cargo.toml`:
+
+```toml
+[dependencies]
+numpack = "0.5.1"
+```
+
+**Features:**
+- `rayon` (default) - Parallel processing support
+- `avx512` - AVX-512 SIMD optimizations
+- `io-uring-support` - io_uring on Linux
+
+**Requirements:** Rust ≥ 1.70.0
 
 <details>
 <summary><b>Build from Source</b></summary>
@@ -40,6 +58,8 @@ maturin develop  # or: maturin build --release
 </details>
 
 ## Quick Start
+
+### Python
 
 ```python
 import numpy as np
@@ -61,6 +81,45 @@ with NumPack("data.npk") as npk:
     # Random access
     subset = npk.getitem('embeddings', [100, 200, 300])
 ```
+
+### Rust
+
+```rust
+use numpack::{ParallelIO, DataType};
+use ndarray::{ArrayD, Array2};
+use std::path::Path;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create or open a NumPack storage
+    let npk = ParallelIO::new(Path::new("data.npk"));
+    
+    // Save arrays
+    let data: Array2<f32> = Array2::from_shape_fn((1000, 128), |_| rand::random());
+    npk.save_arrays(&[("embeddings", data.view().into_dyn())])?;
+    
+    // Load arrays
+    let loaded: ArrayD<f32> = npk.load_array("embeddings")?;
+    
+    // Random access - get specific rows
+    let rows = npk.get_rows("embeddings", &[0, 10, 20])?;
+    
+    // Get metadata
+    let meta = npk.get_metadata("embeddings")?;
+    println!("Shape: {:?}, dtype: {:?}", meta.shape, meta.dtype);
+    
+    Ok(())
+}
+```
+
+**Core Types:**
+- `ParallelIO` - Main interface for storage operations
+- `DataType` - Supported data types (Bool, Int8-64, Uint8-64, Float16/32/64, Complex64/128)
+- `ArrayMetadata` - Array shape, dtype, and file info
+
+**Features:**
+- Zero-copy memory mapping via `memmap2`
+- Parallel IO with `rayon`
+- SIMD vector operations
 
 ### Batch Modes
 

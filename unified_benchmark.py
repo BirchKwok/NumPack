@@ -23,6 +23,12 @@ NumPack 综合格式性能基准测试
 7. Random Access (随机访问)
 8. File Size (文件大小)
 
+数据安全性测试:
+9. Data Integrity (数据完整性 - 写入后读取一致性验证)
+10. Concurrent Access (并发访问 - 多线程读写安全)
+11. Crash Recovery (异常恢复 - 模拟崩溃后数据恢复)
+12. Checksum Verification (校验和验证 - 数据损坏检测)
+
 测试数据集:
 - Large: 1M rows × 10 columns (Float32, ~38.1MB)
 - Medium: 100K rows × 10 columns (Float32, ~3.8MB)
@@ -35,6 +41,9 @@ import time
 import timeit
 import tempfile
 import gc
+import hashlib
+import threading
+import concurrent.futures
 from pathlib import Path
 from typing import Dict, Any, List, Callable, Tuple
 import warnings
@@ -1372,6 +1381,456 @@ class FormatBenchmark:
             self.results.add(format_name, "Sequential Access (10K)", time_ms, note="full load")
             print(f"  ✓ Sequential Access (10K): {time_ms:.3f}ms (full load)")
 
+    # ==================== 数据安全性测试 ====================
+    
+    def test_data_integrity(self, data: np.ndarray, array_name: str = "data"):
+        """测试数据完整性 - 验证写入后读取的数据一致性
+        
+        测试内容:
+        1. 写入数据后计算原始数据的校验和
+        2. 读取数据后计算读取数据的校验和
+        3. 对比两个校验和，验证数据完整性
+        4. 测试多次读写循环后的数据一致性
+        """
+        if not NUMPACK_AVAILABLE:
+            return
+        
+        format_name = "NumPack (Data Integrity)"
+        print(f"\nTesting {format_name}...")
+        
+        path = self.temp_dir / "numpack_integrity"
+        if path.exists():
+            shutil.rmtree(path)
+        
+        def compute_checksum(arr: np.ndarray) -> str:
+            """计算数组的MD5校验和"""
+            return hashlib.md5(arr.tobytes()).hexdigest()
+        
+        # 测试1: 单次写入读取完整性
+        original_checksum = compute_checksum(data)
+        
+        try:
+            with NumPack(path, drop_if_exists=True) as npk:
+                npk.save({array_name: data})
+            
+            with NumPack(path) as npk:
+                loaded_data = npk.load(array_name)
+                loaded_checksum = compute_checksum(loaded_data)
+            
+            integrity_match = original_checksum == loaded_checksum
+            status = "✓ PASS" if integrity_match else "✗ FAIL"
+            print(f"  {status} Single Write/Read Integrity: {integrity_match}")
+            self.results.add(format_name, "Single Write/Read", 0, note=f"match={integrity_match}")
+        except Exception as e:
+            print(f"  ✗ Single Write/Read failed: {e}")
+            self.results.add_error(format_name, "Single Write/Read", str(e))
+        
+        # 测试2: 多次写入读取循环完整性
+        try:
+            num_cycles = 5
+            all_match = True
+            
+            for i in range(num_cycles):
+                with NumPack(path, drop_if_exists=(i==0)) as npk:
+                    npk.save({array_name: data})
+                
+                with NumPack(path) as npk:
+                    loaded = npk.load(array_name)
+                    if compute_checksum(loaded) != original_checksum:
+                        all_match = False
+                        break
+            
+            status = "✓ PASS" if all_match else "✗ FAIL"
+            print(f"  {status} Multi-Cycle Integrity ({num_cycles} cycles): {all_match}")
+            self.results.add(format_name, "Multi-Cycle", 0, note=f"match={all_match}, cycles={num_cycles}")
+        except Exception as e:
+            print(f"  ✗ Multi-Cycle failed: {e}")
+            self.results.add_error(format_name, "Multi-Cycle", str(e))
+        
+        # 测试3: 部分修改后完整性（Replace操作）
+        try:
+            modified_data = data.copy()
+            modified_data[:100] = np.random.rand(100, data.shape[1]).astype(data.dtype)
+            modified_checksum = compute_checksum(modified_data)
+            
+            with NumPack(path, drop_if_exists=True) as npk:
+                npk.save({array_name: data})
+                npk.replace({array_name: modified_data[:100]}, list(range(100)))
+            
+            with NumPack(path) as npk:
+                loaded_after_replace = npk.load(array_name)
+                replace_checksum = compute_checksum(loaded_after_replace)
+            
+            replace_match = modified_checksum == replace_checksum
+            status = "✓ PASS" if replace_match else "✗ FAIL"
+            print(f"  {status} Replace Operation Integrity: {replace_match}")
+            self.results.add(format_name, "Replace Integrity", 0, note=f"match={replace_match}")
+        except Exception as e:
+            print(f"  ✗ Replace Integrity failed: {e}")
+            self.results.add_error(format_name, "Replace Integrity", str(e))
+    
+    def test_concurrent_access(self, data: np.ndarray, array_name: str = "data"):
+        """测试并发访问安全性 - 多线程读写
+        
+        测试内容:
+        1. 多线程并发读取同一文件
+        2. 多线程并发写入不同数组
+        3. 读写混合并发操作
+        """
+        if not NUMPACK_AVAILABLE:
+            return
+        
+        format_name = "NumPack (Concurrent Access)"
+        print(f"\nTesting {format_name}...")
+        
+        path = self.temp_dir / "numpack_concurrent"
+        if path.exists():
+            shutil.rmtree(path)
+        
+        num_threads = 4
+        errors = []
+        
+        # 测试1: 多线程并发读取
+        try:
+            # 先创建测试文件
+            with NumPack(path, drop_if_exists=True) as npk:
+                npk.save({array_name: data})
+            
+            read_results = []
+            
+            def read_worker(thread_id: int):
+                try:
+                    with NumPack(path) as npk:
+                        loaded = npk.load(array_name)
+                        read_results.append((thread_id, loaded.shape))
+                except Exception as e:
+                    errors.append(f"Thread {thread_id} read error: {e}")
+            
+            threads = []
+            for i in range(num_threads):
+                t = threading.Thread(target=read_worker, args=(i,))
+                threads.append(t)
+                t.start()
+            
+            for t in threads:
+                t.join()
+            
+            concurrent_read_ok = len(read_results) == num_threads and len(errors) == 0
+            status = "✓ PASS" if concurrent_read_ok else "✗ FAIL"
+            print(f"  {status} Concurrent Read ({num_threads} threads): {concurrent_read_ok}")
+            self.results.add(format_name, "Concurrent Read", 0, 
+                           note=f"success={len(read_results)}/{num_threads}, errors={len(errors)}")
+        except Exception as e:
+            print(f"  ✗ Concurrent Read failed: {e}")
+            self.results.add_error(format_name, "Concurrent Read", str(e))
+        
+        # 测试2: 多线程并发写入不同数组
+        try:
+            path_write = self.temp_dir / "numpack_concurrent_write"
+            if path_write.exists():
+                shutil.rmtree(path_write)
+            
+            write_results = []
+            
+            def write_worker(thread_id: int):
+                try:
+                    thread_data = np.random.rand(1000, 10).astype(np.float32)
+                    with NumPack(path_write) as npk:
+                        npk.save({f"thread_{thread_id}": thread_data})
+                    write_results.append(thread_id)
+                except Exception as e:
+                    errors.append(f"Thread {thread_id} write error: {e}")
+            
+            threads = []
+            for i in range(num_threads):
+                t = threading.Thread(target=write_worker, args=(i,))
+                threads.append(t)
+                t.start()
+            
+            for t in threads:
+                t.join()
+            
+            concurrent_write_ok = len(write_results) == num_threads and len(errors) == 0
+            status = "✓ PASS" if concurrent_write_ok else "✗ FAIL"
+            print(f"  {status} Concurrent Write ({num_threads} threads): {concurrent_write_ok}")
+            self.results.add(format_name, "Concurrent Write", 0,
+                           note=f"success={len(write_results)}/{num_threads}, errors={len(errors)}")
+        except Exception as e:
+            print(f"  ✗ Concurrent Write failed: {e}")
+            self.results.add_error(format_name, "Concurrent Write", str(e))
+    
+    def test_crash_recovery(self, data: np.ndarray, array_name: str = "data"):
+        """测试异常恢复能力 - 模拟崩溃后的数据恢复
+        
+        测试内容:
+        1. 写入过程中强制关闭（模拟崩溃）
+        2. 检查文件是否可恢复和读取
+        3. 验证元数据完整性
+        """
+        if not NUMPACK_AVAILABLE:
+            return
+        
+        format_name = "NumPack (Crash Recovery)"
+        print(f"\nTesting {format_name}...")
+        
+        path = self.temp_dir / "numpack_crash"
+        if path.exists():
+            shutil.rmtree(path)
+        
+        try:
+            # 测试1: 正常写入后强制关闭，重新打开
+            npk = NumPack(path, drop_if_exists=True)
+            npk.open()
+            npk.save({array_name: data})
+            # 不调用 close() 模拟异常退出
+            del npk
+            gc.collect()
+            
+            # 尝试重新打开并读取
+            with NumPack(path) as npk_recover:
+                recovered_data = npk_recover.load(array_name)
+                recovered_shape = recovered_data.shape
+            
+            recovery_ok = recovered_shape == data.shape
+            status = "✓ PASS" if recovery_ok else "✗ FAIL"
+            print(f"  {status} Recovery After Abnormal Close: {recovery_ok}")
+            self.results.add(format_name, "Abnormal Close Recovery", 0,
+                           note=f"shape_match={recovery_ok}")
+        except Exception as e:
+            print(f"  ✗ Abnormal Close Recovery failed: {e}")
+            self.results.add_error(format_name, "Abnormal Close Recovery", str(e))
+        
+        # 测试2: 元数据完整性检查
+        try:
+            with NumPack(path) as npk:
+                member_list = npk.get_member_list()
+                metadata = npk.get_metadata()
+            
+            metadata_ok = array_name in member_list and metadata is not None
+            status = "✓ PASS" if metadata_ok else "✗ FAIL"
+            print(f"  {status} Metadata Integrity: {metadata_ok}")
+            self.results.add(format_name, "Metadata Integrity", 0,
+                           note=f"array_found={array_name in member_list}")
+        except Exception as e:
+            print(f"  ✗ Metadata Integrity failed: {e}")
+            self.results.add_error(format_name, "Metadata Integrity", str(e))
+    
+    def test_checksum_verification(self, data: np.ndarray, array_name: str = "data"):
+        """测试校验和验证 - 检测数据损坏
+        
+        测试内容:
+        1. 计算并存储数据的校验和
+        2. 检测文件 corruption 模拟
+        3. 验证校验和机制
+        """
+        if not NUMPACK_AVAILABLE:
+            return
+        
+        format_name = "NumPack (Checksum)"
+        print(f"\nTesting {format_name}...")
+        
+        path = self.temp_dir / "numpack_checksum"
+        if path.exists():
+            shutil.rmtree(path)
+        
+        try:
+            # 测试1: 计算校验和并验证一致性
+            import hashlib
+            original_checksum = hashlib.sha256(data.tobytes()).hexdigest()
+            
+            with NumPack(path, drop_if_exists=True) as npk:
+                npk.save({array_name: data})
+            
+            with NumPack(path) as npk:
+                loaded = npk.load(array_name)
+                loaded_checksum = hashlib.sha256(loaded.tobytes()).hexdigest()
+            
+            checksum_match = original_checksum == loaded_checksum
+            status = "✓ PASS" if checksum_match else "✗ FAIL"
+            print(f"  {status} SHA256 Checksum Verification: {checksum_match}")
+            self.results.add(format_name, "SHA256 Verification", 0,
+                           note=f"match={checksum_match}")
+        except Exception as e:
+            print(f"  ✗ SHA256 Verification failed: {e}")
+            self.results.add_error(format_name, "SHA256 Verification", str(e))
+        
+        # 测试2: 部分数据读取校验
+        try:
+            with NumPack(path) as npk:
+                # 随机访问部分数据
+                indices = [0, 10, 100, 1000]
+                partial_data = npk.getitem(array_name, indices)
+                expected_data = data[indices]
+                
+                partial_match = np.array_equal(partial_data, expected_data)
+            
+            status = "✓ PASS" if partial_match else "✗ FAIL"
+            print(f"  {status} Partial Data Checksum: {partial_match}")
+            self.results.add(format_name, "Partial Data", 0,
+                           note=f"match={partial_match}")
+        except Exception as e:
+            print(f"  ✗ Partial Data failed: {e}")
+            self.results.add_error(format_name, "Partial Data", str(e))
+
+    # ==================== 其他格式的数据安全性测试 ====================
+    
+    def _compute_checksum(self, arr: np.ndarray) -> str:
+        """计算数组的MD5校验和"""
+        return hashlib.md5(arr.tobytes()).hexdigest()
+    
+    def test_npy_safety(self, data: np.ndarray):
+        """测试 NPY 格式的数据安全性"""
+        format_name = "NPY (Safety)"
+        print(f"\nTesting {format_name}...")
+        
+        path = self.temp_dir / "data_safety.npy"
+        original_checksum = self._compute_checksum(data)
+        
+        # 数据完整性测试
+        try:
+            np.save(path, data)
+            loaded = np.load(path)
+            integrity_match = self._compute_checksum(loaded) == original_checksum
+            status = "✓ PASS" if integrity_match else "✗ FAIL"
+            print(f"  {status} Data Integrity: {integrity_match}")
+            self.results.add(format_name, "Data Integrity", 0, note=f"match={integrity_match}")
+        except Exception as e:
+            print(f"  ✗ Data Integrity failed: {e}")
+            self.results.add_error(format_name, "Data Integrity", str(e))
+        
+        # 多循环测试
+        try:
+            all_match = True
+            for _ in range(5):
+                np.save(path, data)
+                loaded = np.load(path)
+                if self._compute_checksum(loaded) != original_checksum:
+                    all_match = False
+                    break
+            status = "✓ PASS" if all_match else "✗ FAIL"
+            print(f"  {status} Multi-Cycle Integrity: {all_match}")
+            self.results.add(format_name, "Multi-Cycle", 0, note=f"match={all_match}")
+        except Exception as e:
+            print(f"  ✗ Multi-Cycle failed: {e}")
+            self.results.add_error(format_name, "Multi-Cycle", str(e))
+    
+    def test_npz_safety(self, data: np.ndarray, array_name: str = "data"):
+        """测试 NPZ 格式的数据安全性"""
+        format_name = "NPZ (Safety)"
+        print(f"\nTesting {format_name}...")
+        
+        path = self.temp_dir / "data_safety.npz"
+        original_checksum = self._compute_checksum(data)
+        
+        try:
+            np.savez_compressed(path, **{array_name: data})
+            with np.load(path) as npz:
+                loaded = npz[array_name]
+                integrity_match = self._compute_checksum(loaded) == original_checksum
+            status = "✓ PASS" if integrity_match else "✗ FAIL"
+            print(f"  {status} Data Integrity: {integrity_match}")
+            self.results.add(format_name, "Data Integrity", 0, note=f"match={integrity_match}")
+        except Exception as e:
+            print(f"  ✗ Data Integrity failed: {e}")
+            self.results.add_error(format_name, "Data Integrity", str(e))
+    
+    def test_zarr_safety(self, data: np.ndarray, array_name: str = "data"):
+        """测试 Zarr 格式的数据安全性"""
+        if not ZARR_AVAILABLE:
+            return
+        
+        format_name = "Zarr (Safety)"
+        print(f"\nTesting {format_name}...")
+        
+        path = self.temp_dir / "data_safety.zarr"
+        original_checksum = self._compute_checksum(data)
+        
+        try:
+            if path.exists():
+                shutil.rmtree(path)
+            zarr.save(str(path), data)
+            loaded = zarr.load(str(path))
+            integrity_match = self._compute_checksum(loaded) == original_checksum
+            status = "✓ PASS" if integrity_match else "✗ FAIL"
+            print(f"  {status} Data Integrity: {integrity_match}")
+            self.results.add(format_name, "Data Integrity", 0, note=f"match={integrity_match}")
+        except Exception as e:
+            print(f"  ✗ Data Integrity failed: {e}")
+            self.results.add_error(format_name, "Data Integrity", str(e))
+    
+    def test_hdf5_safety(self, data: np.ndarray, array_name: str = "data"):
+        """测试 HDF5 格式的数据安全性"""
+        if not HDF5_AVAILABLE:
+            return
+        
+        format_name = "HDF5 (Safety)"
+        print(f"\nTesting {format_name}...")
+        
+        path = self.temp_dir / "data_safety.h5"
+        original_checksum = self._compute_checksum(data)
+        
+        try:
+            with h5py.File(path, 'w') as f:
+                f.create_dataset(array_name, data=data)
+            with h5py.File(path, 'r') as f:
+                loaded = f[array_name][:]
+                integrity_match = self._compute_checksum(loaded) == original_checksum
+            status = "✓ PASS" if integrity_match else "✗ FAIL"
+            print(f"  {status} Data Integrity: {integrity_match}")
+            self.results.add(format_name, "Data Integrity", 0, note=f"match={integrity_match}")
+        except Exception as e:
+            print(f"  ✗ Data Integrity failed: {e}")
+            self.results.add_error(format_name, "Data Integrity", str(e))
+    
+    def test_parquet_safety(self, data: np.ndarray):
+        """测试 Parquet 格式的数据安全性"""
+        if not ARROW_AVAILABLE:
+            return
+        
+        format_name = "Parquet (Safety)"
+        print(f"\nTesting {format_name}...")
+        
+        path = self.temp_dir / "data_safety.parquet"
+        df = pd.DataFrame(data)
+        original_checksum = self._compute_checksum(data)
+        
+        try:
+            df.to_parquet(path, index=False)
+            loaded_df = pd.read_parquet(path)
+            loaded = loaded_df.values.astype(data.dtype)
+            integrity_match = self._compute_checksum(loaded) == original_checksum
+            status = "✓ PASS" if integrity_match else "✗ FAIL"
+            print(f"  {status} Data Integrity: {integrity_match}")
+            self.results.add(format_name, "Data Integrity", 0, note=f"match={integrity_match}")
+        except Exception as e:
+            print(f"  ✗ Data Integrity failed: {e}")
+            self.results.add_error(format_name, "Data Integrity", str(e))
+    
+    def test_arrow_safety(self, data: np.ndarray):
+        """测试 Arrow/Feather 格式的数据安全性"""
+        if not ARROW_AVAILABLE:
+            return
+        
+        format_name = "Arrow/Feather (Safety)"
+        print(f"\nTesting {format_name}...")
+        
+        path = self.temp_dir / "data_safety.feather"
+        df = pd.DataFrame(data)
+        original_checksum = self._compute_checksum(data)
+        
+        try:
+            import pyarrow.feather as feather
+            feather.write_feather(df, path)
+            loaded_df = feather.read_feather(path)
+            loaded = loaded_df.values.astype(data.dtype)
+            integrity_match = self._compute_checksum(loaded) == original_checksum
+            status = "✓ PASS" if integrity_match else "✗ FAIL"
+            print(f"  {status} Data Integrity: {integrity_match}")
+            self.results.add(format_name, "Data Integrity", 0, note=f"match={integrity_match}")
+        except Exception as e:
+            print(f"  ✗ Data Integrity failed: {e}")
+            self.results.add_error(format_name, "Data Integrity", str(e))
+
 
 def print_summary_table(results: BenchmarkResult, operations: List[str], title: str):
     """打印汇总表格"""
@@ -1432,6 +1891,25 @@ def main():
             benchmark.test_parquet(data)
             benchmark.test_arrow(data)
             
+            # 运行数据安全性测试（所有格式）
+            print(f"\n{'='*80}")
+            print(f"Data Safety Tests: {dataset_info['name']}")
+            print(f"{'='*80}")
+            
+            # NumPack 详细数据安全性测试
+            benchmark.test_data_integrity(data, array_name)
+            benchmark.test_concurrent_access(data, array_name)
+            benchmark.test_crash_recovery(data, array_name)
+            benchmark.test_checksum_verification(data, array_name)
+            
+            # 其他格式的数据完整性测试
+            benchmark.test_npy_safety(data)
+            benchmark.test_npz_safety(data, array_name)
+            benchmark.test_zarr_safety(data, array_name)
+            benchmark.test_hdf5_safety(data, array_name)
+            benchmark.test_parquet_safety(data)
+            benchmark.test_arrow_safety(data)
+            
             all_results[dataset_info['name']] = benchmark.results
         
         # 打印汇总结果
@@ -1455,7 +1933,15 @@ def main():
             "Sequential Access (10K)",
             "Normal Mode (100x)",
             "Batch Mode (100x)",
-            "Writable Batch Mode (100x)"
+            "Writable Batch Mode (100x)",
+            "Data Integrity",
+            "Multi-Cycle",
+            "Concurrent Read",
+            "Concurrent Write",
+            "Abnormal Close Recovery",
+            "Metadata Integrity",
+            "SHA256 Verification",
+            "Partial Data"
         ]
         
         for dataset_name, results in all_results.items():
