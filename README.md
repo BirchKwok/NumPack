@@ -36,11 +36,12 @@ Add to your `Cargo.toml`:
 ```toml
 [dependencies]
 numpack = "0.5.1"
+ndarray = "0.16"
 ```
 
 **Features:**
 - `rayon` (default) - Parallel processing support
-- `avx512` - AVX-512 SIMD optimizations
+- `avx512` - AVX-512 SIMD optimizations  
 - `io-uring-support` - io_uring on Linux
 
 **Requirements:** Rust ≥ 1.70.0
@@ -57,69 +58,161 @@ maturin develop  # or: maturin build --release
 ```
 </details>
 
-## Quick Start
-
-### Python
-
-```python
-import numpy as np
-from numpack import NumPack
-
-with NumPack("data.npk") as npk:
-    # Save
-    npk.save({'embeddings': np.random.rand(10000, 128).astype(np.float32)})
-    
-    # Load (normal or lazy)
-    data = npk.load("embeddings")
-    lazy = npk.load("embeddings", lazy=True)
-    
-    # Modify
-    npk.replace({'embeddings': new_rows}, indices=[0, 1, 2])
-    npk.append({'embeddings': more_rows})
-    npk.drop('embeddings', [0, 1, 2])  # drop rows
-    
-    # Random access
-    subset = npk.getitem('embeddings', [100, 200, 300])
-```
-
-### Rust
+#### Basic Usage
 
 ```rust
-use numpack::{ParallelIO, DataType};
-use ndarray::{ArrayD, Array2};
+use numpack::prelude::*;
+use ndarray::{ArrayD, Array2, array};
 use std::path::Path;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> NpkResult<()> {
     // Create or open a NumPack storage
-    let npk = ParallelIO::new(Path::new("data.npk"));
+    let io = ParallelIO::new(PathBuf::from("data.npk"))?;
     
-    // Save arrays
+    // Save arrays with explicit dtype
     let data: Array2<f32> = Array2::from_shape_fn((1000, 128), |_| rand::random());
-    npk.save_arrays(&[("embeddings", data.view().into_dyn())])?;
+    io.save_arrays(&[("embeddings".to_string(), data.into_dyn(), DataType::Float32)])?;
     
-    // Load arrays
-    let loaded: ArrayD<f32> = npk.load_array("embeddings")?;
-    
-    // Random access - get specific rows
-    let rows = npk.get_rows("embeddings", &[0, 10, 20])?;
-    
-    // Get metadata
-    let meta = npk.get_metadata("embeddings")?;
-    println!("Shape: {:?}, dtype: {:?}", meta.shape, meta.dtype);
+    // Metadata is written on drop, or call sync_metadata() explicitly
+    io.sync_metadata()?;
     
     Ok(())
 }
 ```
 
-**Core Types:**
-- `ParallelIO` - Main interface for storage operations
-- `DataType` - Supported data types (Bool, Int8-64, Uint8-64, Float16/32/64, Complex64/128)
-- `ArrayMetadata` - Array shape, dtype, and file info
+#### API Reference
 
-**Features:**
-- Zero-copy memory mapping via `memmap2`
-- Parallel IO with `rayon`
-- SIMD vector operations
+**Storage Operations:**
+
+| Method | Description | Example |
+|--------|-------------|---------|
+| `ParallelIO::new(path)` | Create/open storage | `ParallelIO::new(PathBuf::from("data"))?` |
+| `save_arrays(&[(name, array, dtype)])` | Save multiple arrays | See below |
+| `sync_metadata()` | Persist metadata to disk | `io.sync_metadata()?` |
+| `reset()` | Delete all arrays | `io.reset()?` |
+
+**Array Operations:**
+
+```rust
+// Check if array exists
+if io.has_array("embeddings") {
+    println!("Array exists!");
+}
+
+// List all arrays
+let names = io.list_arrays();
+println!("Arrays: {:?}", names);
+
+// Get array metadata
+let meta = io.get_array_metadata("embeddings")?;
+println!("Shape: {:?}, dtype: {:?}", meta.shape, meta.get_dtype());
+
+// Read specific rows (returns raw bytes)
+let row_data = io.read_rows("embeddings", &[0, 10, 20])?;
+
+// Replace rows in-place (fastest for existing arrays)
+let new_rows = Array2::<f32>::zeros((3, 128)).into_dyn();
+io.replace_rows("embeddings", &new_rows, &[0, 1, 2])?;
+
+// Logical delete (mark rows as deleted)
+io.drop_arrays("embeddings", Some(&[5, 6, 7]))?;
+
+// Physical compact (remove deleted rows, reclaim space)
+io.compact_array("embeddings")?;
+
+// Delete entire array
+io.drop_arrays("embeddings", None)?;
+```
+
+**Data Type Mapping:**
+
+| NumPack Type | Rust Type | Size |
+|--------------|-----------|------|
+| `DataType::Bool` | `bool` | 1 byte |
+| `DataType::Int8` | `i8` | 1 byte |
+| `DataType::Int16` | `i16` | 2 bytes |
+| `DataType::Int32` | `i32` | 4 bytes |
+| `DataType::Int64` | `i64` | 8 bytes |
+| `DataType::Uint8` | `u8` | 1 byte |
+| `DataType::Uint16` | `u16` | 2 bytes |
+| `DataType::Uint32` | `u32` | 4 bytes |
+| `DataType::Uint64` | `u64` | 8 bytes |
+| `DataType::Float16` | `half::f16` | 2 bytes |
+| `DataType::Float32` | `f32` | 4 bytes |
+| `DataType::Float64` | `f64` | 8 bytes |
+| `DataType::Complex64` | `num_complex::Complex32` | 8 bytes |
+| `DataType::Complex128` | `num_complex::Complex64` | 16 bytes |
+
+#### Concurrent Access
+
+Multiple threads can safely write to the same storage concurrently (since v0.5.1+):
+
+```rust
+use std::thread;
+
+fn concurrent_write() -> NpkResult<()> {
+    let dir = "/tmp/numpack_data";
+    std::fs::create_dir_all(dir)?;
+    
+    let handles: Vec<_> = (0..10)
+        .map(|i| {
+            let dir = dir.to_string();
+            thread::spawn(move || {
+                let io = ParallelIO::new(PathBuf::from(dir))?;
+                let data = Array2::<f32>::ones((100, 128)).into_dyn();
+                io.save_arrays(&[(format!("chunk_{}", i), data, DataType::Float32)])?;
+                io.sync_metadata()?;  // Ensure metadata is written
+                println!("Thread {} done", i);
+                Ok::<_, NpkError>(())
+            })
+        })
+        .collect();
+    
+    for h in handles {
+        h.join().unwrap()?;
+    }
+    
+    Ok(())
+}
+```
+
+**Best Practices for Concurrent Access:**
+- Each thread creates its own `ParallelIO` instance
+- Call `sync_metadata()` before dropping the instance
+- For read-heavy workloads, use separate read instances
+
+#### Performance Tips
+
+```rust
+// 1. Batch saves for multiple arrays
+let arrays: Vec<(String, ArrayD<f32>, DataType)> = vec![
+    ("a".to_string(), data_a, DataType::Float32),
+    ("b".to_string(), data_b, DataType::Float32),
+];
+io.save_arrays(&arrays)?;  // Parallel processing for large data
+
+// 2. Use replace_rows for updating existing arrays (fastest)
+// Avoids file recreation when shape and dtype match
+
+// 3. Call sync_metadata() once after all operations
+// Not needed after every save_arrays()
+
+// 4. Use compact_array() periodically after many deletions
+io.drop_arrays("data", Some(&[0, 1, 2]))?;  // Logical delete
+io.compact_array("data")?;  // Physical cleanup when convenient
+```
+
+#### Error Handling
+
+```rust
+use numpack::core::error::{NpkError, NpkResult};
+
+match io.get_array_metadata("nonexistent") {
+    Ok(meta) => println!("Found: {:?}", meta.shape),
+    Err(NpkError::ArrayNotFound(name)) => println!("Array {} not found", name),
+    Err(e) => eprintln!("Error: {:?}", e),
+}
+```
 
 ### Batch Modes
 

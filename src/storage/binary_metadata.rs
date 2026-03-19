@@ -396,7 +396,7 @@ impl BinaryArrayMetadata {
 }
 
 /// 二进制格式的元数据存储
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BinaryMetadataStore {
     pub version: u32,
     pub arrays: HashMap<String, BinaryArrayMetadata>,
@@ -574,8 +574,8 @@ impl BinaryCachedStore {
             sync_interval: std::time::Duration::from_secs(1),
         };
 
-        // 保存初始存储
-        cached_store.sync_to_disk()?;
+        // 不在构造函数中调用 sync_to_disk，避免多实例并发创建时的 I/O 争用
+        // 元数据会在显式调用 force_sync() 时写入磁盘
         Ok(cached_store)
     }
 
@@ -593,34 +593,14 @@ impl BinaryCachedStore {
     }
 
     fn sync_to_disk(&self) -> NpkResult<()> {
-        // 多线程环境下可能出现临时的文件访问冲突，添加重试机制
-        const MAX_RETRIES: usize = 3;
-        const RETRY_DELAY_MS: u64 = 10;
+        // 最小化锁范围：仅在 clone 期间持有读锁，I/O 操作不持有任何锁
+        let snapshot = self.store.read().unwrap().clone();
+        // 读锁已在上一行末尾自动释放
 
-        let mut last_error = None;
-        for attempt in 0..MAX_RETRIES {
-            let store = self.store.read().unwrap();
-            match store.save(&self.path) {
-                Ok(_) => {
-                    drop(store);
-                    let mut last_sync = self.last_sync.lock().unwrap();
-                    *last_sync = SystemTime::now();
-                    return Ok(());
-                }
-                Err(e) => {
-                    last_error = Some(e);
-                    drop(store);
+        snapshot.save(&self.path)?;
 
-                    // 最后一次尝试不需要等待
-                    if attempt < MAX_RETRIES - 1 {
-                        std::thread::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS));
-                    }
-                }
-            }
-        }
-
-        // 所有重试都失败，返回最后一个错误
-        Err(last_error.unwrap())
+        *self.last_sync.lock().unwrap() = SystemTime::now();
+        Ok(())
     }
 
     pub fn add_array(&self, meta: BinaryArrayMetadata) -> NpkResult<()> {
