@@ -14,14 +14,14 @@ use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 use crate::core::metadata::DataType;
 use crate::io::parallel_io::ParallelIO;
 use crate::lazy_array::standard::LazyArray;
 
 lazy_static::lazy_static! {
-    static ref MMAP_CACHE: Mutex<HashMap<String, (Arc<Mmap>, i64)>> = Mutex::new(HashMap::new());
+    static ref MMAP_CACHE: RwLock<HashMap<String, (Arc<Mmap>, i64)>> = RwLock::new(HashMap::new());
 }
 
 /// 清理指定文件的mmap缓存（Windows平台专用）
@@ -29,7 +29,7 @@ lazy_static::lazy_static! {
 /// Unix 平台不需要（系统允许同时 mmap 和修改文件）
 #[cfg(windows)]
 pub(crate) fn clear_mmap_cache_for_file(file_path: &str) {
-    if let Ok(mut cache) = MMAP_CACHE.lock() {
+    if let Ok(mut cache) = MMAP_CACHE.try_write() {
         cache.remove(file_path);
     }
 }
@@ -257,15 +257,30 @@ impl NumPack {
 
             let array_path = data_path.to_string_lossy().to_string();
 
-            let mut cache = MMAP_CACHE.lock().unwrap();
-            let mmap = if let Some((cached_mmap, cached_time)) = cache.get(&array_path) {
-                if *cached_time == meta.last_modified as i64 {
-                    Arc::clone(cached_mmap)
+            let mtime = meta.last_modified as i64;
+            let mmap = {
+                let cached = {
+                    let cache = MMAP_CACHE.read().unwrap();
+                    if let Some((cached_mmap, cached_time)) = cache.get(&array_path) {
+                        if *cached_time == mtime {
+                            Some(Arc::clone(cached_mmap))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+                if let Some(m) = cached {
+                    m
                 } else {
-                    create_optimized_mmap(&data_path, meta.last_modified as i64, &mut cache)?
+                    let new_mmap = create_optimized_mmap(&data_path)?;
+                    MMAP_CACHE.write().unwrap().insert(
+                        array_path.clone(),
+                        (Arc::clone(&new_mmap), mtime),
+                    );
+                    new_mmap
                 }
-            } else {
-                create_optimized_mmap(&data_path, meta.last_modified as i64, &mut cache)?
             };
 
             let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
@@ -941,8 +956,6 @@ fn get_array_dtype(array: &Bound<'_, PyAny>) -> PyResult<DataType> {
 #[cfg(target_family = "unix")]
 fn create_optimized_mmap(
     path: &PathBuf,
-    modify_time: i64,
-    cache: &mut std::sync::MutexGuard<HashMap<String, (Arc<Mmap>, i64)>>,
 ) -> Result<Arc<Mmap>, PyErr> {
     let file = std::fs::File::open(path)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
@@ -974,7 +987,6 @@ fn create_optimized_mmap(
     #[cfg(target_os = "linux")]
     unsafe {
         use std::os::unix::io::AsRawFd;
-        // Linux使用posix_fadvise进行预读优化
         libc::posix_fadvise(
             file.as_raw_fd(),
             0,
@@ -989,7 +1001,6 @@ fn create_optimized_mmap(
         );
     }
 
-    // 创建标准映射
     let mmap = unsafe {
         memmap2::MmapOptions::new()
             .populate()
@@ -997,21 +1008,13 @@ fn create_optimized_mmap(
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?
     };
 
-    let mmap = Arc::new(mmap);
-    cache.insert(
-        path.to_string_lossy().to_string(),
-        (Arc::clone(&mmap), modify_time),
-    );
-
-    Ok(mmap)
+    Ok(Arc::new(mmap))
 }
 
 /// Windows平台的内存映射实现
 #[cfg(target_family = "windows")]
 fn create_optimized_mmap(
     path: &PathBuf,
-    modify_time: i64,
-    cache: &mut std::sync::MutexGuard<HashMap<String, (Arc<Mmap>, i64)>>,
 ) -> Result<Arc<Mmap>, PyErr> {
     let file = std::fs::File::open(path)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
@@ -1027,18 +1030,11 @@ fn create_optimized_mmap(
         ));
     }
 
-    // Windows平台使用标准映射
     let mmap = unsafe {
         memmap2::MmapOptions::new()
             .map(&file)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?
     };
 
-    let mmap = Arc::new(mmap);
-    cache.insert(
-        path.to_string_lossy().to_string(),
-        (Arc::clone(&mmap), modify_time),
-    );
-
-    Ok(mmap)
+    Ok(Arc::new(mmap))
 }

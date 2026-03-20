@@ -132,18 +132,20 @@ impl DeletionBitmap {
             .truncate(true)
             .open(&self.file_path)?;
 
-        // 先写入头部：total_rows和deleted_count
-        let mut buffer = Vec::with_capacity(16 + self.words.len() * 8);
-        buffer.extend_from_slice(&(self.total_rows as u64).to_le_bytes());
-        buffer.extend_from_slice(&(self.deleted_count as u64).to_le_bytes());
+        // 写入头部
+        file.write_all(&(self.total_rows as u64).to_le_bytes())?;
+        file.write_all(&(self.deleted_count as u64).to_le_bytes())?;
 
-        // 然后写入words
-        for &word in &self.words {
-            buffer.extend_from_slice(&word.to_le_bytes());
-        }
+        // 零拷贝写入 words - 直接将 &[u64] 转为 &[u8]
+        let words_bytes = unsafe {
+            std::slice::from_raw_parts(
+                self.words.as_ptr() as *const u8,
+                self.words.len() * 8,
+            )
+        };
+        file.write_all(words_bytes)?;
 
-        file.write_all(&buffer)?;
-        file.sync_all()?;
+        // 跳过 sync_all - 让 OS 自行刷新，避免昂贵的 fsync
 
         Ok(())
     }
@@ -195,7 +197,19 @@ impl DeletionBitmap {
     /// 批量标记行为已删除
     pub fn mark_deleted_batch(&mut self, rows: &[usize]) -> NpkResult<()> {
         for &row in rows {
-            self.mark_deleted(row)?;
+            if row >= self.total_rows {
+                return Err(NpkError::IndexOutOfBounds(
+                    row as i64,
+                    self.total_rows as u64,
+                ));
+            }
+            let word_idx = row / 64;
+            let bit_idx = row % 64;
+            let mask = 1u64 << bit_idx;
+            if self.words[word_idx] & mask != 0 {
+                self.words[word_idx] &= !mask;
+                self.deleted_count += 1;
+            }
         }
         Ok(())
     }

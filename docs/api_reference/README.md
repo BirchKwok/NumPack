@@ -83,4 +83,4 @@ from numpack import get_backend_info
 
 ## Version
 
-This documentation is for NumPack version **0.5.2**.
+This documentation is for NumPack version **0.6.0**.

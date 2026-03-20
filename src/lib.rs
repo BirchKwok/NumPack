@@ -16,6 +16,9 @@ mod numpack;
 mod performance;
 mod vector_engine; // 向量计算引擎（SimSIMD）
 
+/// Convenience re-exports for common NumPack types.
+pub mod prelude;
+
 // 测试模块
 #[cfg(test)]
 mod tests;
@@ -42,8 +45,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::MutexGuard;
+use std::sync::RwLock;
 
 pub use crate::core::DataType;
 pub use crate::io::ParallelIO;
@@ -69,17 +71,17 @@ use rayon::prelude::*;
 use std::os::unix::io::AsRawFd;
 
 lazy_static! {
-    static ref MMAP_CACHE: Mutex<HashMap<String, (Arc<Mmap>, i64)>> = Mutex::new(HashMap::new());
+    static ref MMAP_CACHE: RwLock<HashMap<String, (Arc<Mmap>, i64)>> = RwLock::new(HashMap::new());
 
     /// 【性能优化】元数据缓存 - 避免重复的元数据查询
     /// 缓存格式: (dtype, shape, itemsize, modify_time)
-    static ref METADATA_CACHE: Mutex<HashMap<String, (DataType, Vec<usize>, usize, i64)>> =
-        Mutex::new(HashMap::new());
+    static ref METADATA_CACHE: RwLock<HashMap<String, (DataType, Vec<usize>, usize, i64)>> =
+        RwLock::new(HashMap::new());
 }
 
 // 清理临时文件缓存（所有平台通用）
 fn clear_temp_files_from_cache() {
-    let mut cache = MMAP_CACHE.lock().unwrap();
+    let mut cache = MMAP_CACHE.write().unwrap();
     cache.clear();
 }
 
@@ -1026,7 +1028,7 @@ impl LazyArray {
 impl Drop for LazyArray {
     fn drop(&mut self) {
         // 清理缓存中的引用
-        if let Ok(mut cache) = MMAP_CACHE.try_lock() {
+        if let Ok(mut cache) = MMAP_CACHE.try_write() {
             if let Some((cached_mmap, _)) = cache.get(&self.array_path) {
                 if Arc::ptr_eq(&self.mmap, cached_mmap) {
                     cache.remove(&self.array_path);
@@ -3292,8 +3294,7 @@ impl NumPack {
             };
 
             let meta_cache_key = format!("{}:{}", self.base_dir.display(), name);
-            let mut meta_cache = METADATA_CACHE.lock().unwrap();
-            meta_cache.remove(&meta_cache_key);
+            METADATA_CACHE.write().unwrap().remove(&meta_cache_key);
         }
 
         Ok(())
@@ -3312,7 +3313,7 @@ impl NumPack {
         // 1. 元数据查询（带缓存）
         let meta_cache_key = format!("{}:{}", self.base_dir.display(), array_name);
         let cached_meta = {
-            let meta_cache = METADATA_CACHE.lock().unwrap();
+            let meta_cache = METADATA_CACHE.read().unwrap();
             meta_cache.get(&meta_cache_key).cloned()
         };
 
@@ -3335,8 +3336,7 @@ impl NumPack {
             let itemsize = dtype.size_bytes() as usize;
             let modify_time = meta.last_modified as i64;
 
-            let mut meta_cache = METADATA_CACHE.lock().unwrap();
-            meta_cache.insert(
+            METADATA_CACHE.write().unwrap().insert(
                 meta_cache_key.clone(),
                 (dtype, shape.clone(), itemsize, modify_time),
             );
@@ -3363,15 +3363,29 @@ impl NumPack {
 
         let mmap_arc = if use_mmap_cache {
             // Unix 平台（macOS、Linux）：使用 mmap 缓存优化性能
-            let mut mmap_cache = MMAP_CACHE.lock().unwrap();
-            if let Some((cached_mmap, cached_time)) = mmap_cache.get(&array_path_string) {
-                if *cached_time == modify_time {
-                    Arc::clone(cached_mmap)
+            // Fast path: read lock
+            let cached = {
+                let cache = MMAP_CACHE.read().unwrap();
+                if let Some((cached_mmap, cached_time)) = cache.get(&array_path_string) {
+                    if *cached_time == modify_time {
+                        Some(Arc::clone(cached_mmap))
+                    } else {
+                        None
+                    }
                 } else {
-                    create_optimized_mmap(&data_path, modify_time, &mut mmap_cache)?
+                    None
                 }
+            };
+            if let Some(mmap) = cached {
+                mmap
             } else {
-                create_optimized_mmap(&data_path, modify_time, &mut mmap_cache)?
+                // Slow path: create mmap outside lock, then insert with write lock
+                let mmap = create_optimized_mmap(&data_path)?;
+                MMAP_CACHE.write().unwrap().insert(
+                    array_path_string.clone(),
+                    (Arc::clone(&mmap), modify_time),
+                );
+                mmap
             }
         } else {
             // Windows 平台：直接创建 mmap，不缓存
@@ -3923,10 +3937,7 @@ impl NumPack {
 
             // 清除元数据缓存，以便下次load时使用新的元数据
             let meta_cache_key = format!("{}:{}", self.base_dir.display(), name);
-            {
-                let mut meta_cache = METADATA_CACHE.lock().unwrap();
-                meta_cache.remove(&meta_cache_key);
-            }
+            METADATA_CACHE.write().unwrap().remove(&meta_cache_key);
         }
 
         Ok(())
@@ -4012,10 +4023,7 @@ impl NumPack {
 
                     // 清除元数据缓存
                     let meta_cache_key = format!("{}:{}", self.base_dir.display(), name);
-                    {
-                        let mut meta_cache = METADATA_CACHE.lock().unwrap();
-                        meta_cache.remove(&meta_cache_key);
-                    }
+                    METADATA_CACHE.write().unwrap().remove(&meta_cache_key);
                 }
             }
 
@@ -4030,11 +4038,11 @@ impl NumPack {
 
             self.io.batch_drop_arrays(&names, None)?;
 
-            // 清除所有被删除数组的元数据缓存
-            for name in &names {
-                let meta_cache_key = format!("{}:{}", self.base_dir.display(), name);
-                {
-                    let mut meta_cache = METADATA_CACHE.lock().unwrap();
+            // 清除所有被删除数组的元数据缓存 - 单次写锁批量删除
+            {
+                let mut meta_cache = METADATA_CACHE.write().unwrap();
+                for name in &names {
+                    let meta_cache_key = format!("{}:{}", self.base_dir.display(), name);
                     meta_cache.remove(&meta_cache_key);
                 }
             }
@@ -4264,17 +4272,29 @@ impl NumPack {
         let data_path = self.base_dir.join(format!("data_{}.npkd", array_name));
         let array_path_string = data_path.to_string_lossy().to_string();
         
-        // 获取或创建mmap
+        // 获取或创建mmap (read lock fast path)
         let mmap_arc = {
-            let mut mmap_cache = MMAP_CACHE.lock().unwrap();
-            if let Some((cached_mmap, cached_time)) = mmap_cache.get(&array_path_string) {
-                if *cached_time == modify_time {
-                    Arc::clone(cached_mmap)
+            let cached = {
+                let cache = MMAP_CACHE.read().unwrap();
+                if let Some((cached_mmap, cached_time)) = cache.get(&array_path_string) {
+                    if *cached_time == modify_time {
+                        Some(Arc::clone(cached_mmap))
+                    } else {
+                        None
+                    }
                 } else {
-                    create_optimized_mmap(&data_path, modify_time, &mut mmap_cache)?
+                    None
                 }
+            };
+            if let Some(mmap) = cached {
+                mmap
             } else {
-                create_optimized_mmap(&data_path, modify_time, &mut mmap_cache)?
+                let mmap = create_optimized_mmap(&data_path)?;
+                MMAP_CACHE.write().unwrap().insert(
+                    array_path_string.clone(),
+                    (Arc::clone(&mmap), modify_time),
+                );
+                mmap
             }
         };
         
@@ -4702,84 +4722,68 @@ impl NumPack {
         let meta_cache_key = format!("{}:{}", self.base_dir.display(), array_name);
 
         let (dtype, shape, itemsize, modify_time, mmap) = {
-            // 尝试从元数据缓存获取
-            let meta_cache = METADATA_CACHE.lock().unwrap();
-            if let Some((cached_dtype, cached_shape, cached_itemsize, cached_mtime)) =
-                meta_cache.get(&meta_cache_key)
-            {
-                // 元数据cache命中 - 超快速路径
-                let dtype = *cached_dtype;
-                let shape = cached_shape.clone();
-                let itemsize = *cached_itemsize;
-                let mtime = *cached_mtime;
-                drop(meta_cache); // 立即释放元数据cache锁
+            // 尝试从元数据缓存获取 (read lock)
+            let cached_meta = {
+                let cache = METADATA_CACHE.read().unwrap();
+                cache.get(&meta_cache_key).cloned()
+            };
 
-                // 获取mmap（应该也在cache中）
-                let mut mmap_cache = MMAP_CACHE.lock().unwrap();
-                let mmap = if let Some((cached_mmap, cached_time)) =
-                    mmap_cache.get(&array_path_string)
-                {
-                    if *cached_time == mtime {
-                        let mmap_ref = Arc::clone(cached_mmap);
-                        drop(mmap_cache); // 立即释放mmap cache锁
-                        mmap_ref
-                    } else {
-                        // 时间不匹配，需要重建（罕见情况）
-                        let new_mmap = create_optimized_mmap(&data_path, mtime, &mut mmap_cache)?;
-                        drop(mmap_cache);
-                        new_mmap
-                    }
-                } else {
-                    // Mmap未cache，但元数据已cache（不太可能）
-                    let new_mmap = create_optimized_mmap(&data_path, mtime, &mut mmap_cache)?;
-                    drop(mmap_cache);
-                    new_mmap
-                };
-
-                (dtype, shape, itemsize, mtime, mmap)
+            let (dtype, shape, itemsize, mtime) = if let Some((cd, cs, ci, cm)) = cached_meta {
+                (cd, cs, ci, cm)
             } else {
-                // 元数据未cache - 需要完整加载
-                drop(meta_cache); // 释放读锁
-
                 let meta = self.io.get_array_metadata(array_name)?;
                 let dtype = meta.get_dtype();
                 let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
                 let itemsize = dtype.size_bytes() as usize;
                 let mtime = meta.last_modified as i64;
 
-                // 获取或创建mmap
-                let mut mmap_cache = MMAP_CACHE.lock().unwrap();
-                let mmap = if let Some((cached_mmap, cached_time)) =
-                    mmap_cache.get(&array_path_string)
-                {
-                    if *cached_time == mtime {
-                        Arc::clone(cached_mmap)
+                // 首次加载 - 需要文件检查
+                if !data_path.exists() {
+                    return Err(PyErr::new::<pyo3::exceptions::PyFileNotFoundError, _>(
+                        format!("Data file not found: {}", data_path.display()),
+                    ));
+                }
+                if data_path.is_dir() {
+                    return Err(PyErr::new::<pyo3::exceptions::PyIsADirectoryError, _>(
+                        format!("Expected file but found directory: {}", data_path.display()),
+                    ));
+                }
+
+                METADATA_CACHE.write().unwrap().insert(
+                    meta_cache_key,
+                    (dtype, shape.clone(), itemsize, mtime),
+                );
+
+                (dtype, shape, itemsize, mtime)
+            };
+
+            // 获取或创建mmap (read lock fast path)
+            let mmap = {
+                let cached = {
+                    let cache = MMAP_CACHE.read().unwrap();
+                    if let Some((cached_mmap, cached_time)) = cache.get(&array_path_string) {
+                        if *cached_time == mtime {
+                            Some(Arc::clone(cached_mmap))
+                        } else {
+                            None
+                        }
                     } else {
-                        create_optimized_mmap(&data_path, mtime, &mut mmap_cache)?
+                        None
                     }
-                } else {
-                    // 首次加载 - 需要文件检查
-                    if !data_path.exists() {
-                        return Err(PyErr::new::<pyo3::exceptions::PyFileNotFoundError, _>(
-                            format!("Data file not found: {}", data_path.display()),
-                        ));
-                    }
-                    if data_path.is_dir() {
-                        return Err(PyErr::new::<pyo3::exceptions::PyIsADirectoryError, _>(
-                            format!("Expected file but found directory: {}", data_path.display()),
-                        ));
-                    }
-                    create_optimized_mmap(&data_path, mtime, &mut mmap_cache)?
                 };
-                drop(mmap_cache);
+                if let Some(m) = cached {
+                    m
+                } else {
+                    let new_mmap = create_optimized_mmap(&data_path)?;
+                    MMAP_CACHE.write().unwrap().insert(
+                        array_path_string.clone(),
+                        (Arc::clone(&new_mmap), mtime),
+                    );
+                    new_mmap
+                }
+            };
 
-                // 缓存元数据
-                let mut meta_cache = METADATA_CACHE.lock().unwrap();
-                meta_cache.insert(meta_cache_key, (dtype, shape.clone(), itemsize, mtime));
-                drop(meta_cache);
-
-                (dtype, shape, itemsize, mtime, mmap)
-            }
+            (dtype, shape, itemsize, mtime, mmap)
         };
 
         // 【关键修复】检测并加载deletion bitmap以支持逻辑视图
@@ -4866,8 +4870,7 @@ impl NumPack {
 
         // Clear metadata cache for the new array to ensure fresh reads
         let meta_cache_key = format!("{}:{}", self.base_dir.display(), target_name);
-        let mut meta_cache = METADATA_CACHE.lock().unwrap();
-        meta_cache.remove(&meta_cache_key);
+        METADATA_CACHE.write().unwrap().remove(&meta_cache_key);
 
         Ok(())
     }
@@ -5109,8 +5112,6 @@ impl StreamLoader {
 #[cfg(feature = "python")]
 fn create_optimized_mmap(
     path: &Path,
-    modify_time: i64,
-    cache: &mut MutexGuard<HashMap<String, (Arc<Mmap>, i64)>>,
 ) -> PyResult<Arc<Mmap>> {
     let file = std::fs::File::open(path)?;
     let file_size = file.metadata()?.len() as usize;
@@ -5154,13 +5155,7 @@ fn create_optimized_mmap(
 
     let mmap = unsafe { memmap2::MmapOptions::new().populate().map(&file)? };
 
-    let mmap = Arc::new(mmap);
-    cache.insert(
-        path.to_string_lossy().to_string(),
-        (Arc::clone(&mmap), modify_time),
-    );
-
-    Ok(mmap)
+    Ok(Arc::new(mmap))
 }
 
 #[cfg(feature = "python")]
@@ -5241,6 +5236,9 @@ pub use crate::core::error::{NpkError, NpkResult};
 
 /// NumPack 支持的元素类型标记 trait
 pub use crate::core::metadata::NpkElement;
+
+/// 流式加载迭代器
+pub use crate::io::parallel_io::StreamIterator;
 
 /// 向量计算引擎（不依赖 Python）
 pub use crate::vector_engine::core::VectorEngine;

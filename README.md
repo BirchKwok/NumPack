@@ -62,16 +62,25 @@ maturin develop  # or: maturin build --release
 
 ```rust
 use numpack::prelude::*;
-use ndarray::{ArrayD, Array2, array};
-use std::path::Path;
+use ndarray::{ArrayD, Array2, IxDyn};
+use std::path::PathBuf;
 
 fn main() -> NpkResult<()> {
     // Create or open a NumPack storage
     let io = ParallelIO::new(PathBuf::from("data.npk"))?;
     
     // Save arrays with explicit dtype
-    let data: Array2<f32> = Array2::from_shape_fn((1000, 128), |_| rand::random());
+    let data = Array2::<f32>::from_shape_fn((1000, 128), |(r, c)| (r * 128 + c) as f32);
     io.save_arrays(&[("embeddings".to_string(), data.into_dyn(), DataType::Float32)])?;
+    
+    // Load array back (mmap-based, with automatic cache)
+    let loaded: ArrayD<f32> = io.load_array("embeddings")?;
+    assert_eq!(loaded.shape(), &[1000, 128]);
+    
+    // In-place append (file append mode, no rewrite)
+    let extra = Array2::<f32>::ones((50, 128)).into_dyn();
+    io.append_rows("embeddings", &extra)?;
+    assert_eq!(io.get_shape("embeddings")?, vec![1050, 128]);
     
     // Metadata is written on drop, or call sync_metadata() explicitly
     io.sync_metadata()?;
@@ -84,44 +93,123 @@ fn main() -> NpkResult<()> {
 
 **Storage Operations:**
 
-| Method | Description | Example |
-|--------|-------------|---------|
-| `ParallelIO::new(path)` | Create/open storage | `ParallelIO::new(PathBuf::from("data"))?` |
-| `save_arrays(&[(name, array, dtype)])` | Save multiple arrays | See below |
-| `sync_metadata()` | Persist metadata to disk | `io.sync_metadata()?` |
-| `reset()` | Delete all arrays | `io.reset()?` |
+| Method | Description |
+|--------|-------------|
+| `ParallelIO::new(path)` | Create or open a storage directory |
+| `save_arrays(&[(name, array, dtype)])` | Save one or more arrays (auto-parallel for large data) |
+| `sync_metadata()` | Persist metadata to disk |
+| `reset()` | Delete all arrays and metadata |
+
+**Read Operations (mmap-based):**
+
+| Method | Description |
+|--------|-------------|
+| `load_array::<T>(name)` | Load full array via mmap with automatic cache |
+| `getitem::<T>(name, &indexes)` | Read specific rows by index (supports negative indexing) |
+| `read_rows(name, &indexes)` | Read specific rows as raw bytes |
+| `stream_load::<T>(name, buffer_size)` | Streaming iterator yielding batches of rows |
+| `get_array_view(name)` | Get a lazy array view (mmap-backed) |
+
+**Write Operations (in-place):**
+
+| Method | Description |
+|--------|-------------|
+| `append_rows::<T>(name, &data)` | In-place append to existing array (file append mode) |
+| `replace_rows::<T>(name, &data, &indices)` | In-place row replacement with pwrite |
+| `clone_array(source, target)` | Deep copy an array to a new name |
+
+**Delete & Compact:**
+
+| Method | Description |
+|--------|-------------|
+| `drop_arrays(name, Some(&indices))` | Logical delete rows (bitmap-based) |
+| `drop_arrays(name, None)` | Physical delete entire array |
+| `compact_array(name)` | Remove logically deleted rows, reclaim space |
+
+**Metadata & Query:**
+
+| Method | Description |
+|--------|-------------|
+| `has_array(name)` | Check if an array exists |
+| `list_arrays()` / `get_member_list()` | List all array names |
+| `get_array_metadata(name)` | Get array metadata (shape, dtype, size, etc.) |
+| `get_shape(name)` | Get logical shape (accounts for deletions) |
+| `get_modify_time(name)` | Get last modification timestamp (microseconds) |
+
+**Aliases (Python API compatible):**
+
+| Rust Method | Python Equivalent |
+|-------------|-------------------|
+| `append_rows()` | `NumPack.append()` |
+| `load_array()` | `NumPack.load()` |
+| `getitem()` | `NumPack.getitem()` |
+| `get_shape()` | `NumPack.get_shape()` |
+| `get_modify_time()` | `NumPack.get_modify_time()` |
+| `clone_array()` | `NumPack.clone()` |
+| `get_member_list()` | `NumPack.get_member_list()` |
+| `update()` | `NumPack.update()` |
+| `stream_load()` | `NumPack.stream_load()` |
 
 **Array Operations:**
 
 ```rust
-// Check if array exists
-if io.has_array("embeddings") {
-    println!("Array exists!");
+use numpack::prelude::*;
+use ndarray::Array2;
+use std::path::PathBuf;
+
+fn example() -> NpkResult<()> {
+    let io = ParallelIO::new(PathBuf::from("data.npk"))?;
+
+    // Save
+    let data = Array2::<f32>::zeros((1000, 128)).into_dyn();
+    io.save_arrays(&[("embeddings".to_string(), data, DataType::Float32)])?;
+
+    // In-place append (no file rewrite, O(new_data) complexity)
+    let extra = Array2::<f32>::ones((100, 128)).into_dyn();
+    io.append_rows("embeddings", &extra)?;
+
+    // Load full array (mmap with LRU cache, invalidated on write)
+    let arr: ndarray::ArrayD<f32> = io.load_array("embeddings")?;
+    assert_eq!(arr.shape(), &[1100, 128]);
+
+    // Random access by index (mmap, contiguous block detection)
+    let rows: ndarray::ArrayD<f32> = io.getitem("embeddings", &[0, 10, -1])?;
+    assert_eq!(rows.shape(), &[3, 128]);
+
+    // Replace rows in-place (pwrite, no file rewrite)
+    let new_rows = Array2::<f32>::from_elem((2, 128), 42.0).into_dyn();
+    io.replace_rows("embeddings", &new_rows, &[0, 1])?;
+
+    // Logical delete + compact
+    io.drop_arrays("embeddings", Some(&[5, 6, 7]))?;
+    io.compact_array("embeddings")?;
+
+    // Clone array
+    io.clone_array("embeddings", "embeddings_backup")?;
+
+    // Query
+    let shape = io.get_shape("embeddings")?;
+    let names = io.list_arrays();
+    let mtime = io.get_modify_time("embeddings");
+
+    // Delete entire array
+    io.drop_arrays("embeddings_backup", None)?;
+
+    io.sync_metadata()?;
+    Ok(())
 }
+```
 
-// List all arrays
-let names = io.list_arrays();
-println!("Arrays: {:?}", names);
+**Streaming Load:**
 
-// Get array metadata
-let meta = io.get_array_metadata("embeddings")?;
-println!("Shape: {:?}, dtype: {:?}", meta.shape, meta.get_dtype());
-
-// Read specific rows (returns raw bytes)
-let row_data = io.read_rows("embeddings", &[0, 10, 20])?;
-
-// Replace rows in-place (fastest for existing arrays)
-let new_rows = Array2::<f32>::zeros((3, 128)).into_dyn();
-io.replace_rows("embeddings", &new_rows, &[0, 1, 2])?;
-
-// Logical delete (mark rows as deleted)
-io.drop_arrays("embeddings", Some(&[5, 6, 7]))?;
-
-// Physical compact (remove deleted rows, reclaim space)
-io.compact_array("embeddings")?;
-
-// Delete entire array
-io.drop_arrays("embeddings", None)?;
+```rust
+// Process large arrays in batches without loading everything into memory
+let iter: StreamIterator<f32> = io.stream_load("large_data", 10000)?;
+for batch_result in iter {
+    let batch: ndarray::ArrayD<f32> = batch_result?;
+    // Process batch (up to 10000 rows each)
+    println!("Batch shape: {:?}", batch.shape());
+}
 ```
 
 **Data Type Mapping:**
@@ -143,11 +231,23 @@ io.drop_arrays("embeddings", None)?;
 | `DataType::Complex64` | `num_complex::Complex32` | 8 bytes |
 | `DataType::Complex128` | `num_complex::Complex64` | 16 bytes |
 
+#### Key Design Features
+
+- **mmap-based Reading:** All read operations (`load_array`, `getitem`, `stream_load`) use `memmap2` with an automatic cache keyed by `last_modified` timestamp. Cache is invalidated on write/append/delete.
+- **In-place Append:** `append_rows` opens the data file in append mode and writes only the new data. No existing data is rewritten. Metadata is updated incrementally.
+- **In-place Replace:** `replace_rows` uses positional writes (`pwrite`) to update specific rows without touching unrelated data.
+- **Logical Deletion:** `drop_arrays` with indices uses a bitmap to mark rows as deleted. Read operations automatically skip deleted rows. Call `compact_array` to physically reclaim space.
+- **Adaptive Parallelism:** `save_arrays` automatically uses Rayon parallel processing when saving multiple arrays with total size > 10MB.
+- **Adaptive Buffering:** Write buffer sizes are tuned by data size (256KB / 4MB / 16MB for small / medium / large arrays).
+
 #### Concurrent Access
 
 Multiple threads can safely write to the same storage concurrently (since v0.5.1+):
 
 ```rust
+use numpack::prelude::*;
+use ndarray::Array2;
+use std::path::PathBuf;
 use std::thread;
 
 fn concurrent_write() -> NpkResult<()> {
@@ -161,8 +261,7 @@ fn concurrent_write() -> NpkResult<()> {
                 let io = ParallelIO::new(PathBuf::from(dir))?;
                 let data = Array2::<f32>::ones((100, 128)).into_dyn();
                 io.save_arrays(&[(format!("chunk_{}", i), data, DataType::Float32)])?;
-                io.sync_metadata()?;  // Ensure metadata is written
-                println!("Thread {} done", i);
+                io.sync_metadata()?;
                 Ok::<_, NpkError>(())
             })
         })
@@ -184,22 +283,34 @@ fn concurrent_write() -> NpkResult<()> {
 #### Performance Tips
 
 ```rust
-// 1. Batch saves for multiple arrays
-let arrays: Vec<(String, ArrayD<f32>, DataType)> = vec![
+// 1. Batch saves for multiple arrays (auto-parallel for large data)
+let arrays: Vec<(String, ndarray::ArrayD<f32>, DataType)> = vec![
     ("a".to_string(), data_a, DataType::Float32),
     ("b".to_string(), data_b, DataType::Float32),
 ];
-io.save_arrays(&arrays)?;  // Parallel processing for large data
+io.save_arrays(&arrays)?;
 
-// 2. Use replace_rows for updating existing arrays (fastest)
-// Avoids file recreation when shape and dtype match
+// 2. Use append_rows for incremental data (fastest, no rewrite)
+let new_data = Array2::<f32>::ones((100, 128)).into_dyn();
+io.append_rows("a", &new_data)?;
 
-// 3. Call sync_metadata() once after all operations
-// Not needed after every save_arrays()
+// 3. Use replace_rows for updating existing rows (pwrite, no rewrite)
+let updated = Array2::<f32>::zeros((3, 128)).into_dyn();
+io.replace_rows("a", &updated, &[0, 1, 2])?;
 
-// 4. Use compact_array() periodically after many deletions
-io.drop_arrays("data", Some(&[0, 1, 2]))?;  // Logical delete
-io.compact_array("data")?;  // Physical cleanup when convenient
+// 4. Use stream_load for large arrays that don't fit in memory
+let iter: StreamIterator<f32> = io.stream_load("a", 50000)?;
+for batch in iter {
+    let batch = batch?;
+    // process batch...
+}
+
+// 5. Call sync_metadata() once after all operations
+io.sync_metadata()?;
+
+// 6. Use compact_array() periodically after many deletions
+io.drop_arrays("a", Some(&[0, 1, 2]))?;
+io.compact_array("a")?;
 ```
 
 #### Error Handling

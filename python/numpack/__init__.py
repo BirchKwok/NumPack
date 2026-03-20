@@ -39,7 +39,7 @@ if hasattr(np, "issubdtype"):
 
         np.issubdtype = _numpack_issubdtype  # type: ignore[assignment]
 
-__version__ = "0.5.2"
+__version__ = "0.6.0"
 
 # Platform detection
 def _is_windows():

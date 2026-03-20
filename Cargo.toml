@@ -1,6 +1,6 @@
 [package]
 name = "numpack"
-version = "0.5.2"
+version = "0.6.0"
 edition = "2021"
 description = "A high-performance array storage and manipulation library"
 authors = ["NumPack Contributors"]
@@ -80,6 +80,10 @@ target-triple-features = [
     "aarch64-unknown-linux-gnu",
 ]
 
+
+[[bench]]
+name = "rust_api_bench"
+harness = false
 
 [profile.release]
 opt-level = 3                # 最高优化级别

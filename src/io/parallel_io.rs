@@ -7,7 +7,7 @@ use std::collections::{HashSet, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::SystemTime;
 
 use crate::core::error::{NpkError, NpkResult};
@@ -557,11 +557,17 @@ impl ArrayView {
     }
 }
 
+use std::collections::HashMap;
+
+/// Cached mmap entry: (mmap, last_modified_us)
+type MmapCacheEntry = (Arc<memmap2::Mmap>, u64);
+
 #[allow(dead_code)]
 pub struct ParallelIO {
     base_dir: PathBuf,
     metadata: Arc<BinaryCachedStore>, // 🔙 回退到原始实现（更稳定）
     metadata_path: PathBuf,
+    mmap_cache: RwLock<HashMap<String, MmapCacheEntry>>,
 }
 
 impl ParallelIO {
@@ -576,7 +582,37 @@ impl ParallelIO {
             base_dir,
             metadata: Arc::new(metadata),
             metadata_path,
+            mmap_cache: RwLock::new(HashMap::new()),
         })
+    }
+
+    /// Get or create a cached mmap for the given array.
+    /// Uses read lock for cache hit (fast path), write lock only on miss.
+    /// File I/O is performed outside the lock.
+    fn get_or_create_mmap(&self, name: &str, meta: &ArrayMetadata) -> NpkResult<Arc<memmap2::Mmap>> {
+        // Fast path: read lock only
+        {
+            let cache = self.mmap_cache.read().unwrap();
+            if let Some((mmap, cached_mtime)) = cache.get(name) {
+                if *cached_mtime == meta.last_modified {
+                    return Ok(Arc::clone(mmap));
+                }
+            }
+        }
+        // Slow path: create mmap outside lock, then insert under write lock
+        let data_path = self.base_dir.join(&meta.data_file);
+        let file = File::open(&data_path)?;
+        let mmap = Arc::new(unsafe { MmapOptions::new().map(&file)? });
+        {
+            let mut cache = self.mmap_cache.write().unwrap();
+            cache.insert(name.to_string(), (Arc::clone(&mmap), meta.last_modified));
+        }
+        Ok(mmap)
+    }
+
+    /// Invalidate the mmap cache for a specific array.
+    fn invalidate_mmap_cache(&self, name: &str) {
+        self.mmap_cache.write().unwrap().remove(name);
     }
 
     /// 加载二进制格式的元数据
@@ -679,46 +715,19 @@ impl ParallelIO {
             }
         }
 
-        // 优化2：创建新文件 - 使用自适应缓冲区和优化的写入
+        // 优化2：创建新文件 - BufWriter直接写入（比mmap写更快，避免set_len+mmap创建开销）
         let total_size = array.shape().iter().product::<usize>() * std::mem::size_of::<T>();
+        let data_ptr = array.as_ptr() as *const u8;
+        let data_slice = unsafe { std::slice::from_raw_parts(data_ptr, total_size) };
 
-        // 选择最优缓冲区大小
-        let buffer_size = Self::optimal_buffer_size(total_size);
-
-        // 优化：直接使用 BufWriter 创建文件，避免额外的 set_len 调用
         let file = OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .open(&data_path)?;
-
+        let buffer_size = Self::optimal_buffer_size(total_size);
         let mut writer = BufWriter::with_capacity(buffer_size, file);
-        let data_ptr = array.as_ptr() as *const u8;
-        let data_slice = unsafe { std::slice::from_raw_parts(data_ptr, total_size) };
-
-        // 优化3：对于大文件，分块写入以减少内存压力
-        // 但对于小/中型文件，直接写入更高效
-        if total_size > Self::MEDIUM_ARRAY_THRESHOLD {
-            // 超大文件：分块写入
-            let chunk_size = buffer_size * 4; // 使用4倍缓冲区大小作为块大小
-            let mut offset = 0;
-            while offset < total_size {
-                let remaining = total_size - offset;
-                let current_chunk_size = std::cmp::min(chunk_size, remaining);
-                let chunk = &data_slice[offset..offset + current_chunk_size];
-                writer.write_all(chunk)?;
-                offset += current_chunk_size;
-            }
-        } else {
-            // 小/中型文件：直接写入（最快）
-            writer.write_all(data_slice)?;
-        }
-
-        // 优化：延迟 flush，让操作系统自动刷新
-        // 对于大文件，立即 flush 可能会阻塞
-        // 对于小文件，flush 的开销相对较小，但仍可延迟
-        // 注释掉立即 flush，让 BufWriter 在 drop 时自动 flush
-        // writer.flush()?;
+        writer.write_all(data_slice)?;
 
         // 创建元数据
         let meta = ArrayMetadata::new(name.to_string(), array_shape, data_file, *dtype);
@@ -894,6 +903,8 @@ impl ParallelIO {
                 std::fs::remove_file(path)?;
             }
         }
+        // Clear entire mmap cache
+        self.mmap_cache.write().unwrap().clear();
         Ok(())
     }
 
@@ -1002,6 +1013,8 @@ impl ParallelIO {
                     std::fs::remove_file(bitmap_path)?;
                 }
             }
+            // Invalidate mmap cache
+            self.invalidate_mmap_cache(name);
         }
         Ok(())
     }
@@ -1220,6 +1233,9 @@ impl ParallelIO {
             })?;
         }
 
+        // Invalidate mmap cache since file changed
+        self.invalidate_mmap_cache(name);
+
         Ok(())
     }
 
@@ -1367,61 +1383,53 @@ impl ParallelIO {
 
         // 创建临时文件
         let temp_path = self.base_dir.join(format!("data_{}.npkd.tmp", name));
-        let mut temp_file = OpenOptions::new()
+        let temp_file = OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .open(&temp_path)?;
 
-        // 打开源文件进行读取
-        let source_file = File::open(&data_path)?;
-        let source_mmap = unsafe { MmapOptions::new().map(&source_file)? };
+        // Use cached mmap for source data
+        let source_mmap = self.get_or_create_mmap(name, &meta)?;
 
         // 获取所有活跃行的索引
         let active_indices = bitmap.get_active_indices();
         let active_count = active_indices.len();
 
-        // 分批复制，阈值100000行
-        const BATCH_SIZE: usize = 100_000;
-        let num_batches = (active_count + BATCH_SIZE - 1) / BATCH_SIZE;
+        // Use BufWriter for efficient output
+        let buf_size = Self::optimal_buffer_size(active_count * row_size);
+        let mut writer = BufWriter::with_capacity(buf_size, temp_file);
 
-        for batch_idx in 0..num_batches {
-            let start_idx = batch_idx * BATCH_SIZE;
-            let end_idx = std::cmp::min(start_idx + BATCH_SIZE, active_count);
-            let batch_indices = &active_indices[start_idx..end_idx];
-
-            // 创建写入缓冲区
-            let batch_size_bytes = batch_indices.len() * row_size;
-            let mut write_buffer = Vec::with_capacity(batch_size_bytes);
-
-            // 复制这批数据
-            for &physical_idx in batch_indices {
-                let src_offset = physical_idx * row_size;
-                if src_offset + row_size > source_mmap.len() {
-                    return Err(NpkError::IoError(std::io::Error::new(
-                        std::io::ErrorKind::UnexpectedEof,
-                        format!(
-                            "compact_array attempted to copy row {} beyond file bounds (row_size={}, file_len={})",
-                            physical_idx,
-                            row_size,
-                            source_mmap.len()
-                        )
-                    )));
-                }
-
-                let row_data = &source_mmap[src_offset..src_offset + row_size];
-                write_buffer.extend_from_slice(row_data);
+        // Contiguous block detection: write contiguous ranges in bulk
+        let mut i = 0usize;
+        while i < active_count {
+            let block_start_phys = active_indices[i];
+            let block_begin = i;
+            while i + 1 < active_count
+                && active_indices[i + 1] == active_indices[i] + 1
+            {
+                i += 1;
             }
-
-            // 写入到临时文件
-            temp_file.write_all(&write_buffer)?;
+            let block_len = i - block_begin + 1;
+            let src_offset = block_start_phys * row_size;
+            let block_bytes = block_len * row_size;
+            if src_offset + block_bytes > source_mmap.len() {
+                return Err(NpkError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    format!(
+                        "compact_array: row block {}..{} beyond file bounds",
+                        block_start_phys, block_start_phys + block_len
+                    )
+                )));
+            }
+            writer.write_all(&source_mmap[src_offset..src_offset + block_bytes])?;
+            i += 1;
         }
 
-        // 同步到磁盘
-        temp_file.sync_all()?;
-        drop(temp_file);
+        // Flush BufWriter but skip expensive sync_all - let OS handle it
+        writer.flush()?;
+        drop(writer);
         drop(source_mmap);
-        drop(source_file);
 
         // 删除原文件
         std::fs::remove_file(&data_path)?;
@@ -1444,6 +1452,551 @@ impl ParallelIO {
         // 删除bitmap文件
         bitmap.delete_file()?;
 
+        // Invalidate mmap cache since file was replaced
+        self.invalidate_mmap_cache(name);
+
         Ok(())
+    }
+
+    // ========================================================================
+    // Python API compatible methods (pure Rust, no Python dependency)
+    // ========================================================================
+
+    /// Append rows to an existing array.
+    ///
+    /// This is the Rust equivalent of Python's `NumPack.append()`.
+    /// The array must already exist and the shape (except first dimension)
+    /// must match.
+    ///
+    /// # Arguments
+    /// * `name` - Name of the existing array
+    /// * `data` - Data to append (first dimension is the number of new rows)
+    ///
+    /// # Errors
+    /// Returns error if array does not exist or shape/dtype mismatch.
+    pub fn append_rows<T: NpkElement>(
+        &self,
+        name: &str,
+        data: &ArrayD<T>,
+    ) -> NpkResult<()> {
+        let meta = self.get_array_meta(name).ok_or_else(|| {
+            NpkError::ArrayNotFound(name.to_string())
+        })?;
+
+        let data_shape: Vec<u64> = data.shape().iter().map(|&x| x as u64).collect();
+
+        // Validate dimensions match (except first)
+        if meta.shape.len() != data_shape.len() {
+            return Err(NpkError::InvalidShape(format!(
+                "Dimension mismatch for array {}: expected {}, got {}",
+                name,
+                meta.shape.len(),
+                data_shape.len()
+            )));
+        }
+
+        for i in 1..meta.shape.len() {
+            if meta.shape[i] != data_shape[i] {
+                return Err(NpkError::InvalidShape(format!(
+                    "Shape mismatch for array {} at dimension {}: expected {}, got {}",
+                    name, i, meta.shape[i], data_shape[i]
+                )));
+            }
+        }
+
+        // Append data to file
+        let array_path = self.base_dir.join(&meta.data_file);
+        let mut file = OpenOptions::new().append(true).open(&array_path)?;
+
+        let total_size = data.len() * std::mem::size_of::<T>();
+        let data_ptr = data.as_ptr() as *const u8;
+        let data_slice = unsafe { std::slice::from_raw_parts(data_ptr, total_size) };
+        file.write_all(data_slice)?;
+
+        // Update metadata
+        let mut new_meta = meta.clone();
+        new_meta.shape[0] += data_shape[0];
+        new_meta.size_bytes =
+            new_meta.total_elements() * new_meta.get_dtype().size_bytes() as u64;
+        new_meta.last_modified = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_micros() as u64;
+
+        // If deletion bitmap exists, extend it to include new rows
+        if DeletionBitmap::exists(&self.base_dir, name) {
+            let old_total_rows = meta.shape[0] as usize;
+            let mut bitmap = DeletionBitmap::new(&self.base_dir, name, old_total_rows)?;
+            bitmap.extend(data_shape[0] as usize);
+            bitmap.save()?;
+        }
+
+        self.update_array_metadata(name, new_meta)?;
+
+        // Invalidate mmap cache since file changed
+        self.invalidate_mmap_cache(name);
+
+        Ok(())
+    }
+
+    /// Load a full array from disk as a typed `ArrayD<T>`.
+    ///
+    /// This is the Rust equivalent of Python's `NumPack.load(name, lazy=False)`.
+    ///
+    /// # Arguments
+    /// * `name` - Name of the array to load
+    ///
+    /// # Returns
+    /// The loaded array with the correct shape and type.
+    ///
+    /// # Errors
+    /// Returns error if array does not exist.
+    pub fn load_array<T: NpkElement>(&self, name: &str) -> NpkResult<ArrayD<T>> {
+        let meta = self.get_array_metadata(name)?;
+        let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
+        let element_size = std::mem::size_of::<T>();
+        let row_size = if shape.len() == 1 {
+            element_size
+        } else {
+            shape[1..].iter().product::<usize>() * element_size
+        };
+        let total_rows = shape[0];
+
+        // Use cached mmap
+        let mmap = self.get_or_create_mmap(name, &meta)?;
+        let mmap_slice = &mmap[..];
+
+        // Check for deletion bitmap
+        if DeletionBitmap::exists(&self.base_dir, name) {
+            let bitmap = DeletionBitmap::new(&self.base_dir, name, total_rows)?;
+            if bitmap.deleted_count() > 0 {
+                let active_indices = bitmap.get_active_indices();
+                let new_rows = active_indices.len();
+                let mut new_shape = shape.clone();
+                new_shape[0] = new_rows;
+
+                let mut result = unsafe { ArrayD::<T>::uninit(IxDyn(&new_shape)).assume_init() };
+                let dst_ptr = result.as_mut_ptr() as *mut u8;
+
+                // Contiguous block detection for active indices
+                let mut dst_offset = 0usize;
+                let mut i = 0usize;
+                while i < active_indices.len() {
+                    let block_start = active_indices[i];
+                    let block_begin = i;
+                    while i + 1 < active_indices.len()
+                        && active_indices[i + 1] == active_indices[i] + 1
+                    {
+                        i += 1;
+                    }
+                    let block_len = i - block_begin + 1;
+                    let src_offset = block_start * row_size;
+                    let block_bytes = block_len * row_size;
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            mmap_slice[src_offset..].as_ptr(),
+                            dst_ptr.add(dst_offset),
+                            block_bytes,
+                        );
+                    }
+                    dst_offset += block_bytes;
+                    i += 1;
+                }
+                return Ok(result);
+            }
+        }
+
+        // Fast path: no bitmap, full array copy via mmap
+        let total_bytes = total_rows * row_size;
+        if total_bytes > mmap_slice.len() {
+            return Err(NpkError::IoError(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "load_array: data file smaller than expected",
+            )));
+        }
+        let mut result = unsafe { ArrayD::<T>::uninit(IxDyn(&shape)).assume_init() };
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                mmap_slice.as_ptr(),
+                result.as_mut_ptr() as *mut u8,
+                total_bytes,
+            );
+        }
+        Ok(result)
+    }
+
+    /// Get specific rows from an array as a typed `ArrayD<T>`.
+    ///
+    /// This is the Rust equivalent of Python's `NumPack.getitem(name, indexes)`.
+    /// Uses mmap directly with contiguous block detection for optimal performance.
+    ///
+    /// # Arguments
+    /// * `name` - Name of the array
+    /// * `indexes` - Row indexes to retrieve (supports negative indexing)
+    ///
+    /// # Returns
+    /// An `ArrayD<T>` containing the selected rows.
+    pub fn getitem<T: NpkElement>(
+        &self,
+        name: &str,
+        indexes: &[i64],
+    ) -> NpkResult<ArrayD<T>> {
+        let meta = self.get_array_metadata(name)?;
+        let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
+        let total_rows = shape[0];
+        let element_size = std::mem::size_of::<T>();
+        let row_size = if shape.len() == 1 {
+            element_size
+        } else {
+            shape[1..].iter().product::<usize>() * element_size
+        };
+
+        if indexes.is_empty() {
+            let mut result_shape = shape.clone();
+            result_shape[0] = 0;
+            // Safe: zero-length array has no uninitialized memory
+            return Ok(unsafe { ArrayD::<T>::uninit(IxDyn(&result_shape)).assume_init() });
+        }
+
+        // Check for deletion bitmap
+        let bitmap_opt = if DeletionBitmap::exists(&self.base_dir, name) {
+            Some(DeletionBitmap::new(&self.base_dir, name, total_rows)?)
+        } else {
+            None
+        };
+        let logical_count = bitmap_opt.as_ref().map_or(total_rows, |b| b.active_count());
+
+        // Normalize and convert logical indexes to physical indexes
+        let mut physical_indices: Vec<usize> = Vec::with_capacity(indexes.len());
+        for &idx in indexes {
+            let logical_idx = if idx < 0 {
+                let li = logical_count as i64 + idx;
+                if li < 0 {
+                    return Err(NpkError::IndexOutOfBounds(idx, logical_count as u64));
+                }
+                li as usize
+            } else {
+                idx as usize
+            };
+
+            if logical_idx >= logical_count {
+                return Err(NpkError::IndexOutOfBounds(idx, logical_count as u64));
+            }
+
+            let physical_idx = if let Some(ref bitmap) = bitmap_opt {
+                bitmap.logical_to_physical(logical_idx)
+                    .ok_or_else(|| NpkError::IndexOutOfBounds(idx, logical_count as u64))?
+            } else {
+                logical_idx
+            };
+            physical_indices.push(physical_idx);
+        }
+
+        // Use cached mmap
+        let mmap = self.get_or_create_mmap(name, &meta)?;
+        let mmap_slice = &mmap[..];
+        let mmap_len = mmap_slice.len();
+
+        let num_indices = physical_indices.len();
+
+        let mut result_shape = shape.clone();
+        result_shape[0] = num_indices;
+
+        // Allocate result array directly and copy into it
+        let mut result = unsafe { ArrayD::<T>::uninit(IxDyn(&result_shape)).assume_init() };
+        let dst_ptr = result.as_mut_ptr() as *mut u8;
+
+        // Contiguous block detection + batch memcpy
+        let mut dst_offset = 0usize;
+        let mut i = 0usize;
+        while i < physical_indices.len() {
+            let block_start_phys = physical_indices[i];
+            let block_begin = i;
+            while i + 1 < physical_indices.len()
+                && physical_indices[i + 1] == physical_indices[i] + 1
+            {
+                i += 1;
+            }
+            let block_len = i - block_begin + 1;
+            let src_offset = block_start_phys * row_size;
+            let block_bytes = block_len * row_size;
+
+            if src_offset + block_bytes > mmap_len {
+                return Err(NpkError::IoError(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    format!("getitem: data access out of bounds (offset {}, need {})", src_offset, block_bytes),
+                )));
+            }
+
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    mmap_slice[src_offset..].as_ptr(),
+                    dst_ptr.add(dst_offset),
+                    block_bytes,
+                );
+            }
+            dst_offset += block_bytes;
+            i += 1;
+        }
+
+        Ok(result)
+    }
+
+    /// Get the shape of an array, accounting for logical deletions.
+    ///
+    /// This is the Rust equivalent of Python's `NumPack.get_shape(name)`.
+    ///
+    /// # Arguments
+    /// * `name` - Name of the array
+    ///
+    /// # Returns
+    /// The logical shape as `Vec<u64>`.
+    pub fn get_shape(&self, name: &str) -> NpkResult<Vec<u64>> {
+        let meta = self.get_array_metadata(name)?;
+        let mut shape = meta.shape.clone();
+
+        // Account for deletion bitmap
+        if DeletionBitmap::exists(&self.base_dir, name) {
+            let total_rows = shape[0] as usize;
+            let bitmap = DeletionBitmap::new(&self.base_dir, name, total_rows)?;
+            shape[0] = bitmap.active_count() as u64;
+        }
+
+        Ok(shape)
+    }
+
+    /// Get the last modification time of an array.
+    ///
+    /// This is the Rust equivalent of Python's `NumPack.get_modify_time(name)`.
+    ///
+    /// # Arguments
+    /// * `name` - Name of the array
+    ///
+    /// # Returns
+    /// Modification timestamp in microseconds since Unix epoch, or None.
+    pub fn get_modify_time(&self, name: &str) -> Option<u64> {
+        self.get_array_meta(name).map(|meta| meta.last_modified)
+    }
+
+    /// Clone an array to a new name.
+    ///
+    /// This is the Rust equivalent of Python's `NumPack.clone(source, target)`.
+    /// The cloned array is independent of the original.
+    ///
+    /// # Arguments
+    /// * `source_name` - Source array name
+    /// * `target_name` - Target array name
+    ///
+    /// # Errors
+    /// Returns error if source does not exist or target already exists.
+    pub fn clone_array(&self, source_name: &str, target_name: &str) -> NpkResult<()> {
+        if !self.has_array(source_name) {
+            return Err(NpkError::ArrayNotFound(source_name.to_string()));
+        }
+
+        if self.has_array(target_name) {
+            return Err(NpkError::InvalidOperation(format!(
+                "Target array '{}' already exists",
+                target_name
+            )));
+        }
+
+        let meta = self.get_array_meta(source_name).unwrap();
+
+        // Copy data file
+        let source_path = self.base_dir.join(&meta.data_file);
+        let target_data_file = format!("data_{}.npkd", target_name);
+        let target_path = self.base_dir.join(&target_data_file);
+        std::fs::copy(&source_path, &target_path)?;
+
+        // Create metadata for the new array
+        let new_meta = ArrayMetadata {
+            name: target_name.to_string(),
+            shape: meta.shape.clone(),
+            data_file: target_data_file,
+            last_modified: SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_micros() as u64,
+            size_bytes: meta.size_bytes,
+            dtype: meta.dtype,
+            raw_data: None,
+        };
+
+        let binary_meta = Self::array_metadata_to_binary(new_meta);
+        self.metadata.add_array(binary_meta)?;
+
+        // Copy deletion bitmap if it exists
+        if DeletionBitmap::exists(&self.base_dir, source_name) {
+            let source_bitmap_path =
+                DeletionBitmap::get_bitmap_path(&self.base_dir, source_name);
+            let target_bitmap_path =
+                DeletionBitmap::get_bitmap_path(&self.base_dir, target_name);
+            std::fs::copy(&source_bitmap_path, &target_bitmap_path)?;
+        }
+
+        Ok(())
+    }
+
+    /// List all array names. Alias for `list_arrays()`.
+    ///
+    /// This is the Rust equivalent of Python's `NumPack.get_member_list()`.
+    pub fn get_member_list(&self) -> Vec<String> {
+        self.list_arrays()
+    }
+
+    /// Physically compact an array by removing logically deleted rows.
+    /// Alias for `compact_array()`.
+    ///
+    /// This is the Rust equivalent of Python's `NumPack.update(name)`.
+    pub fn update(&self, name: &str) -> NpkResult<()> {
+        self.compact_array(name)
+    }
+
+    /// Create a streaming iterator that yields batches of rows.
+    ///
+    /// This is the Rust equivalent of Python's `NumPack.stream_load(name, buffer_size)`.
+    ///
+    /// # Arguments
+    /// * `name` - Name of the array
+    /// * `buffer_size` - Number of rows per batch
+    ///
+    /// # Returns
+    /// A `StreamIterator<T>` that yields `ArrayD<T>` batches.
+    pub fn stream_load<T: NpkElement>(
+        &self,
+        name: &str,
+        buffer_size: usize,
+    ) -> NpkResult<StreamIterator<T>> {
+        let meta = self.get_array_metadata(name)?;
+        let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
+        let total_rows = shape[0];
+
+        // Use cached mmap
+        let mmap = self.get_or_create_mmap(name, &meta)?;
+
+        let element_size = std::mem::size_of::<T>();
+        let row_size = if shape.len() == 1 {
+            element_size
+        } else {
+            shape[1..].iter().product::<usize>() * element_size
+        };
+
+        // Load bitmap once for both logical_rows and physical_indices
+        let (logical_rows, physical_indices) = if DeletionBitmap::exists(&self.base_dir, name) {
+            let bitmap = DeletionBitmap::new(&self.base_dir, name, total_rows)?;
+            let active = bitmap.active_count();
+            if bitmap.deleted_count() > 0 {
+                (active, Some(bitmap.get_active_indices()))
+            } else {
+                (total_rows, None)
+            }
+        } else {
+            (total_rows, None)
+        };
+
+        Ok(StreamIterator {
+            mmap,
+            shape: shape.clone(),
+            row_size,
+            total_logical_rows: logical_rows,
+            current_index: 0,
+            buffer_size,
+            physical_indices,
+            _phantom: std::marker::PhantomData,
+        })
+    }
+}
+
+/// Iterator that yields batches of rows from a NumPack array.
+///
+/// Created by `ParallelIO::stream_load()`.
+pub struct StreamIterator<T: NpkElement> {
+    mmap: Arc<memmap2::Mmap>,
+    shape: Vec<usize>,
+    row_size: usize,
+    total_logical_rows: usize,
+    current_index: usize,
+    buffer_size: usize,
+    physical_indices: Option<Vec<usize>>,
+    _phantom: std::marker::PhantomData<T>,
+}
+
+impl<T: NpkElement> Iterator for StreamIterator<T> {
+    type Item = NpkResult<ArrayD<T>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current_index >= self.total_logical_rows {
+            return None;
+        }
+
+        let batch_start = self.current_index;
+        let batch_end = std::cmp::min(
+            batch_start + self.buffer_size,
+            self.total_logical_rows,
+        );
+        let batch_rows = batch_end - batch_start;
+        self.current_index = batch_end;
+
+        let mut result_shape = self.shape.clone();
+        result_shape[0] = batch_rows;
+
+        let total_bytes = batch_rows * self.row_size;
+
+        // Allocate result array directly - no intermediate buffer
+        let mut result = unsafe { ArrayD::<T>::uninit(IxDyn(&result_shape)).assume_init() };
+        let dst_ptr = result.as_mut_ptr() as *mut u8;
+
+        if let Some(ref indices) = self.physical_indices {
+            // With deletion bitmap: gather rows with contiguous block detection
+            let batch_indices = &indices[batch_start..batch_end];
+            let mut dst_offset = 0usize;
+            let mut i = 0usize;
+            while i < batch_indices.len() {
+                let block_start_phys = batch_indices[i];
+                let block_begin = i;
+                while i + 1 < batch_indices.len()
+                    && batch_indices[i + 1] == batch_indices[i] + 1
+                {
+                    i += 1;
+                }
+                let block_len = i - block_begin + 1;
+                let src_offset = block_start_phys * self.row_size;
+                let block_bytes = block_len * self.row_size;
+                if src_offset + block_bytes > self.mmap.len() {
+                    return Some(Err(NpkError::IoError(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "stream_load: row offset beyond file bounds",
+                    ))));
+                }
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        self.mmap[src_offset..].as_ptr(),
+                        dst_ptr.add(dst_offset),
+                        block_bytes,
+                    );
+                }
+                dst_offset += block_bytes;
+                i += 1;
+            }
+        } else {
+            // Sequential read: single copy_nonoverlapping from mmap to array
+            let src_offset = batch_start * self.row_size;
+            if src_offset + total_bytes > self.mmap.len() {
+                return Some(Err(NpkError::IoError(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "stream_load: batch offset beyond file bounds",
+                ))));
+            }
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    self.mmap[src_offset..].as_ptr(),
+                    dst_ptr,
+                    total_bytes,
+                );
+            }
+        }
+
+        Some(Ok(result))
     }
 }
