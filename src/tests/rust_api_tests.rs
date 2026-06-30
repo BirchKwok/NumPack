@@ -329,9 +329,23 @@ fn test_segmented_storage_roundtrip_and_logical_compact() {
     assert_eq!(rows[[1, 0]], 28.0);
     assert_eq!(rows[[2, 3]], 79.0);
 
+    let crossing_rows: ArrayD<f32> = io.getitem("seg", &[2, 3, 4, 5, 6]).unwrap();
+    assert_eq!(crossing_rows.shape(), &[5, 4]);
+    assert_eq!(crossing_rows[[0, 0]], 8.0);
+    assert_eq!(crossing_rows[[4, 3]], 27.0);
+
+    let stream_rows: usize = io
+        .stream_load::<f32>("seg", 5)
+        .unwrap()
+        .map(|batch| batch.unwrap().shape()[0])
+        .sum();
+    assert_eq!(stream_rows, 20);
+
     let extra = Array2::<f32>::from_elem((3, 4), -5.0).into_dyn();
     io.append_rows("seg", &extra).unwrap();
     assert_eq!(io.get_shape("seg").unwrap(), vec![23, 4]);
+    let tail: ArrayD<f32> = io.getitem("seg", &[20, 21, 22]).unwrap();
+    assert_eq!(tail[[2, 0]], -5.0);
 
     let data_file_before_drop = io.get_array_meta("seg").unwrap().data_file;
     io.drop_arrays("seg", Some(&[0, 1, 22])).unwrap();

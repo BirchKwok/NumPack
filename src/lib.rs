@@ -4056,8 +4056,14 @@ impl NumPack {
         let total_rows = self.io.get_shape(array_name)?.first().copied().unwrap_or(0) as i64;
         let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
 
+        let mut stream_io = ParallelIO::new(self.base_dir.clone())?;
+        if !stream_io.has_array(array_name) {
+            self.io.sync_metadata()?;
+            stream_io = ParallelIO::new(self.base_dir.clone())?;
+        }
+
         Ok(StreamLoader {
-            io: ParallelIO::new(self.base_dir.clone())?,
+            io: stream_io,
             base_dir: self.base_dir.clone(),
             array_name: array_name.to_string(),
             total_rows,

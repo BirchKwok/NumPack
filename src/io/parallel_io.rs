@@ -104,6 +104,7 @@ pub struct SegmentEntry {
 #[derive(Clone)]
 pub struct MappedSegment {
     pub file: String,
+    pub start_row: usize,
     pub rows: usize,
     pub mmap: Arc<memmap2::Mmap>,
 }
@@ -586,6 +587,7 @@ use std::collections::HashMap;
 
 /// Cached mmap entry: (mmap, last_modified_us)
 type MmapCacheEntry = (Arc<memmap2::Mmap>, u64);
+type SegmentMapCacheEntry = (Vec<MappedSegment>, u64);
 
 #[allow(dead_code)]
 pub struct ParallelIO {
@@ -593,6 +595,9 @@ pub struct ParallelIO {
     metadata: Arc<BinaryCachedStore>, // 🔙 回退到原始实现（更稳定）
     metadata_path: PathBuf,
     mmap_cache: RwLock<HashMap<String, MmapCacheEntry>>,
+    segment_manifest_cache: RwLock<HashMap<String, Arc<SegmentManifest>>>,
+    segment_map_cache: RwLock<HashMap<String, SegmentMapCacheEntry>>,
+    deletion_bitmap_cache: RwLock<HashMap<String, bool>>,
     segment_target_bytes: Option<usize>,
 }
 
@@ -609,6 +614,9 @@ impl ParallelIO {
             metadata: Arc::new(metadata),
             metadata_path,
             mmap_cache: RwLock::new(HashMap::new()),
+            segment_manifest_cache: RwLock::new(HashMap::new()),
+            segment_map_cache: RwLock::new(HashMap::new()),
+            deletion_bitmap_cache: RwLock::new(HashMap::new()),
             segment_target_bytes: None,
         })
     }
@@ -668,6 +676,28 @@ impl ParallelIO {
         cache.remove(name);
         let segmented_prefix = format!("{}::", name);
         cache.retain(|key, _| !key.starts_with(&segmented_prefix));
+        self.segment_manifest_cache
+            .write()
+            .unwrap()
+            .remove(&Self::segment_manifest_file(name));
+        self.segment_map_cache.write().unwrap().remove(name);
+        self.deletion_bitmap_cache.write().unwrap().remove(name);
+    }
+
+    fn deletion_bitmap_exists_cached(&self, name: &str) -> bool {
+        {
+            let cache = self.deletion_bitmap_cache.read().unwrap();
+            if let Some(exists) = cache.get(name) {
+                return *exists;
+            }
+        }
+
+        let exists = DeletionBitmap::exists(&self.base_dir, name);
+        self.deletion_bitmap_cache
+            .write()
+            .unwrap()
+            .insert(name.to_string(), exists);
+        exists
     }
 
     fn is_segmented_data_file(data_file: &str) -> bool {
@@ -714,7 +744,14 @@ impl ParallelIO {
         format!("{}/seg_{:06}.npkd", Self::segment_dir(name), index)
     }
 
-    fn load_segment_manifest(&self, data_file: &str) -> NpkResult<SegmentManifest> {
+    fn load_segment_manifest(&self, data_file: &str) -> NpkResult<Arc<SegmentManifest>> {
+        {
+            let cache = self.segment_manifest_cache.read().unwrap();
+            if let Some(manifest) = cache.get(data_file) {
+                return Ok(Arc::clone(manifest));
+            }
+        }
+
         let path = self.base_dir.join(data_file);
         let bytes = std::fs::read(&path)?;
         let manifest: SegmentManifest =
@@ -725,6 +762,11 @@ impl ParallelIO {
                 manifest.version
             )));
         }
+        let manifest = Arc::new(manifest);
+        self.segment_manifest_cache
+            .write()
+            .unwrap()
+            .insert(data_file.to_string(), Arc::clone(&manifest));
         Ok(manifest)
     }
 
@@ -735,6 +777,10 @@ impl ParallelIO {
         let tmp_path = path.with_extension("npkseg.tmp");
         std::fs::write(&tmp_path, bytes)?;
         std::fs::rename(&tmp_path, &path)?;
+        self.segment_manifest_cache
+            .write()
+            .unwrap()
+            .insert(data_file.to_string(), Arc::new(manifest.clone()));
         Ok(())
     }
 
@@ -767,21 +813,38 @@ impl ParallelIO {
         name: &str,
         meta: &ArrayMetadata,
     ) -> NpkResult<Vec<MappedSegment>> {
+        {
+            let cache = self.segment_map_cache.read().unwrap();
+            if let Some((segments, cached_mtime)) = cache.get(name) {
+                if *cached_mtime == meta.last_modified {
+                    return Ok(segments.clone());
+                }
+            }
+        }
+
         let manifest = self.load_segment_manifest(&meta.data_file)?;
         let mut mapped = Vec::with_capacity(manifest.segments.len());
-        for segment in manifest.segments {
+        let mut start_row = 0usize;
+        for segment in &manifest.segments {
             if segment.rows == 0 {
+                start_row += segment.rows as usize;
                 continue;
             }
             let path = self.base_dir.join(&segment.file);
             let cache_key = format!("{}::{}", name, segment.file);
             let mmap = self.get_or_create_mmap_for_file(&cache_key, &path, meta.last_modified)?;
             mapped.push(MappedSegment {
-                file: segment.file,
+                file: segment.file.clone(),
+                start_row,
                 rows: segment.rows as usize,
                 mmap,
             });
+            start_row += segment.rows as usize;
         }
+        self.segment_map_cache
+            .write()
+            .unwrap()
+            .insert(name.to_string(), (mapped.clone(), meta.last_modified));
         Ok(mapped)
     }
 
@@ -840,8 +903,8 @@ impl ParallelIO {
     fn delete_storage_files_for_meta(&self, meta: &ArrayMetadata) -> NpkResult<()> {
         if Self::is_segmented_meta(meta) {
             if let Ok(manifest) = self.load_segment_manifest(&meta.data_file) {
-                for segment in manifest.segments {
-                    let path = self.base_dir.join(segment.file);
+                for segment in &manifest.segments {
+                    let path = self.base_dir.join(&segment.file);
                     if path.exists() {
                         std::fs::remove_file(path)?;
                     }
@@ -855,6 +918,10 @@ impl ParallelIO {
             if segment_dir.exists() {
                 std::fs::remove_dir_all(segment_dir)?;
             }
+            self.segment_manifest_cache
+                .write()
+                .unwrap()
+                .remove(&meta.data_file);
         } else {
             let path = self.base_dir.join(&meta.data_file);
             if path.exists() {
@@ -865,15 +932,115 @@ impl ParallelIO {
     }
 
     fn locate_segment(segments: &[MappedSegment], row: usize) -> Option<(usize, usize)> {
-        let mut base = 0usize;
-        for (segment_index, segment) in segments.iter().enumerate() {
-            let end = base + segment.rows;
-            if row < end {
-                return Some((segment_index, row - base));
+        let mut left = 0usize;
+        let mut right = segments.len();
+        while left < right {
+            let mid = left + (right - left) / 2;
+            let segment = &segments[mid];
+            if row < segment.start_row {
+                right = mid;
+            } else if row >= segment.start_row + segment.rows {
+                left = mid + 1;
+            } else {
+                return Some((mid, row - segment.start_row));
             }
-            base = end;
         }
         None
+    }
+
+    fn extend_segmented_row_run(
+        segments: &[MappedSegment],
+        start_row: usize,
+        rows: usize,
+        row_size: usize,
+        data: &mut Vec<u8>,
+    ) -> NpkResult<()> {
+        if rows == 0 {
+            return Ok(());
+        }
+
+        let (mut segment_index, _) = Self::locate_segment(segments, start_row)
+            .ok_or_else(|| NpkError::IndexOutOfBounds(start_row as i64, 0))?;
+        let mut source_row = start_row;
+        let mut rows_left = rows;
+
+        while rows_left > 0 {
+            let segment = segments.get(segment_index).ok_or_else(|| {
+                NpkError::IndexOutOfBounds(source_row as i64, (start_row + rows) as u64)
+            })?;
+            if source_row < segment.start_row {
+                return Err(NpkError::IndexOutOfBounds(source_row as i64, 0));
+            }
+            let local_row = source_row - segment.start_row;
+            let rows_in_segment = std::cmp::min(rows_left, segment.rows - local_row);
+            let offset = local_row * row_size;
+            let bytes = rows_in_segment * row_size;
+            let end = offset + bytes;
+            if end > segment.mmap.len() {
+                return Err(NpkError::IoError(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "segmented row run offset beyond file bounds",
+                )));
+            }
+            data.extend_from_slice(&segment.mmap[offset..end]);
+            source_row += rows_in_segment;
+            rows_left -= rows_in_segment;
+            segment_index += 1;
+        }
+
+        Ok(())
+    }
+
+    fn copy_segmented_row_run_to_ptr(
+        segments: &[MappedSegment],
+        start_row: usize,
+        rows: usize,
+        row_size: usize,
+        dst_ptr: *mut u8,
+        dst_offset: usize,
+    ) -> NpkResult<()> {
+        if rows == 0 {
+            return Ok(());
+        }
+
+        let (mut segment_index, _) = Self::locate_segment(segments, start_row)
+            .ok_or_else(|| NpkError::IndexOutOfBounds(start_row as i64, 0))?;
+        let mut source_row = start_row;
+        let mut rows_left = rows;
+        let mut output_offset = dst_offset;
+
+        while rows_left > 0 {
+            let segment = segments.get(segment_index).ok_or_else(|| {
+                NpkError::IndexOutOfBounds(source_row as i64, (start_row + rows) as u64)
+            })?;
+            if source_row < segment.start_row {
+                return Err(NpkError::IndexOutOfBounds(source_row as i64, 0));
+            }
+            let local_row = source_row - segment.start_row;
+            let rows_in_segment = std::cmp::min(rows_left, segment.rows - local_row);
+            let offset = local_row * row_size;
+            let bytes = rows_in_segment * row_size;
+            let end = offset + bytes;
+            if end > segment.mmap.len() {
+                return Err(NpkError::IoError(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "segmented row run offset beyond file bounds",
+                )));
+            }
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    segment.mmap[offset..end].as_ptr(),
+                    dst_ptr.add(output_offset),
+                    bytes,
+                );
+            }
+            source_row += rows_in_segment;
+            rows_left -= rows_in_segment;
+            output_offset += bytes;
+            segment_index += 1;
+        }
+
+        Ok(())
     }
 
     fn read_segmented_all_bytes(&self, name: &str, meta: &ArrayMetadata) -> NpkResult<Vec<u8>> {
@@ -894,21 +1061,59 @@ impl ParallelIO {
     ) -> NpkResult<Vec<u8>> {
         let segments = self.open_segment_mmaps(name, meta)?;
         let mut data = Vec::with_capacity(physical_indices.len() * row_size);
-        for &physical_idx in physical_indices {
-            let (segment_index, local_row) = Self::locate_segment(&segments, physical_idx)
-                .ok_or_else(|| NpkError::IndexOutOfBounds(physical_idx as i64, meta.shape[0]))?;
-            let segment = &segments[segment_index];
-            let offset = local_row * row_size;
-            let end = offset + row_size;
-            if end > segment.mmap.len() {
-                return Err(NpkError::IoError(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "segmented row offset beyond file bounds",
-                )));
+        let mut i = 0usize;
+        while i < physical_indices.len() {
+            let run_start = physical_indices[i];
+            let run_begin = i;
+            while i + 1 < physical_indices.len()
+                && physical_indices[i + 1] == physical_indices[i] + 1
+            {
+                i += 1;
             }
-            data.extend_from_slice(&segment.mmap[offset..end]);
+            let run_rows = i - run_begin + 1;
+            Self::extend_segmented_row_run(&segments, run_start, run_rows, row_size, &mut data)
+                .map_err(|err| match err {
+                    NpkError::IndexOutOfBounds(_, _) => {
+                        NpkError::IndexOutOfBounds(run_start as i64, meta.shape[0])
+                    }
+                    other => other,
+                })?;
+            i += 1;
         }
         Ok(data)
+    }
+
+    fn copy_segmented_rows_to_ptr_from_segments(
+        segments: &[MappedSegment],
+        meta: &ArrayMetadata,
+        physical_indices: &[usize],
+        row_size: usize,
+        dst_ptr: *mut u8,
+    ) -> NpkResult<()> {
+        let mut dst_offset = 0usize;
+        let mut i = 0usize;
+        while i < physical_indices.len() {
+            let run_start = physical_indices[i];
+            let run_begin = i;
+            while i + 1 < physical_indices.len()
+                && physical_indices[i + 1] == physical_indices[i] + 1
+            {
+                i += 1;
+            }
+            let run_rows = i - run_begin + 1;
+            Self::copy_segmented_row_run_to_ptr(
+                segments, run_start, run_rows, row_size, dst_ptr, dst_offset,
+            )
+            .map_err(|err| match err {
+                NpkError::IndexOutOfBounds(_, _) => {
+                    NpkError::IndexOutOfBounds(run_start as i64, meta.shape[0])
+                }
+                other => other,
+            })?;
+            dst_offset += run_rows * row_size;
+            i += 1;
+        }
+        Ok(())
     }
 
     fn copy_segmented_rows_to_ptr(
@@ -920,29 +1125,13 @@ impl ParallelIO {
         dst_ptr: *mut u8,
     ) -> NpkResult<()> {
         let segments = self.open_segment_mmaps(name, meta)?;
-        let mut dst_offset = 0usize;
-        for &physical_idx in physical_indices {
-            let (segment_index, local_row) = Self::locate_segment(&segments, physical_idx)
-                .ok_or_else(|| NpkError::IndexOutOfBounds(physical_idx as i64, meta.shape[0]))?;
-            let segment = &segments[segment_index];
-            let offset = local_row * row_size;
-            let end = offset + row_size;
-            if end > segment.mmap.len() {
-                return Err(NpkError::IoError(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "segmented row offset beyond file bounds",
-                )));
-            }
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    segment.mmap[offset..end].as_ptr(),
-                    dst_ptr.add(dst_offset),
-                    row_size,
-                );
-            }
-            dst_offset += row_size;
-        }
-        Ok(())
+        Self::copy_segmented_rows_to_ptr_from_segments(
+            &segments,
+            meta,
+            physical_indices,
+            row_size,
+            dst_ptr,
+        )
     }
 
     fn replace_segmented_rows_bytes(
@@ -1057,7 +1246,7 @@ impl ParallelIO {
         }
 
         if Self::is_segmented_meta(&meta) {
-            let mut manifest = self.load_segment_manifest(&meta.data_file)?;
+            let mut manifest = (*self.load_segment_manifest(&meta.data_file)?).clone();
             let target_bytes = self.segment_target_bytes(row_size);
             let mut data_offset = 0usize;
 
@@ -1121,7 +1310,7 @@ impl ParallelIO {
             .unwrap()
             .as_micros() as u64;
 
-        if DeletionBitmap::exists(&self.base_dir, name) {
+        if self.deletion_bitmap_exists_cached(name) {
             let old_total_rows = meta.shape[0] as usize;
             let mut bitmap = DeletionBitmap::new(&self.base_dir, name, old_total_rows)?;
             bitmap.extend(append_rows);
@@ -1219,7 +1408,7 @@ impl ParallelIO {
 
         // 优化1：检查是否可以使用replace路径（已优化的覆盖写入）
         if let Some(existing_meta) = self.get_array_meta(name) {
-            let has_deletion_bitmap = DeletionBitmap::exists(&self.base_dir, name);
+            let has_deletion_bitmap = self.deletion_bitmap_exists_cached(name);
             if !has_deletion_bitmap
                 && existing_meta.shape == array_shape
                 && existing_meta.get_dtype() == *dtype
@@ -1251,6 +1440,7 @@ impl ParallelIO {
                     DeletionBitmap::new(&self.base_dir, name, existing_meta.shape[0] as usize)?;
                 bitmap.delete_file()?;
             }
+            self.invalidate_mmap_cache(name);
         }
 
         // 优化2：创建新文件 - BufWriter直接写入（比mmap写更快，避免set_len+mmap创建开销）
@@ -1487,6 +1677,9 @@ impl ParallelIO {
         }
         // Clear entire mmap cache
         self.mmap_cache.write().unwrap().clear();
+        self.segment_manifest_cache.write().unwrap().clear();
+        self.segment_map_cache.write().unwrap().clear();
+        self.deletion_bitmap_cache.write().unwrap().clear();
         Ok(())
     }
 
@@ -1674,7 +1867,7 @@ impl ParallelIO {
         let total_rows = meta.shape[0] as usize;
 
         // 检查是否存在deletion bitmap，并进行索引映射
-        let bitmap_opt = if DeletionBitmap::exists(&self.base_dir, name) {
+        let bitmap_opt = if self.deletion_bitmap_exists_cached(name) {
             Some(DeletionBitmap::new(&self.base_dir, name, total_rows)?)
         } else {
             None
@@ -1822,7 +2015,7 @@ impl ParallelIO {
         let total_rows = shape[0];
 
         // 检查是否存在deletion bitmap
-        let bitmap_opt = if DeletionBitmap::exists(&self.base_dir, name) {
+        let bitmap_opt = if self.deletion_bitmap_exists_cached(name) {
             Some(DeletionBitmap::new(&self.base_dir, name, total_rows)?)
         } else {
             None
@@ -1936,7 +2129,7 @@ impl ParallelIO {
         let meta = self.get_array_metadata(name)?;
 
         // 检查bitmap是否存在
-        if !DeletionBitmap::exists(&self.base_dir, name) {
+        if !self.deletion_bitmap_exists_cached(name) {
             // 没有bitmap，无需整合
             return Ok(());
         }
@@ -2180,7 +2373,7 @@ impl ParallelIO {
         let mmap_slice = mmap.as_ref().map(|m| &m[..]);
 
         // Check for deletion bitmap
-        if DeletionBitmap::exists(&self.base_dir, name) {
+        if self.deletion_bitmap_exists_cached(name) {
             let bitmap = DeletionBitmap::new(&self.base_dir, name, total_rows)?;
             if bitmap.deleted_count() > 0 {
                 let active_indices = bitmap.get_active_indices();
@@ -2190,6 +2383,17 @@ impl ParallelIO {
 
                 let mut result = unsafe { ArrayD::<T>::uninit(IxDyn(&new_shape)).assume_init() };
                 let dst_ptr = result.as_mut_ptr() as *mut u8;
+
+                if segmented {
+                    self.copy_segmented_rows_to_ptr(
+                        name,
+                        &meta,
+                        &active_indices,
+                        row_size,
+                        dst_ptr,
+                    )?;
+                    return Ok(result);
+                }
 
                 // Contiguous block detection for active indices
                 let mut dst_offset = 0usize;
@@ -2203,15 +2407,7 @@ impl ParallelIO {
                         i += 1;
                     }
                     let block_len = i - block_begin + 1;
-                    if segmented {
-                        self.copy_segmented_rows_to_ptr(
-                            name,
-                            &meta,
-                            &active_indices[block_begin..block_begin + block_len],
-                            row_size,
-                            unsafe { dst_ptr.add(dst_offset) },
-                        )?;
-                    } else if let Some(mmap_slice) = mmap_slice {
+                    if let Some(mmap_slice) = mmap_slice {
                         let src_offset = block_start * row_size;
                         let block_bytes = block_len * row_size;
                         unsafe {
@@ -2233,20 +2429,38 @@ impl ParallelIO {
         // Fast path: no bitmap, full array copy via mmap
         let total_bytes = total_rows * row_size;
         if segmented {
-            let data = self.read_segmented_all_bytes(name, &meta)?;
-            if total_bytes > data.len() {
+            let mut result = unsafe { ArrayD::<T>::uninit(IxDyn(&shape)).assume_init() };
+            let dst_ptr = result.as_mut_ptr() as *mut u8;
+            let segments = self.open_segment_mmaps(name, &meta)?;
+            let mut dst_offset = 0usize;
+            for segment in &segments {
+                let bytes = segment.rows * row_size;
+                if bytes > segment.mmap.len() {
+                    return Err(NpkError::IoError(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "load_array: segmented data smaller than expected",
+                    )));
+                }
+                if dst_offset + bytes > total_bytes {
+                    return Err(NpkError::IoError(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "load_array: segmented data larger than expected",
+                    )));
+                }
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        segment.mmap.as_ptr(),
+                        dst_ptr.add(dst_offset),
+                        bytes,
+                    );
+                }
+                dst_offset += bytes;
+            }
+            if dst_offset < total_bytes {
                 return Err(NpkError::IoError(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
                     "load_array: segmented data smaller than expected",
                 )));
-            }
-            let mut result = unsafe { ArrayD::<T>::uninit(IxDyn(&shape)).assume_init() };
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    data.as_ptr(),
-                    result.as_mut_ptr() as *mut u8,
-                    total_bytes,
-                );
             }
             return Ok(result);
         }
@@ -2299,7 +2513,7 @@ impl ParallelIO {
         }
 
         // Check for deletion bitmap
-        let bitmap_opt = if DeletionBitmap::exists(&self.base_dir, name) {
+        let bitmap_opt = if self.deletion_bitmap_exists_cached(name) {
             Some(DeletionBitmap::new(&self.base_dir, name, total_rows)?)
         } else {
             None
@@ -2404,7 +2618,7 @@ impl ParallelIO {
         let mut shape = meta.shape.clone();
 
         // Account for deletion bitmap
-        if DeletionBitmap::exists(&self.base_dir, name) {
+        if self.deletion_bitmap_exists_cached(name) {
             let total_rows = shape[0] as usize;
             let bitmap = DeletionBitmap::new(&self.base_dir, name, total_rows)?;
             shape[0] = bitmap.active_count() as u64;
@@ -2571,7 +2785,7 @@ impl ParallelIO {
         };
 
         // Load bitmap once for both logical_rows and physical_indices
-        let (logical_rows, physical_indices) = if DeletionBitmap::exists(&self.base_dir, name) {
+        let (logical_rows, physical_indices) = if self.deletion_bitmap_exists_cached(name) {
             let bitmap = DeletionBitmap::new(&self.base_dir, name, total_rows)?;
             let active = bitmap.active_count();
             if bitmap.deleted_count() > 0 {
