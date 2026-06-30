@@ -339,27 +339,10 @@ def _to_npz(
 
 
 # =============================================================================
-# Legacy Aliases (deprecated, will be removed in 0.6.0)
-# =============================================================================
-
-from .utils import deprecated_alias
-
-from_numpy = deprecated_alias('from_npy', from_npy)
-from_numpy.__name__ = 'from_numpy'
-
-to_numpy = deprecated_alias('to_npy', to_npy)
-to_numpy.__name__ = 'to_numpy'
-
-
-# =============================================================================
 # Exports
 # =============================================================================
 
 __all__ = [
-    # Primary names (recommended)
     'from_npy',
     'to_npy',
-    # Legacy aliases (deprecated, will be removed in 0.6.0)
-    'from_numpy',
-    'to_numpy',
 ]

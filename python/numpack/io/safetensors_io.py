@@ -13,7 +13,6 @@ This module provides two types of conversions:
 2. **Memory-to-file / File-to-memory conversions**:
    - `from_tensor_dict(tensors, npk_path)` - Save tensor dict to .npk file
    - `to_tensor_dict(npk_path, array_names)` - Load from .npk file and return dict
-   - `from_safetensors` / `to_safetensors` - Legacy aliases for above
 """
 
 from __future__ import annotations
@@ -424,20 +423,6 @@ def _save_array_streaming(
 
 
 # =============================================================================
-# Aliases for backward compatibility (deprecated, will be removed in 0.6.0)
-# =============================================================================
-
-from .utils import deprecated_alias
-
-# Legacy aliases for memory conversions
-from_safetensors = deprecated_alias('from_tensor_dict', from_tensor_dict)
-from_safetensors.__name__ = 'from_safetensors'
-
-to_safetensors = deprecated_alias('to_tensor_dict', to_tensor_dict)
-to_safetensors.__name__ = 'to_safetensors'
-
-
-# =============================================================================
 # Exports
 # =============================================================================
 
@@ -448,8 +433,6 @@ __all__ = [
     # Memory conversions (dict <-> .npk)
     'from_tensor_dict',      # Primary name (recommended)
     'to_tensor_dict',        # Primary name (recommended)
-    'from_safetensors',      # Legacy alias (deprecated, will be removed in 0.6.0)
-    'to_safetensors',        # Legacy alias (deprecated, will be removed in 0.6.0)
     # Utilities
     'get_safetensors_metadata',
     'iter_safetensors',

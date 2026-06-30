@@ -288,7 +288,7 @@ def _open_numpack_for_read(input_path: Union[str, Path]) -> Any:
 # NumPy format conversion (npy/npz)
 # =============================================================================
 
-def from_numpy(
+def from_npy(
     input_path: Union[str, Path],
     output_path: Union[str, Path],
     array_name: Optional[str] = None,
@@ -703,7 +703,7 @@ def from_feather(
 # Pandas DataFrame conversion
 # =============================================================================
 
-def from_pandas(
+def from_dataframe(
     df: "pd.DataFrame",
     output_path: Union[str, Path],
     array_name: str = 'data',
@@ -760,7 +760,7 @@ def from_pandas(
 # PyTorch tensor conversion
 # =============================================================================
 
-def from_pytorch(
+def from_pt(
     input_path: Union[str, Path],
     output_path: Union[str, Path],
     key: Optional[str] = None,
@@ -915,7 +915,7 @@ def from_s3(
         
         # Dispatch to the corresponding import function
         format_handlers = {
-            'numpy': from_numpy,
+            'numpy': from_npy,
             'csv': from_csv,
             'txt': from_txt,
             'parquet': from_parquet,
@@ -1000,7 +1000,7 @@ def to_s3(
     try:
         # Dispatch to the corresponding export function
         format_handlers = {
-            'numpy': lambda inp, out, **kw: to_numpy(inp, out, array_names=[array_name] if array_name else None, chunk_size=chunk_size),
+            'numpy': lambda inp, out, **kw: to_npy(inp, out, array_names=[array_name] if array_name else None, chunk_size=chunk_size),
             'csv': lambda inp, out, **kw: to_csv(inp, out, array_name=array_name, chunk_size=chunk_size),
             'txt': lambda inp, out, **kw: to_txt(inp, out, array_name=array_name, chunk_size=chunk_size),
             'parquet': lambda inp, out, **kw: to_parquet(inp, out, array_name=array_name, chunk_size=chunk_size),
@@ -1075,8 +1075,6 @@ __all__ = [
     # NumPy file conversion (.npy/.npz <-> .npk)
     'from_npy',       # Primary name (recommended)
     'to_npy',         # Primary name (recommended)
-    'from_numpy',     # Legacy alias
-    'to_numpy',       # Legacy alias
     
     # CSV/TXT conversion
     'from_csv',
@@ -1109,27 +1107,17 @@ __all__ = [
     # Arrow/Feather memory conversion (PyArrow Table <-> .npk)
     'from_table',         # Primary name (recommended)
     'to_table',           # Primary name (recommended)
-    'from_arrow',         # Legacy alias
-    'to_arrow',           # Legacy alias
     
     # Pandas conversion (DataFrame <-> .npk)
     'from_dataframe',     # Primary name (recommended)
     'to_dataframe',       # Primary name (recommended)
-    'from_pandas',        # Legacy alias
-    'to_pandas',          # Legacy alias
     
     # PyTorch file conversion (.pt/.pth <-> .npk)
     'from_pt',            # Primary name (recommended)
     'to_pt',              # Primary name (recommended)
-    'from_torch_file',    # Verbose alias
-    'to_torch_file',      # Verbose alias
-    'from_pytorch',       # Legacy alias
-    'to_pytorch',         # Legacy alias
     # PyTorch memory conversion (Tensor <-> .npk)
     'from_tensor',        # Primary name (recommended)
     'to_tensor',          # Primary name (recommended)
-    'from_torch',         # Legacy alias
-    'to_torch',           # Legacy alias
     
     # SafeTensors file conversion (.safetensors <-> .npk)
     'from_safetensors_file',
@@ -1137,8 +1125,6 @@ __all__ = [
     # SafeTensors memory conversion (dict <-> .npk)
     'from_tensor_dict',       # Primary name (recommended)
     'to_tensor_dict',         # Primary name (recommended)
-    'from_safetensors',       # Legacy alias (for backward compatibility)
-    'to_safetensors',         # Legacy alias (for backward compatibility)
     'get_safetensors_metadata',
     'iter_safetensors',
     
@@ -1184,22 +1170,15 @@ from .feather_io import (
     # Primary names
     from_feather, to_feather,
     from_table, to_table,
-    # Verbose/Legacy aliases
+    # Verbose aliases
     from_feather_file, to_feather_file,
-    from_arrow, to_arrow,
 )
 from .hdf5_io import from_hdf5, to_hdf5
 from .numpy_io import (
-    # Primary names
     from_npy, to_npy,
-    # Legacy aliases
-    from_numpy, to_numpy,
 )
 from .pandas_io import (
-    # Primary names
     from_dataframe, to_dataframe,
-    # Legacy aliases
-    from_pandas, to_pandas,
 )
 from .parquet_io import (
     # Primary names
@@ -1209,21 +1188,14 @@ from .parquet_io import (
     from_parquet_file, to_parquet_file,
 )
 from .pytorch_io import (
-    # Primary names
     from_pt, to_pt,
     from_tensor, to_tensor,
-    # Verbose/Legacy aliases
-    from_torch_file, to_torch_file,
-    from_torch, to_torch,
-    from_pytorch, to_pytorch,
 )
 from .safetensors_io import (
     # File conversions
     from_safetensors_file, to_safetensors_file,
     # Memory conversions (primary names)
     from_tensor_dict, to_tensor_dict,
-    # Memory conversions (legacy aliases)
-    from_safetensors, to_safetensors,
     # Utilities
     get_safetensors_metadata, iter_safetensors,
 )

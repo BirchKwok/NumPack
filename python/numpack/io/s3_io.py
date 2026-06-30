@@ -88,11 +88,11 @@ def from_s3(
         from .csv_io import from_csv, from_txt
         from .feather_io import from_feather
         from .hdf5_io import from_hdf5
-        from .numpy_io import from_numpy
+        from .numpy_io import from_npy
         from .parquet_io import from_parquet
 
         format_handlers = {
-            'numpy': from_numpy,
+            'numpy': from_npy,
             'csv': from_csv,
             'txt': from_txt,
             'parquet': from_parquet,
@@ -184,12 +184,12 @@ def to_s3(
         from .csv_io import to_csv, to_txt
         from .feather_io import to_feather
         from .hdf5_io import to_hdf5
-        from .numpy_io import to_numpy
+        from .numpy_io import to_npy
         from .parquet_io import to_parquet
 
         # Dispatch to the corresponding export function
         format_handlers = {
-            'numpy': lambda inp, out, **kw: to_numpy(
+            'numpy': lambda inp, out, **kw: to_npy(
                 inp,
                 out,
                 array_names=[array_name] if array_name else None,

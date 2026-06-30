@@ -146,27 +146,10 @@ def to_dataframe(
 
 
 # =============================================================================
-# Legacy Aliases (deprecated, will be removed in 0.6.0)
-# =============================================================================
-
-from .utils import deprecated_alias
-
-from_pandas = deprecated_alias('from_dataframe', from_dataframe)
-from_pandas.__name__ = 'from_pandas'
-
-to_pandas = deprecated_alias('to_dataframe', to_dataframe)
-to_pandas.__name__ = 'to_pandas'
-
-
-# =============================================================================
 # Exports
 # =============================================================================
 
 __all__ = [
-    # Primary names (recommended)
     'from_dataframe',
     'to_dataframe',
-    # Legacy aliases (deprecated, will be removed in 0.6.0)
-    'from_pandas',
-    'to_pandas',
 ]

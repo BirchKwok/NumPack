@@ -3,12 +3,12 @@
 This module provides two types of conversions:
 
 1. **Memory-to-file / File-to-memory conversions**:
-   - `from_torch(tensor, npk_path)` - Save PyTorch tensor to .npk file
-   - `to_torch(npk_path, array_name)` - Load from .npk file and return PyTorch tensor
+   - `from_tensor(tensor, npk_path)` - Save PyTorch tensor to .npk file
+   - `to_tensor(npk_path, array_name)` - Load from .npk file and return PyTorch tensor
 
 2. **File-to-file conversions (streaming)**:
-   - `from_torch_file(pt_path, npk_path)` - Convert .pt/.pth file to .npk
-   - `to_torch_file(npk_path, pt_path)` - Convert .npk file to .pt/.pth
+   - `from_pt(pt_path, npk_path)` - Convert .pt/.pth file to .npk
+   - `to_pt(npk_path, pt_path)` - Convert .npk file to .pt/.pth
 """
 
 from __future__ import annotations
@@ -356,48 +356,12 @@ def _save_tensor_streaming(
 
 
 # =============================================================================
-# Legacy Aliases (deprecated, will be removed in 0.6.0)
-# =============================================================================
-
-from .utils import deprecated_alias
-
-# Memory conversion aliases
-from_torch = deprecated_alias('from_tensor', from_tensor)
-from_torch.__name__ = 'from_torch'
-
-to_torch = deprecated_alias('to_tensor', to_tensor)
-to_torch.__name__ = 'to_torch'
-
-# File conversion aliases
-from_torch_file = deprecated_alias('from_pt', from_pt)
-from_torch_file.__name__ = 'from_torch_file'
-
-to_torch_file = deprecated_alias('to_pt', to_pt)
-to_torch_file.__name__ = 'to_torch_file'
-
-from_pytorch = deprecated_alias('from_pt', from_pt)
-from_pytorch.__name__ = 'from_pytorch'
-
-to_pytorch = deprecated_alias('to_pt', to_pt)
-to_pytorch.__name__ = 'to_pytorch'
-
-
-# =============================================================================
 # Exports
 # =============================================================================
 
 __all__ = [
-    # Primary names (recommended) - Memory conversions
     'from_tensor',
     'to_tensor',
-    # Primary names (recommended) - File conversions
     'from_pt',
     'to_pt',
-    # Legacy aliases (deprecated, will be removed in 0.6.0)
-    'from_torch',
-    'to_torch',
-    'from_torch_file',
-    'to_torch_file',
-    'from_pytorch',
-    'to_pytorch',
 ]

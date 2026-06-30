@@ -381,22 +381,11 @@ def _table_to_numpy_zero_copy(table) -> np.ndarray:
 
 
 # =============================================================================
-# Primary Names and Aliases
+# Primary Names
 # =============================================================================
 
-from .utils import deprecated_alias
-
-# Primary names for file conversion (recommended)
 from_feather = from_feather_file
 to_feather = to_feather_file
-
-# Legacy aliases for memory conversions (deprecated, will be removed in 0.6.0)
-from_arrow = deprecated_alias('from_table', from_table)
-from_arrow.__name__ = 'from_arrow'
-
-to_arrow = deprecated_alias('to_table', to_table)
-to_arrow.__name__ = 'to_arrow'
-
 
 # =============================================================================
 # Exports
@@ -412,7 +401,4 @@ __all__ = [
     # Verbose aliases (for clarity)
     'from_feather_file',
     'to_feather_file',
-    # Legacy aliases (deprecated, will be removed in 0.6.0)
-    'from_arrow',
-    'to_arrow',
 ]
