@@ -13,6 +13,6 @@ pub mod multilevel_cache_tests;
 pub mod performance_tests;
 pub mod prefetch_benchmark;
 pub mod prefetch_tests;
-pub mod simd_tests;
 pub mod rust_api_tests;
+pub mod simd_tests;
 pub mod zero_copy_tests;

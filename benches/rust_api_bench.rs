@@ -4,7 +4,7 @@
 //!   cargo bench --bench rust_api_bench --no-default-features --features rayon
 
 use ndarray::{Array2, ArrayD};
-use numpack::{ParallelIO, DataType, NpkResult};
+use numpack::{DataType, NpkResult, ParallelIO};
 use std::time::Instant;
 use tempfile::TempDir;
 
@@ -22,7 +22,11 @@ impl BenchResult {
     }
     fn std_ms(&self) -> f64 {
         let mean = self.mean_ms();
-        let var = self.times_ms.iter().map(|t| (t - mean).powi(2)).sum::<f64>()
+        let var = self
+            .times_ms
+            .iter()
+            .map(|t| (t - mean).powi(2))
+            .sum::<f64>()
             / self.times_ms.len() as f64;
         var.sqrt()
     }
@@ -42,7 +46,10 @@ fn bench<F: FnMut()>(name: &str, warmup: usize, iters: usize, mut f: F) -> Bench
         f();
         times.push(start.elapsed().as_secs_f64() * 1000.0);
     }
-    BenchResult { name: name.to_string(), times_ms: times }
+    BenchResult {
+        name: name.to_string(),
+        times_ms: times,
+    }
 }
 
 /// Benchmark with separate setup and teardown.
@@ -74,7 +81,10 @@ where
         teardown(ctx);
         times.push(elapsed);
     }
-    BenchResult { name: name.to_string(), times_ms: times }
+    BenchResult {
+        name: name.to_string(),
+        times_ms: times,
+    }
 }
 
 struct IoCtx {
@@ -111,7 +121,8 @@ fn main() {
     // Pre-generate data
     let data = Array2::<f32>::from_shape_fn((rows, cols), |(r, c)| {
         ((r * cols + c) % 1000) as f32 / 1000.0
-    }).into_dyn();
+    })
+    .into_dyn();
 
     let append_data = Array2::<f32>::ones((append_rows_count, cols)).into_dyn();
     let replace_data = Array2::<f32>::from_elem((replace_count, cols), 999.0).into_dyn();
@@ -127,21 +138,26 @@ fn main() {
     let make_io = |d: &ArrayD<f32>| -> IoCtx {
         let tmp = TempDir::new().unwrap();
         let io = ParallelIO::new(tmp.path().to_path_buf()).unwrap();
-        io.save_arrays(&[("arr".to_string(), d.clone(), DataType::Float32)]).unwrap();
+        io.save_arrays(&[("arr".to_string(), d.clone(), DataType::Float32)])
+            .unwrap();
         io.sync_metadata().unwrap();
         IoCtx { _tmp: tmp, io }
     };
 
     // ---- save ----
     {
-        let r = bench_with_setup("save", WARMUP_ITERS, BENCH_ITERS,
+        let r = bench_with_setup(
+            "save",
+            WARMUP_ITERS,
+            BENCH_ITERS,
             || {
                 let tmp = TempDir::new().unwrap();
                 let io = ParallelIO::new(tmp.path().to_path_buf()).unwrap();
                 (tmp, io)
             },
             |(_, io)| {
-                io.save_arrays(&[("arr".to_string(), data.clone(), DataType::Float32)]).unwrap();
+                io.save_arrays(&[("arr".to_string(), data.clone(), DataType::Float32)])
+                    .unwrap();
                 io.sync_metadata().unwrap();
             },
             |_| {},
@@ -160,7 +176,10 @@ fn main() {
 
     // ---- append_rows ----
     {
-        let r = bench_with_setup("append_rows", WARMUP_ITERS, BENCH_ITERS,
+        let r = bench_with_setup(
+            "append_rows",
+            WARMUP_ITERS,
+            BENCH_ITERS,
             || make_io(&data),
             |ctx| {
                 ctx.io.append_rows("arr", &append_data).unwrap();
@@ -174,7 +193,9 @@ fn main() {
     {
         let ctx = make_io(&data);
         let r = bench("replace_rows", WARMUP_ITERS, BENCH_ITERS, || {
-            ctx.io.replace_rows("arr", &replace_data, &replace_indices).unwrap();
+            ctx.io
+                .replace_rows("arr", &replace_data, &replace_indices)
+                .unwrap();
         });
         results.push(r);
     }
@@ -199,7 +220,10 @@ fn main() {
 
     // ---- drop_rows ----
     {
-        let r = bench_with_setup("drop_rows", WARMUP_ITERS, BENCH_ITERS,
+        let r = bench_with_setup(
+            "drop_rows",
+            WARMUP_ITERS,
+            BENCH_ITERS,
             || make_io(&data),
             |ctx| {
                 ctx.io.drop_arrays("arr", Some(&drop_indices)).unwrap();
@@ -239,7 +263,8 @@ fn main() {
         let io = ParallelIO::new(tmp.path().to_path_buf()).unwrap();
         for i in 0..10 {
             let small = Array2::<f32>::zeros((10, 4)).into_dyn();
-            io.save_arrays(&[(format!("arr_{}", i), small, DataType::Float32)]).unwrap();
+            io.save_arrays(&[(format!("arr_{}", i), small, DataType::Float32)])
+                .unwrap();
         }
         io.sync_metadata().unwrap();
         let r = bench("get_member_list", WARMUP_ITERS, BENCH_ITERS, || {
@@ -259,7 +284,10 @@ fn main() {
 
     // ---- update (compact) ----
     {
-        let r = bench_with_setup("update", WARMUP_ITERS, BENCH_ITERS,
+        let r = bench_with_setup(
+            "update",
+            WARMUP_ITERS,
+            BENCH_ITERS,
             || {
                 let ctx = make_io(&data);
                 ctx.io.drop_arrays("arr", Some(&drop_indices)).unwrap();
@@ -284,7 +312,10 @@ fn main() {
 
     // ---- reset ----
     {
-        let r = bench_with_setup("reset", WARMUP_ITERS, BENCH_ITERS,
+        let r = bench_with_setup(
+            "reset",
+            WARMUP_ITERS,
+            BENCH_ITERS,
             || make_io(&data),
             |ctx| {
                 ctx.io.reset().unwrap();
@@ -296,7 +327,10 @@ fn main() {
 
     // ---------- Print results ----------
     println!("-----------------------------------------------------------------");
-    println!("{:<20} {:>10} {:>10} {:>10}", "Operation", "Mean(ms)", "Std(ms)", "Min(ms)");
+    println!(
+        "{:<20} {:>10} {:>10} {:>10}",
+        "Operation", "Mean(ms)", "Std(ms)", "Min(ms)"
+    );
     println!("-----------------------------------------------------------------");
     for r in &results {
         println!(
@@ -313,7 +347,9 @@ fn main() {
     println!("JSON_RESULTS_START");
     print!("{{");
     for (i, r) in results.iter().enumerate() {
-        if i > 0 { print!(", "); }
+        if i > 0 {
+            print!(", ");
+        }
         print!("\"{}\": {:.6}", r.name, r.mean_ms());
     }
     println!("}}");

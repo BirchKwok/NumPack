@@ -112,6 +112,7 @@ pub struct LazyArray {
 #[allow(dead_code)]
 #[pyclass]
 struct StreamLoader {
+    io: ParallelIO,
     base_dir: PathBuf,
     array_name: String,
     total_rows: i64,
@@ -1964,7 +1965,9 @@ impl LazyArray {
     }
 
     #[inline]
-    fn safe_cast_vec<T: bytemuck::Pod + bytemuck::AnyBitPattern + bytemuck::NoUninit>(data: Vec<u8>) -> Vec<T> {
+    fn safe_cast_vec<T: bytemuck::Pod + bytemuck::AnyBitPattern + bytemuck::NoUninit>(
+        data: Vec<u8>,
+    ) -> Vec<T> {
         match bytemuck::allocation::try_cast_vec::<u8, T>(data) {
             Ok(typed_vec) => typed_vec,
             Err((_err, data)) => {
@@ -1974,7 +1977,7 @@ impl LazyArray {
                     std::ptr::copy_nonoverlapping(
                         data.as_ptr(),
                         result.as_mut_ptr() as *mut u8,
-                        data.len()
+                        data.len(),
                     );
                     result.set_len(count);
                 }
@@ -1996,79 +1999,57 @@ impl LazyArray {
                 array.into_pyarray(py).into()
             }
             DataType::Uint8 => {
-                let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), data)
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), data) };
                 array.into_pyarray(py).into()
             }
             DataType::Uint16 => {
                 let typed_vec: Vec<u16> = Self::safe_cast_vec(data);
-                let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Uint32 => {
                 let typed_vec: Vec<u32> = Self::safe_cast_vec(data);
-                let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Uint64 => {
                 let typed_vec: Vec<u64> = Self::safe_cast_vec(data);
-                let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Int8 => {
                 let typed_vec: Vec<i8> = Self::safe_cast_vec(data);
-                let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Int16 => {
                 let typed_vec: Vec<i16> = Self::safe_cast_vec(data);
-                let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Int32 => {
                 let typed_vec: Vec<i32> = Self::safe_cast_vec(data);
-                let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Int64 => {
                 let typed_vec: Vec<i64> = Self::safe_cast_vec(data);
-                let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Float16 => {
                 let typed_vec: Vec<f16> = Self::safe_cast_vec(data);
-                let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Float32 => {
                 let typed_vec: Vec<f32> = Self::safe_cast_vec(data);
-                let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Float64 => {
                 let typed_vec: Vec<f64> = Self::safe_cast_vec(data);
-                let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Complex64 => {
@@ -2279,63 +2260,82 @@ impl LazyArray {
     }
 
     /// 快速访问模式检测（极简版：最小化开销）
-    /// 
+    ///
     /// 只做最基本的检测，避免复杂统计计算
     #[inline]
-    fn detect_access_pattern_fast(&self, indices: &[(usize, usize)], total_rows: usize) -> BatchAccessPattern {
+    fn detect_access_pattern_fast(
+        &self,
+        indices: &[(usize, usize)],
+        total_rows: usize,
+    ) -> BatchAccessPattern {
         let n = indices.len();
         if n < 20 {
             return BatchAccessPattern::Sequential;
         }
-        
+
         // 快速采样：只检测前32个样本（减少开销）
         const SAMPLE_SIZE: usize = 32;
         let sample_count = n.min(SAMPLE_SIZE);
-        
+
         // 计算连续性和小间隔比率
         let mut consecutive = 0usize;
         let mut small_gap = 0usize;
-        
+
         for i in 1..sample_count {
             let prev = indices[i - 1].1;
             let curr = indices[i].1;
-            let gap = if curr > prev { curr - prev } else { prev - curr };
-            
+            let gap = if curr > prev {
+                curr - prev
+            } else {
+                prev - curr
+            };
+
             if gap == 1 {
                 consecutive += 1;
             }
-            if gap <= 16 {  // 放宽小间隔阈值
+            if gap <= 16 {
+                // 放宽小间隔阈值
                 small_gap += 1;
             }
         }
-        
+
         let pairs = sample_count - 1;
         if pairs == 0 {
             return BatchAccessPattern::Sequential;
         }
-        
+
         // 快速判断 - 优化阈值
-        if consecutive * 5 > pairs * 4 {  // >80% 连续
+        if consecutive * 5 > pairs * 4 {
+            // >80% 连续
             return BatchAccessPattern::Sequential;
         }
-        if small_gap * 10 > pairs * 6 {  // >60% 小间隔 -> Clustered
+        if small_gap * 10 > pairs * 6 {
+            // >60% 小间隔 -> Clustered
             return BatchAccessPattern::Clustered;
         }
-        
+
         // 检测热点：检查范围
-        let min_idx = indices[..sample_count].iter().map(|&(_, p)| p).min().unwrap_or(0);
-        let max_idx = indices[..sample_count].iter().map(|&(_, p)| p).max().unwrap_or(0);
+        let min_idx = indices[..sample_count]
+            .iter()
+            .map(|&(_, p)| p)
+            .min()
+            .unwrap_or(0);
+        let max_idx = indices[..sample_count]
+            .iter()
+            .map(|&(_, p)| p)
+            .max()
+            .unwrap_or(0);
         let range = max_idx.saturating_sub(min_idx);
-        
+
         if total_rows > 0 && range < total_rows / 10 {
             return BatchAccessPattern::Hot;
         }
-        
+
         BatchAccessPattern::Random
     }
-    
+
     /// 检测批量访问的访问模式（完整版：采样检测）
-    /// 
+    ///
     /// 通过分析索引分布特征来判断访问模式：
     /// - Sequential: 连续性 > 80%
     /// - Clustered: 连续性 > 40% 或 有明显的聚簇特征
@@ -2343,11 +2343,15 @@ impl LazyArray {
     /// - Sparse: 索引间隔均匀
     /// - Random: 其他情况
     #[allow(dead_code)]
-    fn detect_access_pattern(&self, indices: &[(usize, usize)], total_rows: usize) -> BatchAccessPattern {
+    fn detect_access_pattern(
+        &self,
+        indices: &[(usize, usize)],
+        total_rows: usize,
+    ) -> BatchAccessPattern {
         if indices.len() < 3 {
             return BatchAccessPattern::Sequential;
         }
-        
+
         // 优化：对大批量使用采样检测（最多检测200个样本）
         const MAX_SAMPLE_SIZE: usize = 200;
         let sample_indices: Vec<usize> = if indices.len() <= MAX_SAMPLE_SIZE {
@@ -2355,30 +2359,31 @@ impl LazyArray {
         } else {
             // 均匀采样
             let step = indices.len() / MAX_SAMPLE_SIZE;
-            indices.iter()
+            indices
+                .iter()
                 .enumerate()
                 .filter(|(i, _)| i % step == 0)
                 .take(MAX_SAMPLE_SIZE)
                 .map(|(_, &(_, p))| p)
                 .collect()
         };
-        
+
         if sample_indices.len() < 2 {
             return BatchAccessPattern::Sequential;
         }
-        
+
         // 计算统计信息
         let mut consecutive_pairs = 0;
         let mut total_pairs = 0;
         let mut small_gap_count = 0; // 间隔 <= 5 的对数
-        
+
         for window in sample_indices.windows(2) {
             let gap = if window[1] > window[0] {
                 window[1] - window[0]
             } else {
                 window[0] - window[1]
             };
-            
+
             if gap == 1 {
                 consecutive_pairs += 1;
             }
@@ -2387,14 +2392,14 @@ impl LazyArray {
             }
             total_pairs += 1;
         }
-        
+
         if total_pairs == 0 {
             return BatchAccessPattern::Sequential;
         }
-        
+
         let consecutive_ratio = consecutive_pairs as f64 / total_pairs as f64;
         let clustered_ratio = small_gap_count as f64 / total_pairs as f64;
-        
+
         // 快速判断顺序和聚簇模式
         if consecutive_ratio > 0.8 {
             return BatchAccessPattern::Sequential;
@@ -2402,12 +2407,12 @@ impl LazyArray {
         if clustered_ratio > 0.5 || consecutive_ratio > 0.4 {
             return BatchAccessPattern::Clustered;
         }
-        
+
         // 检测热点模式：大部分索引集中在小范围内
         let min_idx = *sample_indices.iter().min().unwrap_or(&0);
         let max_idx = *sample_indices.iter().max().unwrap_or(&0);
         let index_range = max_idx.saturating_sub(min_idx);
-        
+
         // 热点模式：索引范围小于总数据量的10%，且索引密度高
         // 密度 = 索引数量 / 范围
         let density = if index_range > 0 {
@@ -2415,12 +2420,12 @@ impl LazyArray {
         } else {
             1.0
         };
-        
+
         // 高密度（>0.3）且小范围才是热点模式
         if total_rows > 0 && index_range < total_rows / 10 && density > 0.3 {
             return BatchAccessPattern::Hot;
         }
-        
+
         // 检查是否为稀疏模式（均匀分布）
         if sample_indices.len() > 1 && index_range > 0 {
             let expected_gap = index_range as f64 / (sample_indices.len() - 1) as f64;
@@ -2434,18 +2439,18 @@ impl LazyArray {
                 total_gap += gap;
             }
             let avg_gap = total_gap as f64 / total_pairs as f64;
-            
+
             // 如果平均间隔接近预期间隔，说明是均匀分布
             if expected_gap > 0.0 && (avg_gap - expected_gap).abs() / expected_gap < 0.3 {
                 return BatchAccessPattern::Sparse;
             }
         }
-        
+
         BatchAccessPattern::Random
     }
-    
+
     /// 处理批量访问（优化的一次性FFI调用）
-    /// 
+    ///
     /// 优化策略（动态选择）：
     /// 1. 访问模式自动检测 - 分析索引分布判断最优策略
     /// 2. 索引排序优化 - 仅对随机/稀疏模式启用，聚簇模式绕过
@@ -2454,7 +2459,7 @@ impl LazyArray {
     fn handle_batch_access(&self, py: Python, indices: Vec<i64>) -> PyResult<PyObject> {
         let logical_len = self.len_logical() as i64;
         let num_indices = indices.len();
-        
+
         // 快速路径：空索引
         if num_indices == 0 {
             let mut result_shape = self.shape.clone();
@@ -2463,10 +2468,10 @@ impl LazyArray {
             }
             return self.create_numpy_array(py, Vec::new(), &result_shape);
         }
-        
+
         // 归一化索引并创建 (original_position, physical_index) 对
         let mut indexed_positions: Vec<(usize, usize)> = Vec::with_capacity(num_indices);
-        
+
         for (orig_pos, &idx) in indices.iter().enumerate() {
             let normalized = if idx < 0 { logical_len + idx } else { idx };
             if normalized < 0 || normalized >= logical_len {
@@ -2477,7 +2482,7 @@ impl LazyArray {
             }
             indexed_positions.push((orig_pos, normalized as usize));
         }
-        
+
         // 转换逻辑索引到物理索引
         if let Some(mut map) = self.logical_rows.clone() {
             let logical_indices: Vec<usize> = indexed_positions.iter().map(|&(_, li)| li).collect();
@@ -2486,53 +2491,53 @@ impl LazyArray {
                 indexed_positions[i].1 = phys_idx;
             }
         }
-        
+
         let row_size = if self.shape.len() > 1 {
             self.shape[1..].iter().product::<usize>() * self.itemsize
         } else {
             self.itemsize
         };
-        
+
         // 动态策略选择 - 根据数据规模调整阈值
         let total_rows = self.shape[0];
         let data_size_bytes = total_rows * row_size;
-        
+
         // 大数据集（>10MB）使用更保守的策略
         let is_large_dataset = data_size_bytes > 10 * 1024 * 1024;
-        
+
         // 优化：提高阈值减少小批量开销
         let sort_threshold = if is_large_dataset { 200 } else { 100 };
         let pattern_detect_threshold = 50; // 提高模式检测阈值
         let parallel_threshold = 50000; // 并行处理阈值（仅对超大批量启用）
-        
+
         // 检测访问模式（仅对足够大的批量进行检测）
         let access_pattern = if num_indices >= pattern_detect_threshold {
             self.detect_access_pattern_fast(&indexed_positions, total_rows)
         } else {
             BatchAccessPattern::Sequential // 小批量默认按顺序处理
         };
-        
+
         // 根据访问模式和数据规模决定优化策略
         // 优化：只对小数据集的Random/Sparse模式启用排序
         // Clustered模式已有良好局部性，不需要排序
-        let use_sorted_access = num_indices >= sort_threshold && 
-            !is_large_dataset &&
-            access_pattern == BatchAccessPattern::Random;
-        
+        let use_sorted_access = num_indices >= sort_threshold
+            && !is_large_dataset
+            && access_pattern == BatchAccessPattern::Random;
+
         // 优化：使用连续内存缓冲区，避免Vec<Vec<u8>>的多次分配
         let total_size = num_indices * row_size;
         let mut all_data = vec![0u8; total_size];
-        
+
         if use_sorted_access {
             // 就地排序indexed_positions（避免clone）
             indexed_positions.sort_unstable_by_key(|&(_, phys_idx)| phys_idx);
-            
+
             // 预取提示
             #[cfg(unix)]
             if access_pattern == BatchAccessPattern::Random {
                 self.advise_sequential_access(&indexed_positions, row_size);
             }
-            
+
             // 直接写入连续缓冲区
             self.process_sorted_batch_fast(&indexed_positions, row_size, &mut all_data)?;
         } else if num_indices >= parallel_threshold && row_size >= 32 {
@@ -2541,11 +2546,14 @@ impl LazyArray {
         } else {
             // 预取提示
             #[cfg(unix)]
-            if matches!(access_pattern, BatchAccessPattern::Clustered | BatchAccessPattern::Hot) 
-                && num_indices >= sort_threshold {
+            if matches!(
+                access_pattern,
+                BatchAccessPattern::Clustered | BatchAccessPattern::Hot
+            ) && num_indices >= sort_threshold
+            {
                 self.advise_willneed_access(&indexed_positions, row_size);
             }
-            
+
             // 直接写入连续缓冲区
             self.process_direct_batch_fast(&indexed_positions, row_size, &mut all_data)?;
         }
@@ -2557,7 +2565,7 @@ impl LazyArray {
 
         self.create_numpy_array(py, all_data, &result_shape)
     }
-    
+
     /// 快速处理排序后的批量访问（直接写入连续缓冲区）
     fn process_sorted_batch_fast(
         &self,
@@ -2567,10 +2575,10 @@ impl LazyArray {
     ) -> PyResult<()> {
         let mmap_len = self.mmap.len();
         let mut i = 0;
-        
+
         while i < sorted_positions.len() {
             let (orig_pos, phys_idx) = sorted_positions[i];
-            
+
             // 检测连续块的长度
             let mut block_len = 1;
             while i + block_len < sorted_positions.len() {
@@ -2581,9 +2589,9 @@ impl LazyArray {
                     break;
                 }
             }
-            
+
             let src_offset = phys_idx * row_size;
-            
+
             if block_len >= 2 {
                 // 连续块：批量读取后分发
                 let block_size = block_len * row_size;
@@ -2614,7 +2622,7 @@ impl LazyArray {
         }
         Ok(())
     }
-    
+
     /// 快速直接批量访问（直接写入连续缓冲区）
     fn process_direct_batch_fast(
         &self,
@@ -2624,7 +2632,7 @@ impl LazyArray {
     ) -> PyResult<()> {
         let mmap_len = self.mmap.len();
         let mmap_slice = &self.mmap[..];
-        
+
         for &(orig_pos, phys_idx) in indexed_positions {
             let src_offset = phys_idx * row_size;
             if src_offset + row_size > mmap_len {
@@ -2638,7 +2646,7 @@ impl LazyArray {
         }
         Ok(())
     }
-    
+
     /// 并行批量访问（使用rayon并行化大批量内存复制）
     /// 优化版：减少内存分配，使用更大的chunk和预分配缓冲区
     fn process_parallel_batch_fast(
@@ -2650,7 +2658,7 @@ impl LazyArray {
         let mmap_len = self.mmap.len();
         let mmap_slice = &self.mmap[..];
         let num_indices = indexed_positions.len();
-        
+
         // 首先验证所有索引都在范围内
         for &(_, phys_idx) in indexed_positions {
             let src_offset = phys_idx * row_size;
@@ -2660,15 +2668,15 @@ impl LazyArray {
                 ));
             }
         }
-        
+
         // 优化：对于大批量，使用更大的chunk减少并行开销
         // 每个chunk至少处理1024行或总数/CPU核心数
         let num_threads = rayon::current_num_threads().max(1);
         let chunk_size = (num_indices / num_threads).max(1024).min(num_indices);
-        
+
         // 使用分块并行处理 - 每个chunk预分配固定缓冲区
         let chunks: Vec<_> = indexed_positions.chunks(chunk_size).collect();
-        
+
         // 并行处理每个chunk，直接写入预分配的缓冲区
         let chunk_buffers: Vec<Vec<u8>> = chunks
             .par_iter()
@@ -2684,7 +2692,7 @@ impl LazyArray {
                 buffer
             })
             .collect();
-        
+
         // 串行写入最终输出（保持原始顺序）
         let mut chunk_start = 0;
         for (chunk_idx, chunk) in chunks.iter().enumerate() {
@@ -2697,10 +2705,10 @@ impl LazyArray {
             }
             chunk_start += chunk.len();
         }
-        
+
         Ok(())
     }
-    
+
     /// 处理排序后的批量访问（检测连续块）- 旧版本保留兼容
     #[allow(dead_code)]
     fn process_sorted_batch(
@@ -2712,7 +2720,7 @@ impl LazyArray {
         let mut i = 0;
         while i < sorted_positions.len() {
             let (orig_pos, phys_idx) = sorted_positions[i];
-            
+
             // 检测连续块的长度
             let mut block_len = 1;
             while i + block_len < sorted_positions.len() {
@@ -2723,20 +2731,21 @@ impl LazyArray {
                     break;
                 }
             }
-            
+
             // 如果是连续块（>=2行），批量读取
             if block_len >= 2 {
                 let start_offset = phys_idx * row_size;
                 let block_size = block_len * row_size;
-                
+
                 if start_offset + block_size <= self.mmap.len() {
                     let block_data = &self.mmap[start_offset..start_offset + block_size];
-                    
+
                     // 分配到各个原始位置
                     for j in 0..block_len {
                         let (orig_pos_j, _) = sorted_positions[i + j];
                         let row_start = j * row_size;
-                        result_rows[orig_pos_j] = block_data[row_start..row_start + row_size].to_vec();
+                        result_rows[orig_pos_j] =
+                            block_data[row_start..row_start + row_size].to_vec();
                     }
                 }
                 i += block_len;
@@ -2748,7 +2757,7 @@ impl LazyArray {
         }
         Ok(())
     }
-    
+
     /// 直接批量访问（按原始顺序）- 旧版本保留兼容
     #[allow(dead_code)]
     fn process_direct_batch(
@@ -2762,7 +2771,7 @@ impl LazyArray {
         }
         Ok(())
     }
-    
+
     /// 读取单行数据 - 旧版本保留兼容
     #[allow(dead_code)]
     fn read_single_row(
@@ -2780,7 +2789,7 @@ impl LazyArray {
                 return Ok(());
             }
         }
-        
+
         let offset = phys_idx * row_size;
         if offset + row_size > self.mmap.len() {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
@@ -2790,26 +2799,27 @@ impl LazyArray {
         result_rows[orig_pos] = self.mmap[offset..offset + row_size].to_vec();
         Ok(())
     }
-    
+
     /// Unix系统上的madvise预取提示
     #[cfg(unix)]
     fn advise_sequential_access(&self, sorted_positions: &[(usize, usize)], row_size: usize) {
         use std::os::unix::io::AsRawFd;
-        
+
         if sorted_positions.is_empty() {
             return;
         }
-        
+
         // 获取访问范围
         let first_phys = sorted_positions.first().map(|&(_, p)| p).unwrap_or(0);
         let last_phys = sorted_positions.last().map(|&(_, p)| p).unwrap_or(0);
-        
+
         let start_offset = first_phys * row_size;
         let end_offset = (last_phys + 1) * row_size;
         let range_size = end_offset.saturating_sub(start_offset);
-        
+
         // 只对较大范围提供提示（避免过多系统调用）
-        if range_size > 64 * 1024 {  // 64KB阈值
+        if range_size > 64 * 1024 {
+            // 64KB阈值
             unsafe {
                 let ptr = self.mmap.as_ptr().add(start_offset);
                 // MADV_SEQUENTIAL = 2, 提示顺序访问
@@ -2817,28 +2827,28 @@ impl LazyArray {
             }
         }
     }
-    
+
     /// Windows系统上的空实现
     #[cfg(not(unix))]
     fn advise_sequential_access(&self, _sorted_positions: &[(usize, usize)], _row_size: usize) {
         // Windows不支持madvise，使用空实现
     }
-    
+
     /// Unix系统上的WILLNEED预取提示（用于聚簇访问模式）
     #[cfg(unix)]
     fn advise_willneed_access(&self, indexed_positions: &[(usize, usize)], row_size: usize) {
         if indexed_positions.is_empty() {
             return;
         }
-        
+
         // 找出所有需要访问的区域，合并相近的区域
         let mut regions: Vec<(usize, usize)> = Vec::new();
         let mut sorted_indices: Vec<usize> = indexed_positions.iter().map(|&(_, p)| p).collect();
         sorted_indices.sort();
-        
+
         let mut region_start = sorted_indices[0];
         let mut region_end = sorted_indices[0];
-        
+
         for &idx in &sorted_indices[1..] {
             // 如果间隔小于32行，合并到同一区域
             if idx <= region_end + 32 {
@@ -2850,13 +2860,13 @@ impl LazyArray {
             }
         }
         regions.push((region_start, region_end));
-        
+
         // 对每个区域发送WILLNEED提示
         for (start_idx, end_idx) in regions {
             let start_offset = start_idx * row_size;
             let end_offset = (end_idx + 1) * row_size;
             let range_size = end_offset.saturating_sub(start_offset);
-            
+
             // 只对较大区域发送提示（>16KB）
             if range_size > 16 * 1024 && start_offset + range_size <= self.mmap.len() {
                 unsafe {
@@ -2867,7 +2877,7 @@ impl LazyArray {
             }
         }
     }
-    
+
     /// Windows系统上的空实现
     #[cfg(not(unix))]
     fn advise_willneed_access(&self, _indexed_positions: &[(usize, usize)], _row_size: usize) {
@@ -2967,7 +2977,9 @@ fn get_array_dtype(array: &Bound<'_, PyAny>) -> PyResult<DataType> {
 #[cfg(feature = "python")]
 impl NumPack {
     #[inline]
-    fn safe_cast_vec_numpack<T: bytemuck::Pod + bytemuck::AnyBitPattern + bytemuck::NoUninit>(data: Vec<u8>) -> Vec<T> {
+    fn safe_cast_vec_numpack<T: bytemuck::Pod + bytemuck::AnyBitPattern + bytemuck::NoUninit>(
+        data: Vec<u8>,
+    ) -> Vec<T> {
         match bytemuck::allocation::try_cast_vec::<u8, T>(data) {
             Ok(typed_vec) => typed_vec,
             Err((_err, data)) => {
@@ -2977,7 +2989,7 @@ impl NumPack {
                     std::ptr::copy_nonoverlapping(
                         data.as_ptr(),
                         result.as_mut_ptr() as *mut u8,
-                        data.len()
+                        data.len(),
                     );
                     result.set_len(count);
                 }
@@ -3003,79 +3015,57 @@ impl NumPack {
                 array.into_pyarray(py).into()
             }
             DataType::Uint8 => {
-                let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), data)
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), data) };
                 array.into_pyarray(py).into()
             }
             DataType::Uint16 => {
                 let typed_vec: Vec<u16> = Self::safe_cast_vec_numpack(data);
-                let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Uint32 => {
                 let typed_vec: Vec<u32> = Self::safe_cast_vec_numpack(data);
-                let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Uint64 => {
                 let typed_vec: Vec<u64> = Self::safe_cast_vec_numpack(data);
-                let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Int8 => {
                 let typed_vec: Vec<i8> = Self::safe_cast_vec_numpack(data);
-                let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Int16 => {
                 let typed_vec: Vec<i16> = Self::safe_cast_vec_numpack(data);
-                let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Int32 => {
                 let typed_vec: Vec<i32> = Self::safe_cast_vec_numpack(data);
-                let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Int64 => {
                 let typed_vec: Vec<i64> = Self::safe_cast_vec_numpack(data);
-                let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Float16 => {
                 let typed_vec: Vec<f16> = Self::safe_cast_vec_numpack(data);
-                let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Float32 => {
                 let typed_vec: Vec<f32> = Self::safe_cast_vec_numpack(data);
-                let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Float64 => {
                 let typed_vec: Vec<f64> = Self::safe_cast_vec_numpack(data);
-                let array = unsafe {
-                    ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec)
-                };
+                let array = unsafe { ArrayD::from_shape_vec_unchecked(shape.to_vec(), typed_vec) };
                 array.into_pyarray(py).into()
             }
             DataType::Complex64 => {
@@ -3309,349 +3299,82 @@ impl NumPack {
             return self.load_lazy_optimized(py, array_name);
         }
 
-        // 【性能关键优化】超快速加载路径 - 最小化所有开销
-        // 1. 元数据查询（带缓存）
-        let meta_cache_key = format!("{}:{}", self.base_dir.display(), array_name);
-        let cached_meta = {
-            let meta_cache = METADATA_CACHE.read().unwrap();
-            meta_cache.get(&meta_cache_key).cloned()
-        };
+        let meta = self
+            .io
+            .get_array_meta(array_name)
+            .ok_or_else(|| PyErr::new::<PyKeyError, _>("Array not found"))?;
 
-        let (dtype, shape, itemsize, modify_time) = if let Some((
-            cached_dtype,
-            cached_shape,
-            cached_itemsize,
-            cached_mtime,
-        )) = cached_meta
-        {
-            (cached_dtype, cached_shape, cached_itemsize, cached_mtime)
-        } else {
-            let meta = match self.io.get_array_meta(array_name) {
-                Some(m) => m,
-                None => return Err(PyErr::new::<PyKeyError, _>("Array not found")),
-            };
-
-            let dtype = meta.get_dtype();
-            let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
-            let itemsize = dtype.size_bytes() as usize;
-            let modify_time = meta.last_modified as i64;
-
-            METADATA_CACHE.write().unwrap().insert(
-                meta_cache_key.clone(),
-                (dtype, shape.clone(), itemsize, modify_time),
-            );
-
-            (dtype, shape, itemsize, modify_time)
-        };
-
-        // 2. 平台特定的数据加载策略
-        let mut filename = String::with_capacity(5 + array_name.len() + 5); // "data_" + name + ".npkd"
-        filename.push_str("data_");
-        filename.push_str(array_name);
-        filename.push_str(".npkd");
-        let data_path = self.base_dir.join(&filename);
-        let array_path_string = data_path.to_string_lossy().to_string();
-
-        // Windows 平台专用逻辑：
-        // 在 Windows 上，eager load 不使用 mmap 缓存，以避免错误 1224
-        // （文件被 mmap 打开时无法执行 save/drop/append 等修改操作）
-        #[cfg(windows)]
-        let use_mmap_cache = false;
-
-        #[cfg(not(windows))]
-        let use_mmap_cache = true;
-
-        let mmap_arc = if use_mmap_cache {
-            // Unix 平台（macOS、Linux）：使用 mmap 缓存优化性能
-            // Fast path: read lock
-            let cached = {
-                let cache = MMAP_CACHE.read().unwrap();
-                if let Some((cached_mmap, cached_time)) = cache.get(&array_path_string) {
-                    if *cached_time == modify_time {
-                        Some(Arc::clone(cached_mmap))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            };
-            if let Some(mmap) = cached {
-                mmap
-            } else {
-                // Slow path: create mmap outside lock, then insert with write lock
-                let mmap = create_optimized_mmap(&data_path)?;
-                MMAP_CACHE.write().unwrap().insert(
-                    array_path_string.clone(),
-                    (Arc::clone(&mmap), modify_time),
-                );
-                mmap
-            }
-        } else {
-            // Windows 平台：直接创建 mmap，不缓存
-            // 这样在 save/drop/append 时不会有遗留的 mmap 句柄
-            let file = File::open(&data_path)?;
-            let mmap = unsafe { memmap2::MmapOptions::new().map(&file)? };
-            Arc::new(mmap)
-        };
-
-        let mmap_bytes = mmap_arc.as_ref().as_ref();
-        let total_elements: usize = shape.iter().product();
-        let expected_bytes = total_elements.checked_mul(itemsize).ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>("Array size overflow detected")
-        })?;
-
-        if expected_bytes > mmap_bytes.len() {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Data file is smaller than expected: expected {} bytes, found {} bytes",
-                expected_bytes,
-                mmap_bytes.len()
-            )));
-        }
-
-        // 【极致性能优化】超快速加载 - 直接复制到NumPy数组
-        macro_rules! load_to_numpy {
-            ($rust_type:ty) => {{
-                let vec: Vec<$rust_type> = py.allow_threads(|| unsafe {
-                    let mut vec = Vec::<$rust_type>::with_capacity(total_elements);
-                    let src_ptr = mmap_bytes.as_ptr() as *const $rust_type;
-                    ptr::copy_nonoverlapping(src_ptr, vec.as_mut_ptr(), total_elements);
-                    vec.set_len(total_elements);
-                    vec
-                });
-
-                ArrayD::from_shape_vec(shape.clone(), vec)
-                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?
-                    .into_pyarray(py)
-                    .into()
-            }};
-        }
-
-        // 检查是否存在deletion bitmap
-        use crate::storage::deletion_bitmap::DeletionBitmap;
-        let base_dir = self.io.get_base_dir();
-        let (bitmap_opt, actual_physical_rows) = if DeletionBitmap::exists(base_dir, array_name) {
-            let bitmap = DeletionBitmap::new(base_dir, array_name, shape[0])
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            let physical_rows = bitmap.get_total_rows();
-            (Some(bitmap), physical_rows)
-        } else {
-            (None, shape[0])
-        };
-
-        // 如果有bitmap，使用实际的物理行数更新shape
-        let mut actual_shape = shape.clone();
-        if bitmap_opt.is_some() {
-            actual_shape[0] = actual_physical_rows;
-        }
-
-        let array: PyObject = if let Some(bitmap) = bitmap_opt {
-            // 有deletion bitmap，需要过滤已删除的行
-            let active_indices = bitmap.get_active_indices();
-            let active_count = active_indices.len();
-
-            if active_count == 0 {
-                // 所有行都被删除了，返回空数组
-                let empty_shape = if shape.len() > 1 {
-                    let mut new_shape = shape.clone();
-                    new_shape[0] = 0;
-                    new_shape
-                } else {
-                    vec![0]
-                };
-
-                match dtype {
-                    DataType::Bool => ArrayD::from_shape_vec(empty_shape, Vec::<bool>::new())
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
-                        })?
-                        .into_pyarray(py)
-                        .into(),
-                    DataType::Uint8 => ArrayD::from_shape_vec(empty_shape, Vec::<u8>::new())
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
-                        })?
-                        .into_pyarray(py)
-                        .into(),
-                    DataType::Uint16 => ArrayD::from_shape_vec(empty_shape, Vec::<u16>::new())
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
-                        })?
-                        .into_pyarray(py)
-                        .into(),
-                    DataType::Uint32 => ArrayD::from_shape_vec(empty_shape, Vec::<u32>::new())
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
-                        })?
-                        .into_pyarray(py)
-                        .into(),
-                    DataType::Uint64 => ArrayD::from_shape_vec(empty_shape, Vec::<u64>::new())
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
-                        })?
-                        .into_pyarray(py)
-                        .into(),
-                    DataType::Int8 => ArrayD::from_shape_vec(empty_shape, Vec::<i8>::new())
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
-                        })?
-                        .into_pyarray(py)
-                        .into(),
-                    DataType::Int16 => ArrayD::from_shape_vec(empty_shape, Vec::<i16>::new())
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
-                        })?
-                        .into_pyarray(py)
-                        .into(),
-                    DataType::Int32 => ArrayD::from_shape_vec(empty_shape, Vec::<i32>::new())
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
-                        })?
-                        .into_pyarray(py)
-                        .into(),
-                    DataType::Int64 => ArrayD::from_shape_vec(empty_shape, Vec::<i64>::new())
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
-                        })?
-                        .into_pyarray(py)
-                        .into(),
-                    DataType::Float16 => ArrayD::from_shape_vec(empty_shape, Vec::<f16>::new())
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
-                        })?
-                        .into_pyarray(py)
-                        .into(),
-                    DataType::Float32 => ArrayD::from_shape_vec(empty_shape, Vec::<f32>::new())
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
-                        })?
-                        .into_pyarray(py)
-                        .into(),
-                    DataType::Float64 => ArrayD::from_shape_vec(empty_shape, Vec::<f64>::new())
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
-                        })?
-                        .into_pyarray(py)
-                        .into(),
-                    DataType::Complex64 => {
-                        ArrayD::from_shape_vec(empty_shape, Vec::<Complex32>::new())
-                            .map_err(|e| {
-                                PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
-                            })?
-                            .into_pyarray(py)
-                            .into()
-                    }
-                    DataType::Complex128 => {
-                        ArrayD::from_shape_vec(empty_shape, Vec::<Complex64>::new())
-                            .map_err(|e| {
-                                PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
-                            })?
-                            .into_pyarray(py)
-                            .into()
-                    }
-                }
-            } else {
-                // 计算行大小（使用actual_shape以获取正确的物理行数）
-                let row_size = if actual_shape.len() > 1 {
-                    actual_shape[1..].iter().product::<usize>() * itemsize
-                } else {
-                    itemsize
-                };
-
-                // 构建新的shape（只包含活跃行）
-                let mut new_shape = actual_shape.clone();
-                new_shape[0] = active_count;
-                let new_total_elements = new_shape.iter().product::<usize>();
-
-                // 根据数据类型过滤行
-                macro_rules! filter_rows {
-                    ($rust_type:ty) => {{
-                        let mut vec = Vec::<$rust_type>::with_capacity(new_total_elements);
-                        py.allow_threads(|| unsafe {
-                            let src_ptr = mmap_bytes.as_ptr() as *const $rust_type;
-                            let elements_per_row = row_size / itemsize;
-
-                            for &physical_idx in &active_indices {
-                                let src_offset = physical_idx * elements_per_row;
-                                ptr::copy_nonoverlapping(
-                                    src_ptr.add(src_offset),
-                                    vec.as_mut_ptr().add(vec.len()),
-                                    elements_per_row,
-                                );
-                                vec.set_len(vec.len() + elements_per_row);
-                            }
-                        });
-
-                        ArrayD::from_shape_vec(new_shape.clone(), vec)
-                            .map_err(|e| {
-                                PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
-                            })?
-                            .into_pyarray(py)
-                            .into()
-                    }};
-                }
-
-                match dtype {
-                    DataType::Bool => {
-                        let mut bool_vec = Vec::<bool>::with_capacity(new_total_elements);
-                        py.allow_threads(|| {
-                            let elements_per_row = row_size;
-                            for &physical_idx in &active_indices {
-                                let src_offset = physical_idx * elements_per_row;
-                                for i in 0..elements_per_row {
-                                    bool_vec.push(mmap_bytes[src_offset + i] != 0);
-                                }
-                            }
-                        });
-                        ArrayD::from_shape_vec(new_shape.clone(), bool_vec)
-                            .map_err(|e| {
-                                PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
-                            })?
-                            .into_pyarray(py)
-                            .into()
-                    }
-                    DataType::Uint8 => filter_rows!(u8),
-                    DataType::Uint16 => filter_rows!(u16),
-                    DataType::Uint32 => filter_rows!(u32),
-                    DataType::Uint64 => filter_rows!(u64),
-                    DataType::Int8 => filter_rows!(i8),
-                    DataType::Int16 => filter_rows!(i16),
-                    DataType::Int32 => filter_rows!(i32),
-                    DataType::Int64 => filter_rows!(i64),
-                    DataType::Float16 => filter_rows!(f16),
-                    DataType::Float32 => filter_rows!(f32),
-                    DataType::Float64 => filter_rows!(f64),
-                    DataType::Complex64 => filter_rows!(Complex32),
-                    DataType::Complex128 => filter_rows!(Complex64),
-                }
-            }
-        } else {
-            // 没有deletion bitmap，正常加载
-            match dtype {
-                DataType::Bool => {
-                    let bool_vec: Vec<bool> =
-                        py.allow_threads(|| mmap_bytes.iter().map(|&x| x != 0).collect());
-                    ArrayD::from_shape_vec(shape.clone(), bool_vec)
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
-                        })?
-                        .into_pyarray(py)
-                        .into()
-                }
-                DataType::Uint8 => load_to_numpy!(u8),
-                DataType::Uint16 => load_to_numpy!(u16),
-                DataType::Uint32 => load_to_numpy!(u32),
-                DataType::Uint64 => load_to_numpy!(u64),
-                DataType::Int8 => load_to_numpy!(i8),
-                DataType::Int16 => load_to_numpy!(i16),
-                DataType::Int32 => load_to_numpy!(i32),
-                DataType::Int64 => load_to_numpy!(i64),
-                DataType::Float16 => load_to_numpy!(f16),
-                DataType::Float32 => load_to_numpy!(f32),
-                DataType::Float64 => load_to_numpy!(f64),
-                DataType::Complex64 => load_to_numpy!(Complex32),
-                DataType::Complex128 => load_to_numpy!(Complex64),
-            }
+        let array: PyObject = match meta.get_dtype() {
+            DataType::Bool => self
+                .io
+                .load_array::<bool>(array_name)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Uint8 => self
+                .io
+                .load_array::<u8>(array_name)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Uint16 => self
+                .io
+                .load_array::<u16>(array_name)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Uint32 => self
+                .io
+                .load_array::<u32>(array_name)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Uint64 => self
+                .io
+                .load_array::<u64>(array_name)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Int8 => self
+                .io
+                .load_array::<i8>(array_name)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Int16 => self
+                .io
+                .load_array::<i16>(array_name)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Int32 => self
+                .io
+                .load_array::<i32>(array_name)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Int64 => self
+                .io
+                .load_array::<i64>(array_name)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Float16 => self
+                .io
+                .load_array::<f16>(array_name)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Float32 => self
+                .io
+                .load_array::<f32>(array_name)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Float64 => self
+                .io
+                .load_array::<f64>(array_name)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Complex64 => self
+                .io
+                .load_array::<Complex32>(array_name)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Complex128 => self
+                .io
+                .load_array::<Complex64>(array_name)?
+                .into_pyarray(py)
+                .into(),
         };
 
         Ok(array)
@@ -3745,7 +3468,7 @@ impl NumPack {
     ///     ```python
     ///     # 删除一些行
     ///     npk.drop('my_array', indexes=[0, 1, 2])
-    ///     
+    ///
     ///     # 物理整合，真正删除这些行并释放空间
     ///     npk.update('my_array')
     ///     ```
@@ -3755,13 +3478,20 @@ impl NumPack {
     }
 
     pub fn append(&mut self, arrays: &Bound<'_, PyDict>) -> PyResult<()> {
-        // Check if the array exists and get the existing array information
-        let mut existing_arrays: Vec<(String, DataType, Vec<usize>)> = Vec::new();
-
         for (key, array) in arrays.iter() {
             let name = key.extract::<String>()?;
             if let Some(meta) = self.io.get_array_meta(&name) {
                 let shape: Vec<usize> = array.getattr("shape")?.extract()?;
+                let dtype = get_array_dtype(&array)?;
+                if dtype != meta.get_dtype() {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "Dtype mismatch for array {}: expected {:?}, got {:?}",
+                        name,
+                        meta.get_dtype(),
+                        dtype
+                    )));
+                }
+
                 if meta.shape.len() != shape.len() {
                     return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                         "Dimension mismatch for array {}: expected {}, got {}",
@@ -3779,7 +3509,6 @@ impl NumPack {
                         )));
                     }
                 }
-                existing_arrays.push((name.to_string(), meta.get_dtype(), shape));
             } else {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                     "Array {} does not exist",
@@ -3793,100 +3522,47 @@ impl NumPack {
             let name = key.extract::<String>()?;
             let meta = self.io.get_array_meta(&name).unwrap();
             let shape: Vec<usize> = array.getattr("shape")?.extract()?;
+            let shape_u64: Vec<u64> = shape.iter().map(|&dim| dim as u64).collect();
+            let dtype = meta.get_dtype();
 
-            // Append data to file
-            let array_path = self.base_dir.join(&meta.data_file);
-            let mut file = OpenOptions::new().append(true).open(array_path)?;
+            macro_rules! append_cast_slice {
+                ($rust_type:ty) => {{
+                    let py_array = array.downcast::<PyArrayDyn<$rust_type>>()?;
+                    let readonly = py_array.readonly();
+                    let array_ref = readonly.as_array();
+                    let data = array_ref.as_slice().unwrap();
+                    self.io
+                        .append_bytes(&name, &shape_u64, dtype, bytemuck::cast_slice(data))?;
+                }};
+            }
 
             match meta.get_dtype() {
                 DataType::Bool => {
                     let py_array = array.downcast::<PyArrayDyn<bool>>()?;
                     let readonly = py_array.readonly();
-                    let array_ref = unsafe { readonly.as_array() };
+                    let array_ref = readonly.as_array();
                     let data = array_ref.as_slice().unwrap();
-                    file.write_all(bytemuck::cast_slice(data))?;
+                    let bytes: Vec<u8> = data
+                        .iter()
+                        .map(|&value| if value { 1 } else { 0 })
+                        .collect();
+                    self.io.append_bytes(&name, &shape_u64, dtype, &bytes)?;
                 }
-                DataType::Uint8 => {
-                    let py_array = array.downcast::<PyArrayDyn<u8>>()?;
-                    let readonly = py_array.readonly();
-                    let array_ref = unsafe { readonly.as_array() };
-                    let data = array_ref.as_slice().unwrap();
-                    file.write_all(bytemuck::cast_slice(data))?;
-                }
-                DataType::Uint16 => {
-                    let py_array = array.downcast::<PyArrayDyn<u16>>()?;
-                    let readonly = py_array.readonly();
-                    let array_ref = unsafe { readonly.as_array() };
-                    let data = array_ref.as_slice().unwrap();
-                    file.write_all(bytemuck::cast_slice(data))?;
-                }
-                DataType::Uint32 => {
-                    let py_array = array.downcast::<PyArrayDyn<u32>>()?;
-                    let readonly = py_array.readonly();
-                    let array_ref = unsafe { readonly.as_array() };
-                    let data = array_ref.as_slice().unwrap();
-                    file.write_all(bytemuck::cast_slice(data))?;
-                }
-                DataType::Uint64 => {
-                    let py_array = array.downcast::<PyArrayDyn<u64>>()?;
-                    let readonly = py_array.readonly();
-                    let array_ref = unsafe { readonly.as_array() };
-                    let data = array_ref.as_slice().unwrap();
-                    file.write_all(bytemuck::cast_slice(data))?;
-                }
-                DataType::Int8 => {
-                    let py_array = array.downcast::<PyArrayDyn<i8>>()?;
-                    let readonly = py_array.readonly();
-                    let array_ref = unsafe { readonly.as_array() };
-                    let data = array_ref.as_slice().unwrap();
-                    file.write_all(bytemuck::cast_slice(data))?;
-                }
-                DataType::Int16 => {
-                    let py_array = array.downcast::<PyArrayDyn<i16>>()?;
-                    let readonly = py_array.readonly();
-                    let array_ref = unsafe { readonly.as_array() };
-                    let data = array_ref.as_slice().unwrap();
-                    file.write_all(bytemuck::cast_slice(data))?;
-                }
-                DataType::Int32 => {
-                    let py_array = array.downcast::<PyArrayDyn<i32>>()?;
-                    let readonly = py_array.readonly();
-                    let array_ref = unsafe { readonly.as_array() };
-                    let data = array_ref.as_slice().unwrap();
-                    file.write_all(bytemuck::cast_slice(data))?;
-                }
-                DataType::Int64 => {
-                    let py_array = array.downcast::<PyArrayDyn<i64>>()?;
-                    let readonly = py_array.readonly();
-                    let array_ref = unsafe { readonly.as_array() };
-                    let data = array_ref.as_slice().unwrap();
-                    file.write_all(bytemuck::cast_slice(data))?;
-                }
-                DataType::Float16 => {
-                    let py_array = array.downcast::<PyArrayDyn<f16>>()?;
-                    let readonly = py_array.readonly();
-                    let array_ref = unsafe { readonly.as_array() };
-                    let data = array_ref.as_slice().unwrap();
-                    file.write_all(bytemuck::cast_slice(data))?;
-                }
-                DataType::Float32 => {
-                    let py_array = array.downcast::<PyArrayDyn<f32>>()?;
-                    let readonly = py_array.readonly();
-                    let array_ref = unsafe { readonly.as_array() };
-                    let data = array_ref.as_slice().unwrap();
-                    file.write_all(bytemuck::cast_slice(data))?;
-                }
-                DataType::Float64 => {
-                    let py_array = array.downcast::<PyArrayDyn<f64>>()?;
-                    let readonly = py_array.readonly();
-                    let array_ref = unsafe { readonly.as_array() };
-                    let data = array_ref.as_slice().unwrap();
-                    file.write_all(bytemuck::cast_slice(data))?;
-                }
+                DataType::Uint8 => append_cast_slice!(u8),
+                DataType::Uint16 => append_cast_slice!(u16),
+                DataType::Uint32 => append_cast_slice!(u32),
+                DataType::Uint64 => append_cast_slice!(u64),
+                DataType::Int8 => append_cast_slice!(i8),
+                DataType::Int16 => append_cast_slice!(i16),
+                DataType::Int32 => append_cast_slice!(i32),
+                DataType::Int64 => append_cast_slice!(i64),
+                DataType::Float16 => append_cast_slice!(f16),
+                DataType::Float32 => append_cast_slice!(f32),
+                DataType::Float64 => append_cast_slice!(f64),
                 DataType::Complex64 => {
                     let py_array = array.downcast::<PyArrayDyn<Complex32>>()?;
                     let readonly = py_array.readonly();
-                    let array_ref = unsafe { readonly.as_array() };
+                    let array_ref = readonly.as_array();
                     let data = array_ref.as_slice().unwrap();
                     let bytes = unsafe {
                         std::slice::from_raw_parts(
@@ -3894,12 +3570,12 @@ impl NumPack {
                             data.len() * std::mem::size_of::<Complex32>(),
                         )
                     };
-                    file.write_all(bytes)?;
+                    self.io.append_bytes(&name, &shape_u64, dtype, bytes)?;
                 }
                 DataType::Complex128 => {
                     let py_array = array.downcast::<PyArrayDyn<Complex64>>()?;
                     let readonly = py_array.readonly();
-                    let array_ref = unsafe { readonly.as_array() };
+                    let array_ref = readonly.as_array();
                     let data = array_ref.as_slice().unwrap();
                     let bytes = unsafe {
                         std::slice::from_raw_parts(
@@ -3907,33 +3583,9 @@ impl NumPack {
                             data.len() * std::mem::size_of::<Complex64>(),
                         )
                     };
-                    file.write_all(bytes)?;
+                    self.io.append_bytes(&name, &shape_u64, dtype, bytes)?;
                 }
             }
-
-            // Update metadata
-            let mut new_meta = meta.clone();
-            new_meta.shape[0] += shape[0] as u64;
-            new_meta.size_bytes =
-                new_meta.total_elements() * new_meta.get_dtype().size_bytes() as u64;
-            new_meta.last_modified = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_micros() as u64;
-
-            // 如果存在deletion bitmap，需要扩展它以包含新增的行
-            use crate::storage::deletion_bitmap::DeletionBitmap;
-            if DeletionBitmap::exists(&self.base_dir, &name) {
-                let old_total_rows = meta.shape[0] as usize;
-
-                // 加载bitmap（使用追加前的行数）
-                let mut bitmap = DeletionBitmap::new(&self.base_dir, &name, old_total_rows)?;
-                // 扩展bitmap以包含新追加的行
-                bitmap.extend(shape[0]);
-                bitmap.save()?;
-            }
-
-            self.io.update_array_metadata(&name, new_meta)?;
 
             // 清除元数据缓存，以便下次load时使用新的元数据
             let meta_cache_key = format!("{}:{}", self.base_dir.display(), name);
@@ -4249,60 +3901,9 @@ impl NumPack {
             PyErr::new::<PyKeyError, _>(format!("Array {} not found", array_name))
         })?;
 
-        // 【性能优化】使用mmap路径读取数据
-        let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
-        let dtype = meta.get_dtype();
-        let itemsize = dtype.size_bytes() as usize;
-        let row_size = shape[1..].iter().product::<usize>() * itemsize;
-        let physical_rows = shape[0];
-        let modify_time = meta.last_modified as i64;
-        
-        // 检查是否存在deletion bitmap，获取逻辑行数
-        use crate::storage::deletion_bitmap::DeletionBitmap;
-        let base_dir = self.io.get_base_dir();
-        let bitmap_opt = if DeletionBitmap::exists(base_dir, array_name) {
-            Some(DeletionBitmap::new(base_dir, array_name, physical_rows)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?)
-        } else {
-            None
-        };
-        let logical_rows = bitmap_opt.as_ref().map_or(physical_rows, |b| b.active_count());
-        
-        // 构建数据文件路径
-        let data_path = self.base_dir.join(format!("data_{}.npkd", array_name));
-        let array_path_string = data_path.to_string_lossy().to_string();
-        
-        // 获取或创建mmap (read lock fast path)
-        let mmap_arc = {
-            let cached = {
-                let cache = MMAP_CACHE.read().unwrap();
-                if let Some((cached_mmap, cached_time)) = cache.get(&array_path_string) {
-                    if *cached_time == modify_time {
-                        Some(Arc::clone(cached_mmap))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            };
-            if let Some(mmap) = cached {
-                mmap
-            } else {
-                let mmap = create_optimized_mmap(&data_path)?;
-                MMAP_CACHE.write().unwrap().insert(
-                    array_path_string.clone(),
-                    (Arc::clone(&mmap), modify_time),
-                );
-                mmap
-            }
-        };
-        
-        let mmap_slice = &mmap_arc[..];
-        let mmap_len = mmap_slice.len();
-
-        // 【快速路径】检测slice并使用单次memcpy（仅当无bitmap时）
-        if let Ok(slice) = indices.downcast::<PySlice>() {
+        let logical_shape = self.io.get_shape(array_name)?;
+        let logical_rows = logical_shape.first().copied().unwrap_or(0) as i64;
+        let index_vec: Vec<i64> = if let Ok(slice) = indices.downcast::<PySlice>() {
             let start = slice
                 .getattr("start")?
                 .extract::<Option<i64>>()?
@@ -4310,7 +3911,7 @@ impl NumPack {
             let stop = slice
                 .getattr("stop")?
                 .extract::<Option<i64>>()?
-                .unwrap_or(logical_rows as i64);
+                .unwrap_or(logical_rows);
             let step = slice
                 .getattr("step")?
                 .extract::<Option<i64>>()?
@@ -4322,332 +3923,97 @@ impl NumPack {
                 ));
             }
 
-            // 标准化逻辑索引
-            let start_idx = if start < 0 { (logical_rows as i64 + start).max(0) as usize } else { start as usize };
-            let stop_idx = if stop < 0 { (logical_rows as i64 + stop).max(0) as usize } else { (stop as usize).min(logical_rows) };
-            
-            if start_idx >= stop_idx || start_idx >= logical_rows {
-                // 空切片
-                let mut new_shape = shape.clone();
-                new_shape[0] = 0;
-                return self.create_numpy_array_from_dtype(py, vec![], &new_shape, dtype);
+            let start = if start < 0 {
+                logical_rows + start
+            } else {
+                start
             }
-            
-            let num_rows = stop_idx - start_idx;
-            
-            // 如果存在bitmap，需要转换逻辑索引到物理索引
-            if let Some(ref bitmap) = bitmap_opt {
-                // 先转换所有逻辑索引到物理索引
-                let mut physical_indices: Vec<usize> = Vec::with_capacity(num_rows);
-                for logical_idx in start_idx..stop_idx {
-                    let physical_idx = bitmap.logical_to_physical(logical_idx)
-                        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyIndexError, _>(
-                            format!("Logical index {} out of bounds", logical_idx)
-                        ))?;
-                    physical_indices.push(physical_idx);
-                }
-                
-                // 【优化】检测连续物理索引块，使用批量memcpy
-                let total_size = num_rows * row_size;
-                let mut data = vec![0u8; total_size];
-                let mut dst_offset = 0;
-                let mut i = 0;
-                
-                while i < physical_indices.len() {
-                    // 找到连续块的结束位置
-                    let block_start = i;
-                    let physical_start = physical_indices[i];
-                    while i + 1 < physical_indices.len() 
-                          && physical_indices[i + 1] == physical_indices[i] + 1 {
-                        i += 1;
-                    }
-                    let block_len = i - block_start + 1;
-                    
-                    // 批量复制整个连续块
-                    let src_offset = physical_start * row_size;
-                    let block_size = block_len * row_size;
-                    if src_offset + block_size > mmap_len {
-                        return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>("Data access out of bounds"));
-                    }
-                    data[dst_offset..dst_offset + block_size]
-                        .copy_from_slice(&mmap_slice[src_offset..src_offset + block_size]);
-                    
-                    dst_offset += block_size;
-                    i += 1;
-                }
-                
-                let mut new_shape = shape.clone();
-                new_shape[0] = num_rows;
-                return self.create_numpy_array_from_dtype(py, data, &new_shape, dtype);
+            .max(0);
+            let stop = if stop < 0 { logical_rows + stop } else { stop }.min(logical_rows);
+            if start >= stop {
+                Vec::new()
+            } else {
+                (start..stop).collect()
             }
-            
-            // 无bitmap时，直接连续读取
-            let src_offset = start_idx * row_size;
-            let total_size = num_rows * row_size;
-            
-            if src_offset + total_size > mmap_len {
-                return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
-                    "Slice access out of bounds"
-                ));
-            }
-            
-            // 【零复制优化】直接从mmap创建typed Vec，跳过中间的Vec<u8>
-            let mut new_shape = shape.clone();
-            new_shape[0] = num_rows;
-            
-            // 针对最常用类型的快速路径
-            return match dtype {
-                DataType::Float32 => {
-                    let count = total_size / std::mem::size_of::<f32>();
-                    let mut typed_data: Vec<f32> = Vec::with_capacity(count);
-                    unsafe {
-                        typed_data.set_len(count);
-                        std::ptr::copy_nonoverlapping(
-                            mmap_slice[src_offset..].as_ptr(),
-                            typed_data.as_mut_ptr() as *mut u8,
-                            total_size
-                        );
-                    }
-                    let array = unsafe {
-                        ArrayD::from_shape_vec_unchecked(new_shape, typed_data)
-                    };
-                    Ok(array.into_pyarray(py).into())
-                }
-                DataType::Float64 => {
-                    let count = total_size / std::mem::size_of::<f64>();
-                    let mut typed_data: Vec<f64> = Vec::with_capacity(count);
-                    unsafe {
-                        typed_data.set_len(count);
-                        std::ptr::copy_nonoverlapping(
-                            mmap_slice[src_offset..].as_ptr(),
-                            typed_data.as_mut_ptr() as *mut u8,
-                            total_size
-                        );
-                    }
-                    let array = unsafe {
-                        ArrayD::from_shape_vec_unchecked(new_shape, typed_data)
-                    };
-                    Ok(array.into_pyarray(py).into())
-                }
-                DataType::Int32 => {
-                    let count = total_size / std::mem::size_of::<i32>();
-                    let mut typed_data: Vec<i32> = Vec::with_capacity(count);
-                    unsafe {
-                        typed_data.set_len(count);
-                        std::ptr::copy_nonoverlapping(
-                            mmap_slice[src_offset..].as_ptr(),
-                            typed_data.as_mut_ptr() as *mut u8,
-                            total_size
-                        );
-                    }
-                    let array = unsafe {
-                        ArrayD::from_shape_vec_unchecked(new_shape, typed_data)
-                    };
-                    Ok(array.into_pyarray(py).into())
-                }
-                DataType::Int64 => {
-                    let count = total_size / std::mem::size_of::<i64>();
-                    let mut typed_data: Vec<i64> = Vec::with_capacity(count);
-                    unsafe {
-                        typed_data.set_len(count);
-                        std::ptr::copy_nonoverlapping(
-                            mmap_slice[src_offset..].as_ptr(),
-                            typed_data.as_mut_ptr() as *mut u8,
-                            total_size
-                        );
-                    }
-                    let array = unsafe {
-                        ArrayD::from_shape_vec_unchecked(new_shape, typed_data)
-                    };
-                    Ok(array.into_pyarray(py).into())
-                }
-                DataType::Uint8 => {
-                    let data = mmap_slice[src_offset..src_offset + total_size].to_vec();
-                    let array = unsafe {
-                        ArrayD::from_shape_vec_unchecked(new_shape, data)
-                    };
-                    Ok(array.into_pyarray(py).into())
-                }
-                _ => {
-                    // 其他类型走通用路径
-                    let data = mmap_slice[src_offset..src_offset + total_size].to_vec();
-                    self.create_numpy_array_from_dtype(py, data, &new_shape, dtype)
-                }
-            };
-        }
-        
-        // 【普通路径】索引列表访问
-        let indices: Vec<i64> = if let Ok(idx_list) = indices.extract::<Vec<i64>>() {
-            idx_list
+        } else if let Ok(indices) = indices.extract::<Vec<i64>>() {
+            indices
         } else {
             return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
                 "indices must be a list of integers or a slice",
             ));
         };
-        
-        let num_indices = indices.len();
-        
-        // 先转换所有逻辑索引到物理索引
-        let mut physical_indices: Vec<usize> = Vec::with_capacity(num_indices);
-        for &idx in &indices {
-            let logical_idx = if idx < 0 { logical_rows as i64 + idx } else { idx };
-            if logical_idx < 0 || logical_idx as usize >= logical_rows {
-                return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
-                    "Index {} is out of bounds", idx
-                )));
-            }
-            
-            let physical_idx = if let Some(ref bitmap) = bitmap_opt {
-                bitmap.logical_to_physical(logical_idx as usize)
-                    .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyIndexError, _>(
-                        format!("Logical index {} out of bounds", logical_idx)
-                    ))?
-            } else {
-                logical_idx as usize
-            };
-            physical_indices.push(physical_idx);
-        }
-        
-        // 【优化】检测连续物理索引块，使用批量memcpy
-        let total_size = num_indices * row_size;
-        let mut data = vec![0u8; total_size];
-        let mut dst_offset = 0;
-        let mut i = 0;
-        
-        while i < physical_indices.len() {
-            // 找到连续块的结束位置
-            let block_start = i;
-            let physical_start = physical_indices[i];
-            while i + 1 < physical_indices.len() 
-                  && physical_indices[i + 1] == physical_indices[i] + 1 {
-                i += 1;
-            }
-            let block_len = i - block_start + 1;
-            
-            // 批量复制整个连续块
-            let src_offset = physical_start * row_size;
-            let block_size = block_len * row_size;
-            if src_offset + block_size > mmap_len {
-                return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>("Data access out of bounds"));
-            }
-            data[dst_offset..dst_offset + block_size]
-                .copy_from_slice(&mmap_slice[src_offset..src_offset + block_size]);
-            
-            dst_offset += block_size;
-            i += 1;
-        }
 
-        // Calculate the new shape
-        let mut new_shape = meta.shape.iter().map(|&x| x as usize).collect::<Vec<_>>();
-        new_shape[0] = indices.len();
-
-        // Create a NumPy array based on the data type
         let array: PyObject = match meta.get_dtype() {
-            DataType::Bool => {
-                let array = unsafe {
-                    let slice: &[u8] = bytemuck::cast_slice(&data);
-                    let bool_vec: Vec<bool> = slice.iter().map(|&x| x != 0).collect();
-                    ArrayD::from_shape_vec_unchecked(new_shape, bool_vec)
-                };
-                array.into_pyarray(py).into()
-            }
-            DataType::Uint8 => {
-                let array = unsafe {
-                    let slice: &[u8] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
-                };
-                array.into_pyarray(py).into()
-            }
-            DataType::Uint16 => {
-                let array = unsafe {
-                    let slice: &[u16] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
-                };
-                array.into_pyarray(py).into()
-            }
-            DataType::Uint32 => {
-                let array = unsafe {
-                    let slice: &[u32] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
-                };
-                array.into_pyarray(py).into()
-            }
-            DataType::Uint64 => {
-                let array = unsafe {
-                    let slice: &[u64] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
-                };
-                array.into_pyarray(py).into()
-            }
-            DataType::Int8 => {
-                let array = unsafe {
-                    let slice: &[i8] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
-                };
-                array.into_pyarray(py).into()
-            }
-            DataType::Int16 => {
-                let array = unsafe {
-                    let slice: &[i16] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
-                };
-                array.into_pyarray(py).into()
-            }
-            DataType::Int32 => {
-                let array = unsafe {
-                    let slice: &[i32] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
-                };
-                array.into_pyarray(py).into()
-            }
-            DataType::Int64 => {
-                let array = unsafe {
-                    let slice: &[i64] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
-                };
-                array.into_pyarray(py).into()
-            }
-            DataType::Float16 => {
-                let array = unsafe {
-                    let slice: &[f16] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
-                };
-                array.into_pyarray(py).into()
-            }
-            DataType::Float32 => {
-                let array = unsafe {
-                    let slice: &[f32] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
-                };
-                array.into_pyarray(py).into()
-            }
-            DataType::Float64 => {
-                let array = unsafe {
-                    let slice: &[f64] = bytemuck::cast_slice(&data);
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
-                };
-                array.into_pyarray(py).into()
-            }
-            DataType::Complex64 => {
-                let array = unsafe {
-                    let slice = std::slice::from_raw_parts(
-                        data.as_ptr() as *const Complex32,
-                        data.len() / std::mem::size_of::<Complex32>(),
-                    );
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
-                };
-                array.into_pyarray(py).into()
-            }
-            DataType::Complex128 => {
-                let array = unsafe {
-                    let slice = std::slice::from_raw_parts(
-                        data.as_ptr() as *const Complex64,
-                        data.len() / std::mem::size_of::<Complex64>(),
-                    );
-                    ArrayD::from_shape_vec_unchecked(new_shape, slice.to_vec())
-                };
-                array.into_pyarray(py).into()
-            }
+            DataType::Bool => self
+                .io
+                .getitem::<bool>(array_name, &index_vec)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Uint8 => self
+                .io
+                .getitem::<u8>(array_name, &index_vec)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Uint16 => self
+                .io
+                .getitem::<u16>(array_name, &index_vec)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Uint32 => self
+                .io
+                .getitem::<u32>(array_name, &index_vec)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Uint64 => self
+                .io
+                .getitem::<u64>(array_name, &index_vec)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Int8 => self
+                .io
+                .getitem::<i8>(array_name, &index_vec)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Int16 => self
+                .io
+                .getitem::<i16>(array_name, &index_vec)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Int32 => self
+                .io
+                .getitem::<i32>(array_name, &index_vec)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Int64 => self
+                .io
+                .getitem::<i64>(array_name, &index_vec)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Float16 => self
+                .io
+                .getitem::<f16>(array_name, &index_vec)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Float32 => self
+                .io
+                .getitem::<f32>(array_name, &index_vec)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Float64 => self
+                .io
+                .getitem::<f64>(array_name, &index_vec)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Complex64 => self
+                .io
+                .getitem::<Complex32>(array_name, &index_vec)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Complex128 => self
+                .io
+                .getitem::<Complex64>(array_name, &index_vec)?
+                .into_pyarray(py)
+                .into(),
         };
 
         Ok(array)
@@ -4687,10 +4053,11 @@ impl NumPack {
         }
 
         let meta = self.io.get_array_meta(array_name).unwrap();
-        let total_rows = meta.shape[0] as i64;
+        let total_rows = self.io.get_shape(array_name)?.first().copied().unwrap_or(0) as i64;
         let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
 
         Ok(StreamLoader {
+            io: ParallelIO::new(self.base_dir.clone())?,
             base_dir: self.base_dir.clone(),
             array_name: array_name.to_string(),
             total_rows,
@@ -4715,76 +4082,16 @@ impl NumPack {
     /// 5. 立即释放锁减少竞争
     #[inline(always)]
     fn load_lazy_optimized(&self, py: Python, array_name: &str) -> PyResult<PyObject> {
-        let data_path = self.base_dir.join(format!("data_{}.npkd", array_name));
+        if self.io.is_segmented_array(array_name) {
+            return self.load(py, array_name, Some(false));
+        }
+
+        let (mmap, meta, data_path) = self.io.open_single_file_mmap(array_name)?;
+        let dtype = meta.get_dtype();
+        let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
+        let itemsize = dtype.size_bytes() as usize;
+        let modify_time = meta.last_modified as i64;
         let array_path_string = data_path.to_string_lossy().to_string();
-
-        // 【优化1】元数据缓存查找 - 避免重复IO操作
-        let meta_cache_key = format!("{}:{}", self.base_dir.display(), array_name);
-
-        let (dtype, shape, itemsize, modify_time, mmap) = {
-            // 尝试从元数据缓存获取 (read lock)
-            let cached_meta = {
-                let cache = METADATA_CACHE.read().unwrap();
-                cache.get(&meta_cache_key).cloned()
-            };
-
-            let (dtype, shape, itemsize, mtime) = if let Some((cd, cs, ci, cm)) = cached_meta {
-                (cd, cs, ci, cm)
-            } else {
-                let meta = self.io.get_array_metadata(array_name)?;
-                let dtype = meta.get_dtype();
-                let shape: Vec<usize> = meta.shape.iter().map(|&x| x as usize).collect();
-                let itemsize = dtype.size_bytes() as usize;
-                let mtime = meta.last_modified as i64;
-
-                // 首次加载 - 需要文件检查
-                if !data_path.exists() {
-                    return Err(PyErr::new::<pyo3::exceptions::PyFileNotFoundError, _>(
-                        format!("Data file not found: {}", data_path.display()),
-                    ));
-                }
-                if data_path.is_dir() {
-                    return Err(PyErr::new::<pyo3::exceptions::PyIsADirectoryError, _>(
-                        format!("Expected file but found directory: {}", data_path.display()),
-                    ));
-                }
-
-                METADATA_CACHE.write().unwrap().insert(
-                    meta_cache_key,
-                    (dtype, shape.clone(), itemsize, mtime),
-                );
-
-                (dtype, shape, itemsize, mtime)
-            };
-
-            // 获取或创建mmap (read lock fast path)
-            let mmap = {
-                let cached = {
-                    let cache = MMAP_CACHE.read().unwrap();
-                    if let Some((cached_mmap, cached_time)) = cache.get(&array_path_string) {
-                        if *cached_time == mtime {
-                            Some(Arc::clone(cached_mmap))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                };
-                if let Some(m) = cached {
-                    m
-                } else {
-                    let new_mmap = create_optimized_mmap(&data_path)?;
-                    MMAP_CACHE.write().unwrap().insert(
-                        array_path_string.clone(),
-                        (Arc::clone(&new_mmap), mtime),
-                    );
-                    new_mmap
-                }
-            };
-
-            (dtype, shape, itemsize, mtime, mmap)
-        };
 
         // 【关键修复】检测并加载deletion bitmap以支持逻辑视图
         let base_dir = self.io.get_base_dir();
@@ -4824,7 +4131,7 @@ impl NumPack {
     ///     ```python
     ///     # Clone an existing array
     ///     npk.clone('original_array', 'cloned_array')
-    ///     
+    ///
     ///     # The cloned array can now be modified independently
     ///     data = npk.load('cloned_array')
     ///     ```
@@ -4939,169 +4246,78 @@ impl StreamLoader {
         }
 
         let end_index = std::cmp::min(self.current_index + self.buffer_size, self.total_rows);
-        let batch_size = (end_index - self.current_index) as usize;
-
-        // 直接从文件加载数据
-        let data_file = self.base_dir.join(format!("data_{}.npkd", self.array_name));
-        let file = std::fs::File::open(&data_file)?;
-        let mmap = unsafe { MmapOptions::new().map(&file)? };
-
-        // 计算偏移量和大小
-        let element_size = self.dtype.size_bytes();
-        let row_size = self.shape[1..].iter().product::<usize>() * element_size;
-        let offset = self.current_index as usize * row_size;
-        let size = batch_size * row_size;
-
-        if offset + size > mmap.len() {
-            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
-                "Data offset out of bounds",
-            ));
-        }
-
-        // 创建新的形状
-        let mut new_shape = self.shape.clone();
-        new_shape[0] = batch_size;
-
-        // 根据数据类型创建numpy数组
-        let array = match self.dtype {
-            DataType::Bool => {
-                let data = unsafe {
-                    let slice =
-                        std::slice::from_raw_parts(mmap.as_ptr().add(offset) as *const bool, size);
-                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Uint8 => {
-                let data = unsafe {
-                    let slice =
-                        std::slice::from_raw_parts(mmap.as_ptr().add(offset) as *const u8, size);
-                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Uint16 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(
-                        mmap.as_ptr().add(offset) as *const u16,
-                        size / 2,
-                    );
-                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Uint32 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(
-                        mmap.as_ptr().add(offset) as *const u32,
-                        size / 4,
-                    );
-                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Uint64 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(
-                        mmap.as_ptr().add(offset) as *const u64,
-                        size / 8,
-                    );
-                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Int8 => {
-                let data = unsafe {
-                    let slice =
-                        std::slice::from_raw_parts(mmap.as_ptr().add(offset) as *const i8, size);
-                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Int16 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(
-                        mmap.as_ptr().add(offset) as *const i16,
-                        size / 2,
-                    );
-                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Int32 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(
-                        mmap.as_ptr().add(offset) as *const i32,
-                        size / 4,
-                    );
-                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Int64 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(
-                        mmap.as_ptr().add(offset) as *const i64,
-                        size / 8,
-                    );
-                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Float16 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(
-                        mmap.as_ptr().add(offset) as *const u16,
-                        size / 2,
-                    );
-                    let f16_data: Vec<half::f16> =
-                        slice.iter().map(|&x| half::f16::from_bits(x)).collect();
-                    // 转换为f32用于Python兼容性
-                    let f32_data: Vec<f32> = f16_data.iter().map(|&x| x.to_f32()).collect();
-                    ArrayD::from_shape_vec(new_shape, f32_data).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Float32 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(
-                        mmap.as_ptr().add(offset) as *const f32,
-                        size / 4,
-                    );
-                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Float64 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(
-                        mmap.as_ptr().add(offset) as *const f64,
-                        size / 8,
-                    );
-                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Complex64 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(
-                        mmap.as_ptr().add(offset) as *const Complex32,
-                        size / 8,
-                    );
-                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
-            DataType::Complex128 => {
-                let data = unsafe {
-                    let slice = std::slice::from_raw_parts(
-                        mmap.as_ptr().add(offset) as *const Complex64,
-                        size / 16,
-                    );
-                    ArrayD::from_shape_vec(new_shape, slice.to_vec()).unwrap()
-                };
-                data.into_pyarray(py).into()
-            }
+        let indices: Vec<i64> = (self.current_index..end_index).collect();
+        let array: PyObject = match self.dtype {
+            DataType::Bool => self
+                .io
+                .getitem::<bool>(&self.array_name, &indices)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Uint8 => self
+                .io
+                .getitem::<u8>(&self.array_name, &indices)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Uint16 => self
+                .io
+                .getitem::<u16>(&self.array_name, &indices)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Uint32 => self
+                .io
+                .getitem::<u32>(&self.array_name, &indices)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Uint64 => self
+                .io
+                .getitem::<u64>(&self.array_name, &indices)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Int8 => self
+                .io
+                .getitem::<i8>(&self.array_name, &indices)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Int16 => self
+                .io
+                .getitem::<i16>(&self.array_name, &indices)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Int32 => self
+                .io
+                .getitem::<i32>(&self.array_name, &indices)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Int64 => self
+                .io
+                .getitem::<i64>(&self.array_name, &indices)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Float16 => self
+                .io
+                .getitem::<f16>(&self.array_name, &indices)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Float32 => self
+                .io
+                .getitem::<f32>(&self.array_name, &indices)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Float64 => self
+                .io
+                .getitem::<f64>(&self.array_name, &indices)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Complex64 => self
+                .io
+                .getitem::<Complex32>(&self.array_name, &indices)?
+                .into_pyarray(py)
+                .into(),
+            DataType::Complex128 => self
+                .io
+                .getitem::<Complex64>(&self.array_name, &indices)?
+                .into_pyarray(py)
+                .into(),
         };
 
         self.current_index = end_index;
@@ -5110,9 +4326,7 @@ impl StreamLoader {
 }
 
 #[cfg(feature = "python")]
-fn create_optimized_mmap(
-    path: &Path,
-) -> PyResult<Arc<Mmap>> {
+fn create_optimized_mmap(path: &Path) -> PyResult<Arc<Mmap>> {
     let file = std::fs::File::open(path)?;
     let file_size = file.metadata()?.len() as usize;
 

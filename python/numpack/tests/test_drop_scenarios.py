@@ -124,9 +124,11 @@ class TestDropScenarios:
                 npk.drop('array1')
                 members = npk.get_member_list()
                 
-                assert 'array1' not in members
+                assert 'array1' in members
                 assert 'array2' in members
-                assert len(members) == 1
+                assert len(members) == 2
+                assert npk.get_shape('array1') == (0, 10)
+                assert npk.load('array1').shape == (0, 10)
                 
                 # Verify array2 can still be loaded normally
                 loaded = npk.load('array2')
@@ -150,10 +152,12 @@ class TestDropScenarios:
                 npk.drop(['array1', 'array3'])
                 members = npk.get_member_list()
                 
-                assert 'array1' not in members
+                assert 'array1' in members
                 assert 'array2' in members
-                assert 'array3' not in members
-                assert len(members) == 1
+                assert 'array3' in members
+                assert len(members) == 3
+                assert npk.get_shape('array1') == (0, 10)
+                assert npk.get_shape('array3') == (0, 10)
         finally:
             if os.path.exists(numpack_dir):
                 shutil.rmtree(numpack_dir)
@@ -273,7 +277,7 @@ class TestDropScenarios:
     def test_drop_all_rows(self):
         """Test dropping all rows.
         
-        Note: When all rows are dropped, the array itself is removed.
+        Note: When all rows are dropped, the array remains as an empty logical array.
         """
         test_data = np.arange(100).reshape(10, 10).astype(np.float32)
         numpack_dir = tempfile.mkdtemp()
@@ -282,12 +286,18 @@ class TestDropScenarios:
             with NumPack(numpack_dir, drop_if_exists=True) as npk:
                 npk.save({'data': test_data})
                 
-                # Drop all rows - this causes the array to be completely removed
+                # Drop all rows - this logically empties the array
                 npk.drop('data', list(range(10)))
-                
-                # Verify array no longer exists
+
+                # Verify array remains present but has no logical rows
                 members = npk.get_member_list()
-                assert 'data' not in members
+                assert 'data' in members
+                assert npk.get_shape('data') == (0, 10)
+                assert npk.load('data').shape == (0, 10)
+
+                npk.update('data')
+                assert 'data' in npk.get_member_list()
+                assert npk.get_shape('data') == (0, 10)
         finally:
             if os.path.exists(numpack_dir):
                 shutil.rmtree(numpack_dir)
@@ -540,4 +550,3 @@ class TestDropErrorHandling:
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
-

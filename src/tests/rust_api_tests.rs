@@ -2,11 +2,13 @@
 //! that mirror the Python NumPack data-operation API.
 
 use ndarray::{Array2, ArrayD};
+use std::fs;
 use tempfile::TempDir;
 
 use crate::core::error::NpkResult;
 use crate::core::metadata::DataType;
 use crate::io::ParallelIO;
+use crate::storage::deletion_bitmap::DeletionBitmap;
 
 fn create_test_io() -> (TempDir, ParallelIO) {
     let tmp = TempDir::new().unwrap();
@@ -15,10 +17,8 @@ fn create_test_io() -> (TempDir, ParallelIO) {
 }
 
 fn save_f32_array(io: &ParallelIO, name: &str, rows: usize, cols: usize) -> ArrayD<f32> {
-    let data = Array2::<f32>::from_shape_fn((rows, cols), |(r, c)| {
-        (r * cols + c) as f32
-    })
-    .into_dyn();
+    let data =
+        Array2::<f32>::from_shape_fn((rows, cols), |(r, c)| (r * cols + c) as f32).into_dyn();
     io.save_arrays(&[(name.to_string(), data.clone(), DataType::Float32)])
         .unwrap();
     io.sync_metadata().unwrap();
@@ -270,6 +270,100 @@ fn test_update_alias() {
     assert_eq!(shape, vec![8, 5]);
 }
 
+#[test]
+fn test_drop_entire_array_is_logical_until_compact() {
+    let (_tmp, io) = create_test_io();
+    let _ = save_f32_array(&io, "arr", 10, 3);
+    let meta = io.get_array_meta("arr").unwrap();
+    let data_path = io.get_base_dir().join(&meta.data_file);
+    let original_size = fs::metadata(&data_path).unwrap().len();
+
+    io.drop_arrays("arr", None).unwrap();
+
+    assert!(io.has_array("arr"));
+    assert_eq!(io.get_shape("arr").unwrap(), vec![0, 3]);
+    assert!(data_path.exists());
+    assert_eq!(fs::metadata(&data_path).unwrap().len(), original_size);
+
+    let loaded: ArrayD<f32> = io.load_array("arr").unwrap();
+    assert_eq!(loaded.shape(), &[0, 3]);
+
+    io.update("arr").unwrap();
+
+    assert!(io.has_array("arr"));
+    assert_eq!(io.get_shape("arr").unwrap(), vec![0, 3]);
+    assert!(data_path.exists());
+    assert_eq!(fs::metadata(&data_path).unwrap().len(), 0);
+    assert!(!DeletionBitmap::exists(io.get_base_dir(), "arr"));
+}
+
+#[test]
+fn test_segmented_storage_roundtrip_and_logical_compact() {
+    let tmp = TempDir::new().unwrap();
+    let io = ParallelIO::new(tmp.path().to_path_buf())
+        .unwrap()
+        .with_segment_target_bytes(64);
+    let data = Array2::<f32>::from_shape_fn((20, 4), |(r, c)| (r * 4 + c) as f32).into_dyn();
+    io.save_arrays(&[("seg".to_string(), data.clone(), DataType::Float32)])
+        .unwrap();
+    io.sync_metadata().unwrap();
+
+    let meta = io.get_array_meta("seg").unwrap();
+    assert!(meta.data_file.ends_with(".npkseg"));
+    assert!(tmp.path().join("data_seg_segments").exists());
+
+    let loaded: ArrayD<f32> = io.load_array("seg").unwrap();
+    assert_eq!(loaded, data);
+
+    io.clone_array("seg", "seg_clone").unwrap();
+    assert!(io
+        .get_array_meta("seg_clone")
+        .unwrap()
+        .data_file
+        .ends_with(".npkseg"));
+    let cloned: ArrayD<f32> = io.load_array("seg_clone").unwrap();
+    assert_eq!(cloned, data);
+
+    let rows: ArrayD<f32> = io.getitem("seg", &[0, 7, 19]).unwrap();
+    assert_eq!(rows.shape(), &[3, 4]);
+    assert_eq!(rows[[1, 0]], 28.0);
+    assert_eq!(rows[[2, 3]], 79.0);
+
+    let extra = Array2::<f32>::from_elem((3, 4), -5.0).into_dyn();
+    io.append_rows("seg", &extra).unwrap();
+    assert_eq!(io.get_shape("seg").unwrap(), vec![23, 4]);
+
+    let data_file_before_drop = io.get_array_meta("seg").unwrap().data_file;
+    io.drop_arrays("seg", Some(&[0, 1, 22])).unwrap();
+
+    assert_eq!(io.get_shape("seg").unwrap(), vec![20, 4]);
+    assert_eq!(
+        io.get_array_meta("seg").unwrap().data_file,
+        data_file_before_drop
+    );
+
+    let before_compact: ArrayD<f32> = io.load_array("seg").unwrap();
+    assert_eq!(before_compact.shape(), &[20, 4]);
+    assert_eq!(before_compact[[0, 0]], 8.0);
+
+    io.update("seg").unwrap();
+
+    assert_eq!(io.get_shape("seg").unwrap(), vec![20, 4]);
+    assert!(io
+        .get_array_meta("seg")
+        .unwrap()
+        .data_file
+        .ends_with(".npkseg"));
+    assert!(!DeletionBitmap::exists(io.get_base_dir(), "seg"));
+    let after_compact: ArrayD<f32> = io.load_array("seg").unwrap();
+    assert_eq!(after_compact, before_compact);
+
+    io.reset().unwrap();
+    assert!(io.list_arrays().is_empty());
+    assert!(!tmp.path().join("data_seg_segments").exists());
+    assert!(!tmp.path().join("data_seg_clone_segments").exists());
+}
+
 // =========================================================================
 // stream_load
 // =========================================================================
@@ -414,7 +508,11 @@ fn test_full_workflow() {
 
     // drop entire array
     io.drop_arrays("backup", None).unwrap();
-    assert!(!io.has_array("backup"));
+    assert!(io.has_array("backup"));
+    assert_eq!(io.get_shape("backup").unwrap(), vec![0, 16]);
+    io.update("backup").unwrap();
+    assert!(io.has_array("backup"));
+    assert_eq!(io.get_shape("backup").unwrap(), vec![0, 16]);
 
     // reset
     io.reset().unwrap();

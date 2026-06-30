@@ -108,20 +108,24 @@ def test_array_deletion(numpack, dtype, test_values, ndim, shape):
         'array2': create_test_array(dtype, shape)
     }
     numpack.save(arrays)
-    
+
     # Delete single array
     numpack.drop('array1')
-    with pytest.raises(KeyError):
-        numpack.load('array1')
+    expected_empty_shape = (0, *shape[1:])
+    loaded1 = numpack.load('array1')
+    assert loaded1.shape == expected_empty_shape
+    assert loaded1.dtype == dtype
     loaded2 = numpack.load('array2')
     assert loaded2.dtype == dtype
     assert np.array_equal(arrays['array2'], loaded2)
-    
+
     # Delete multiple arrays
     numpack.save({'array1': arrays['array1']})
     numpack.drop(['array1', 'array2'])
     member_list = numpack.get_member_list()
-    assert len(member_list) == 0
+    assert set(member_list) == {'array1', 'array2'}
+    assert numpack.load('array1').shape == expected_empty_shape
+    assert numpack.load('array2').shape == expected_empty_shape
 
 
 def test_drop_various_index_types_1d(numpack):

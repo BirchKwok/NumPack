@@ -162,7 +162,8 @@ impl VectorEngine {
         candidates: &[&[i16]],
         metric: MetricType,
     ) -> Result<Vec<f64>> {
-        self.cpu_backend.batch_compute_i16(query, candidates, metric)
+        self.cpu_backend
+            .batch_compute_i16(query, candidates, metric)
     }
 
     /// 批量计算 (i32 - 32位整数向量)
@@ -172,7 +173,8 @@ impl VectorEngine {
         candidates: &[&[i32]],
         metric: MetricType,
     ) -> Result<Vec<f64>> {
-        self.cpu_backend.batch_compute_i32(query, candidates, metric)
+        self.cpu_backend
+            .batch_compute_i32(query, candidates, metric)
     }
 
     /// 批量计算 (i64 - 64位整数向量)
@@ -182,7 +184,8 @@ impl VectorEngine {
         candidates: &[&[i64]],
         metric: MetricType,
     ) -> Result<Vec<f64>> {
-        self.cpu_backend.batch_compute_i64(query, candidates, metric)
+        self.cpu_backend
+            .batch_compute_i64(query, candidates, metric)
     }
 
     /// 批量计算 (u16 - 16位无符号整数向量)
@@ -192,7 +195,8 @@ impl VectorEngine {
         candidates: &[&[u16]],
         metric: MetricType,
     ) -> Result<Vec<f64>> {
-        self.cpu_backend.batch_compute_u16(query, candidates, metric)
+        self.cpu_backend
+            .batch_compute_u16(query, candidates, metric)
     }
 
     /// 批量计算 (u32 - 32位无符号整数向量)
@@ -202,7 +206,8 @@ impl VectorEngine {
         candidates: &[&[u32]],
         metric: MetricType,
     ) -> Result<Vec<f64>> {
-        self.cpu_backend.batch_compute_u32(query, candidates, metric)
+        self.cpu_backend
+            .batch_compute_u32(query, candidates, metric)
     }
 
     /// 批量计算 (u64 - 64位无符号整数向量)
@@ -212,7 +217,8 @@ impl VectorEngine {
         candidates: &[&[u64]],
         metric: MetricType,
     ) -> Result<Vec<f64>> {
-        self.cpu_backend.batch_compute_u64(query, candidates, metric)
+        self.cpu_backend
+            .batch_compute_u64(query, candidates, metric)
     }
 
     /// 批量计算 (f16 - 半精度浮点)
@@ -222,7 +228,8 @@ impl VectorEngine {
         candidates: &[&[half::f16]],
         metric: MetricType,
     ) -> Result<Vec<f64>> {
-        self.cpu_backend.batch_compute_f16(query, candidates, metric)
+        self.cpu_backend
+            .batch_compute_f16(query, candidates, metric)
     }
 }
 
@@ -230,9 +237,9 @@ impl VectorEngine {
 
 impl VectorEngine {
     /// Compute pairwise distances/similarities between two matrices (cdist)
-    /// 
+    ///
     /// Equivalent to `scipy.spatial.distance.cdist`
-    /// 
+    ///
     /// # Arguments
     /// * `a` - First matrix as contiguous slice, shape [M, D]
     /// * `b` - Second matrix as contiguous slice, shape [N, D]
@@ -240,7 +247,7 @@ impl VectorEngine {
     /// * `n` - Number of rows in B
     /// * `d` - Dimension (number of columns)
     /// * `metric` - The distance/similarity metric to compute
-    /// 
+    ///
     /// # Returns
     /// Result matrix as flat Vec<f64> in row-major order, shape [M, N]
     pub fn cdist_f64(
@@ -269,16 +276,16 @@ impl VectorEngine {
     }
 
     /// Matrix multiplication using SimSIMD: C = A @ B.T
-    /// 
+    ///
     /// Computes the matrix product where each element C[i,j] = dot(A[i,:], B[j,:])
-    /// 
+    ///
     /// # Arguments
     /// * `a` - First matrix as contiguous slice, shape [M, K]
     /// * `b` - Second matrix as contiguous slice, shape [N, K]
     /// * `m` - Number of rows in A
     /// * `n` - Number of rows in B
     /// * `k` - Shared dimension
-    /// 
+    ///
     /// # Returns
     /// Result matrix as flat Vec<f64> in row-major order, shape [M, N]
     pub fn matmul_f64(

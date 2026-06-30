@@ -138,10 +138,7 @@ impl DeletionBitmap {
 
         // 零拷贝写入 words - 直接将 &[u64] 转为 &[u8]
         let words_bytes = unsafe {
-            std::slice::from_raw_parts(
-                self.words.as_ptr() as *const u8,
-                self.words.len() * 8,
-            )
+            std::slice::from_raw_parts(self.words.as_ptr() as *const u8, self.words.len() * 8)
         };
         file.write_all(words_bytes)?;
 

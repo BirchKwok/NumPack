@@ -1455,7 +1455,9 @@ impl LazyArray {
     }
 
     #[inline]
-    fn safe_cast_vec<T: bytemuck::Pod + bytemuck::AnyBitPattern + bytemuck::NoUninit>(data: Vec<u8>) -> Vec<T> {
+    fn safe_cast_vec<T: bytemuck::Pod + bytemuck::AnyBitPattern + bytemuck::NoUninit>(
+        data: Vec<u8>,
+    ) -> Vec<T> {
         match bytemuck::allocation::try_cast_vec::<u8, T>(data) {
             Ok(typed_vec) => typed_vec,
             Err((_err, data)) => {
@@ -1465,7 +1467,7 @@ impl LazyArray {
                     std::ptr::copy_nonoverlapping(
                         data.as_ptr(),
                         result.as_mut_ptr() as *mut u8,
-                        data.len()
+                        data.len(),
                     );
                     result.set_len(count);
                 }

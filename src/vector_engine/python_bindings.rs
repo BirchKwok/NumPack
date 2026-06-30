@@ -7,7 +7,7 @@
 //! - `StreamingVectorEngine`: Streaming vector search from files (memory-efficient)
 
 use memmap2::MmapOptions;
-use numpy::{PyArray1, PyArrayMethods, PyReadonlyArrayDyn, PyUntypedArrayMethods, IntoPyArray};
+use numpy::{IntoPyArray, PyArray1, PyArrayMethods, PyReadonlyArrayDyn, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use std::path::Path;
@@ -675,7 +675,6 @@ impl PyVectorEngine {
             ))),
         }
     }
-
 }
 
 // ========================================================================
@@ -893,7 +892,7 @@ impl PyVectorEngine {
 
         // Check query dimensions and dispatch accordingly
         let query_ndim = query_shape.len();
-        
+
         if query_ndim == 1 {
             // 1D query: original behavior
             let query_slice = query_arr.as_slice()?;
@@ -917,7 +916,8 @@ impl PyVectorEngine {
                         let mut scores = Vec::with_capacity(n_candidates);
                         for i in 0..n_candidates {
                             unsafe {
-                                let query = std::slice::from_raw_parts(query_addr as *const f64, dim);
+                                let query =
+                                    std::slice::from_raw_parts(query_addr as *const f64, dim);
                                 let candidate = std::slice::from_raw_parts(
                                     (candidates_addr + i * dim * std::mem::size_of::<f64>())
                                         as *const f64,
@@ -946,9 +946,11 @@ impl PyVectorEngine {
                                             as *const f64,
                                         dim,
                                     );
-                                    self.engine
-                                        .cpu_backend
-                                        .compute_f64(query, candidate, metric_type)
+                                    self.engine.cpu_backend.compute_f64(
+                                        query,
+                                        candidate,
+                                        metric_type,
+                                    )
                                 })
                                 .collect::<Result<Vec<_>, _>>()
                         }
@@ -983,12 +985,11 @@ impl PyVectorEngine {
             // 2D query: use optimized cdist for matrix-matrix computation
             let n_queries = query_shape[0];
             let query_dim = query_shape[1];
-            
+
             if query_dim != dim {
                 return Err(PyValueError::new_err(format!(
                     "Query dimension {} does not match candidates dimension {}",
-                    query_dim,
-                    dim
+                    query_dim, dim
                 )));
             }
 
@@ -998,9 +999,14 @@ impl PyVectorEngine {
             // Use optimized cdist: compute all (query, candidate) pairs efficiently
             let flat_scores = py
                 .allow_threads(|| {
-                    self.engine
-                        .cpu_backend
-                        .cdist_f64(query_slice, candidates_slice, n_queries, n_candidates, dim, metric_type)
+                    self.engine.cpu_backend.cdist_f64(
+                        query_slice,
+                        candidates_slice,
+                        n_queries,
+                        n_candidates,
+                        dim,
+                        metric_type,
+                    )
                 })
                 .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
 
@@ -1067,7 +1073,8 @@ impl PyVectorEngine {
                         (0..n_candidates)
                             .into_par_iter()
                             .map(|i| unsafe {
-                                let query = std::slice::from_raw_parts(query_addr as *const f32, dim);
+                                let query =
+                                    std::slice::from_raw_parts(query_addr as *const f32, dim);
                                 let candidate = std::slice::from_raw_parts(
                                     (candidates_addr + i * dim * std::mem::size_of::<f32>())
                                         as *const f32,
@@ -1084,7 +1091,8 @@ impl PyVectorEngine {
                     {
                         (0..n_candidates)
                             .map(|i| unsafe {
-                                let query = std::slice::from_raw_parts(query_addr as *const f32, dim);
+                                let query =
+                                    std::slice::from_raw_parts(query_addr as *const f32, dim);
                                 let candidate = std::slice::from_raw_parts(
                                     (candidates_addr + i * dim * std::mem::size_of::<f32>())
                                         as *const f32,
@@ -1105,12 +1113,11 @@ impl PyVectorEngine {
             // 2D query: use optimized cdist for matrix-matrix computation
             let n_queries = query_shape[0];
             let query_dim = query_shape[1];
-            
+
             if query_dim != dim {
                 return Err(PyValueError::new_err(format!(
                     "Query dimension {} does not match candidates dimension {}",
-                    query_dim,
-                    dim
+                    query_dim, dim
                 )));
             }
 
@@ -1120,9 +1127,14 @@ impl PyVectorEngine {
             // Use optimized cdist: compute all (query, candidate) pairs efficiently
             let flat_scores_f32 = py
                 .allow_threads(|| {
-                    self.engine
-                        .cpu_backend
-                        .cdist_f32(query_slice, candidates_slice, n_queries, n_candidates, dim, metric_type)
+                    self.engine.cpu_backend.cdist_f32(
+                        query_slice,
+                        candidates_slice,
+                        n_queries,
+                        n_candidates,
+                        dim,
+                        metric_type,
+                    )
                 })
                 .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
 
@@ -1203,7 +1215,8 @@ impl PyVectorEngine {
                         (0..n_candidates)
                             .into_par_iter()
                             .map(|i| unsafe {
-                                let query = std::slice::from_raw_parts(query_addr as *const i8, dim);
+                                let query =
+                                    std::slice::from_raw_parts(query_addr as *const i8, dim);
                                 let candidate = std::slice::from_raw_parts(
                                     (candidates_addr + i * dim * std::mem::size_of::<i8>())
                                         as *const i8,
@@ -1220,7 +1233,8 @@ impl PyVectorEngine {
                     {
                         (0..n_candidates)
                             .map(|i| unsafe {
-                                let query = std::slice::from_raw_parts(query_addr as *const i8, dim);
+                                let query =
+                                    std::slice::from_raw_parts(query_addr as *const i8, dim);
                                 let candidate = std::slice::from_raw_parts(
                                     (candidates_addr + i * dim * std::mem::size_of::<i8>())
                                         as *const i8,
@@ -1239,7 +1253,7 @@ impl PyVectorEngine {
         } else if query_ndim == 2 {
             let n_queries = query_shape[0];
             let query_dim = query_shape[1];
-            
+
             if query_dim != dim {
                 return Err(PyValueError::new_err(format!(
                     "Query dimension {} does not match candidates dimension {}",
@@ -1262,14 +1276,19 @@ impl PyVectorEngine {
                             (0..n_candidates)
                                 .map(|c| unsafe {
                                     let query = std::slice::from_raw_parts(
-                                        (query_addr + q * dim * std::mem::size_of::<i8>()) as *const i8,
+                                        (query_addr + q * dim * std::mem::size_of::<i8>())
+                                            as *const i8,
                                         dim,
                                     );
                                     let candidate = std::slice::from_raw_parts(
-                                        (candidates_addr + c * dim * std::mem::size_of::<i8>()) as *const i8,
+                                        (candidates_addr + c * dim * std::mem::size_of::<i8>())
+                                            as *const i8,
                                         dim,
                                     );
-                                    self.engine.cpu_backend.compute_i8(query, candidate, metric_type).unwrap_or(f64::NAN)
+                                    self.engine
+                                        .cpu_backend
+                                        .compute_i8(query, candidate, metric_type)
+                                        .unwrap_or(f64::NAN)
                                 })
                                 .collect::<Vec<_>>()
                         })
@@ -1283,14 +1302,19 @@ impl PyVectorEngine {
                             (0..n_candidates)
                                 .map(|c| unsafe {
                                     let query = std::slice::from_raw_parts(
-                                        (query_addr + q * dim * std::mem::size_of::<i8>()) as *const i8,
+                                        (query_addr + q * dim * std::mem::size_of::<i8>())
+                                            as *const i8,
                                         dim,
                                     );
                                     let candidate = std::slice::from_raw_parts(
-                                        (candidates_addr + c * dim * std::mem::size_of::<i8>()) as *const i8,
+                                        (candidates_addr + c * dim * std::mem::size_of::<i8>())
+                                            as *const i8,
                                         dim,
                                     );
-                                    self.engine.cpu_backend.compute_i8(query, candidate, metric_type).unwrap_or(f64::NAN)
+                                    self.engine
+                                        .cpu_backend
+                                        .compute_i8(query, candidate, metric_type)
+                                        .unwrap_or(f64::NAN)
                                 })
                                 .collect::<Vec<_>>()
                         })
@@ -1303,7 +1327,10 @@ impl PyVectorEngine {
                 .map_err(|e| PyValueError::new_err(format!("Array creation error: {}", e)))?;
             Ok(arr2d.into_pyarray(py).unbind().into_any())
         } else {
-            Err(PyTypeError::new_err(format!("Query must be 1D or 2D array, got {}D", query_ndim)))
+            Err(PyTypeError::new_err(format!(
+                "Query must be 1D or 2D array, got {}D",
+                query_ndim
+            )))
         }
     }
 
@@ -1365,7 +1392,8 @@ impl PyVectorEngine {
                         (0..n_candidates)
                             .into_par_iter()
                             .map(|i| unsafe {
-                                let query = std::slice::from_raw_parts(query_addr as *const u8, dim);
+                                let query =
+                                    std::slice::from_raw_parts(query_addr as *const u8, dim);
                                 let candidate = std::slice::from_raw_parts(
                                     (candidates_addr + i * dim * std::mem::size_of::<u8>())
                                         as *const u8,
@@ -1382,7 +1410,8 @@ impl PyVectorEngine {
                     {
                         (0..n_candidates)
                             .map(|i| unsafe {
-                                let query = std::slice::from_raw_parts(query_addr as *const u8, dim);
+                                let query =
+                                    std::slice::from_raw_parts(query_addr as *const u8, dim);
                                 let candidate = std::slice::from_raw_parts(
                                     (candidates_addr + i * dim * std::mem::size_of::<u8>())
                                         as *const u8,
@@ -1401,7 +1430,7 @@ impl PyVectorEngine {
         } else if query_ndim == 2 {
             let n_queries = query_shape[0];
             let query_dim = query_shape[1];
-            
+
             if query_dim != dim {
                 return Err(PyValueError::new_err(format!(
                     "Query dimension {} does not match candidates dimension {}",
@@ -1424,14 +1453,19 @@ impl PyVectorEngine {
                             (0..n_candidates)
                                 .map(|c| unsafe {
                                     let query = std::slice::from_raw_parts(
-                                        (query_addr + q * dim * std::mem::size_of::<u8>()) as *const u8,
+                                        (query_addr + q * dim * std::mem::size_of::<u8>())
+                                            as *const u8,
                                         dim,
                                     );
                                     let candidate = std::slice::from_raw_parts(
-                                        (candidates_addr + c * dim * std::mem::size_of::<u8>()) as *const u8,
+                                        (candidates_addr + c * dim * std::mem::size_of::<u8>())
+                                            as *const u8,
                                         dim,
                                     );
-                                    self.engine.cpu_backend.compute_u8(query, candidate, metric_type).unwrap_or(f64::NAN)
+                                    self.engine
+                                        .cpu_backend
+                                        .compute_u8(query, candidate, metric_type)
+                                        .unwrap_or(f64::NAN)
                                 })
                                 .collect::<Vec<_>>()
                         })
@@ -1445,14 +1479,19 @@ impl PyVectorEngine {
                             (0..n_candidates)
                                 .map(|c| unsafe {
                                     let query = std::slice::from_raw_parts(
-                                        (query_addr + q * dim * std::mem::size_of::<u8>()) as *const u8,
+                                        (query_addr + q * dim * std::mem::size_of::<u8>())
+                                            as *const u8,
                                         dim,
                                     );
                                     let candidate = std::slice::from_raw_parts(
-                                        (candidates_addr + c * dim * std::mem::size_of::<u8>()) as *const u8,
+                                        (candidates_addr + c * dim * std::mem::size_of::<u8>())
+                                            as *const u8,
                                         dim,
                                     );
-                                    self.engine.cpu_backend.compute_u8(query, candidate, metric_type).unwrap_or(f64::NAN)
+                                    self.engine
+                                        .cpu_backend
+                                        .compute_u8(query, candidate, metric_type)
+                                        .unwrap_or(f64::NAN)
                                 })
                                 .collect::<Vec<_>>()
                         })
@@ -1465,7 +1504,10 @@ impl PyVectorEngine {
                 .map_err(|e| PyValueError::new_err(format!("Array creation error: {}", e)))?;
             Ok(arr2d.into_pyarray(py).unbind().into_any())
         } else {
-            Err(PyTypeError::new_err(format!("Query must be 1D or 2D array, got {}D", query_ndim)))
+            Err(PyTypeError::new_err(format!(
+                "Query must be 1D or 2D array, got {}D",
+                query_ndim
+            )))
         }
     }
 
@@ -1771,249 +1813,1024 @@ impl PyVectorEngine {
         let query_shape = query_arr.shape().to_vec();
         let readonly_candidates = candidates_arr.readonly();
         let cand_shape = readonly_candidates.as_array().shape().to_vec();
-        if cand_shape.len() != 2 { return Err(PyTypeError::new_err("Candidates must be a 2D array")); }
+        if cand_shape.len() != 2 {
+            return Err(PyTypeError::new_err("Candidates must be a 2D array"));
+        }
         let (n_candidates, dim) = (cand_shape[0], cand_shape[1]);
         let query_ndim = query_shape.len();
         if query_ndim == 1 {
             let query_slice = query_arr.as_slice()?;
-            if query_slice.len() != dim { return Err(PyValueError::new_err(format!("Query dimension {} does not match candidates dimension {}", query_slice.len(), dim))); }
+            if query_slice.len() != dim {
+                return Err(PyValueError::new_err(format!(
+                    "Query dimension {} does not match candidates dimension {}",
+                    query_slice.len(),
+                    dim
+                )));
+            }
             let candidates_slice = candidates_arr.as_slice()?;
-            let (query_addr, candidates_addr) = (query_slice.as_ptr() as usize, candidates_slice.as_ptr() as usize);
-            let scores = py.allow_threads(|| {
-                #[cfg(feature = "rayon")] { use rayon::prelude::*; (0..n_candidates).into_par_iter().map(|i| unsafe { let q = std::slice::from_raw_parts(query_addr as *const half::f16, dim); let c = std::slice::from_raw_parts((candidates_addr + i * dim * std::mem::size_of::<half::f16>()) as *const half::f16, dim); self.engine.cpu_backend.compute_f16(q, c, metric_type) }).collect::<Result<Vec<_>, _>>() }
-                #[cfg(not(feature = "rayon"))] { (0..n_candidates).map(|i| unsafe { let q = std::slice::from_raw_parts(query_addr as *const half::f16, dim); let c = std::slice::from_raw_parts((candidates_addr + i * dim * std::mem::size_of::<half::f16>()) as *const half::f16, dim); self.engine.cpu_backend.compute_f16(q, c, metric_type) }).collect::<Result<Vec<_>, _>>() }
-            }).map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
+            let (query_addr, candidates_addr) = (
+                query_slice.as_ptr() as usize,
+                candidates_slice.as_ptr() as usize,
+            );
+            let scores = py
+                .allow_threads(|| {
+                    #[cfg(feature = "rayon")]
+                    {
+                        use rayon::prelude::*;
+                        (0..n_candidates)
+                            .into_par_iter()
+                            .map(|i| unsafe {
+                                let q =
+                                    std::slice::from_raw_parts(query_addr as *const half::f16, dim);
+                                let c = std::slice::from_raw_parts(
+                                    (candidates_addr + i * dim * std::mem::size_of::<half::f16>())
+                                        as *const half::f16,
+                                    dim,
+                                );
+                                self.engine.cpu_backend.compute_f16(q, c, metric_type)
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    }
+                    #[cfg(not(feature = "rayon"))]
+                    {
+                        (0..n_candidates)
+                            .map(|i| unsafe {
+                                let q =
+                                    std::slice::from_raw_parts(query_addr as *const half::f16, dim);
+                                let c = std::slice::from_raw_parts(
+                                    (candidates_addr + i * dim * std::mem::size_of::<half::f16>())
+                                        as *const half::f16,
+                                    dim,
+                                );
+                                self.engine.cpu_backend.compute_f16(q, c, metric_type)
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    }
+                })
+                .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
             Ok(PyArray1::from_vec(py, scores).unbind().into_any())
         } else if query_ndim == 2 {
             let (n_queries, query_dim) = (query_shape[0], query_shape[1]);
-            if query_dim != dim { return Err(PyValueError::new_err(format!("Query dimension {} does not match candidates dimension {}", query_dim, dim))); }
+            if query_dim != dim {
+                return Err(PyValueError::new_err(format!(
+                    "Query dimension {} does not match candidates dimension {}",
+                    query_dim, dim
+                )));
+            }
             let query_slice = query_arr.as_slice()?;
             let candidates_slice = candidates_arr.as_slice()?;
-            let (query_addr, candidates_addr) = (query_slice.as_ptr() as usize, candidates_slice.as_ptr() as usize);
+            let (query_addr, candidates_addr) = (
+                query_slice.as_ptr() as usize,
+                candidates_slice.as_ptr() as usize,
+            );
             let all_scores = py.allow_threads(|| {
-                #[cfg(feature = "rayon")] { use rayon::prelude::*; (0..n_queries).into_par_iter().map(|q| (0..n_candidates).map(|c| unsafe { let qv = std::slice::from_raw_parts((query_addr + q * dim * std::mem::size_of::<half::f16>()) as *const half::f16, dim); let cv = std::slice::from_raw_parts((candidates_addr + c * dim * std::mem::size_of::<half::f16>()) as *const half::f16, dim); self.engine.cpu_backend.compute_f16(qv, cv, metric_type).unwrap_or(f64::NAN) }).collect::<Vec<_>>()).collect::<Vec<_>>() }
-                #[cfg(not(feature = "rayon"))] { (0..n_queries).map(|q| (0..n_candidates).map(|c| unsafe { let qv = std::slice::from_raw_parts((query_addr + q * dim * std::mem::size_of::<half::f16>()) as *const half::f16, dim); let cv = std::slice::from_raw_parts((candidates_addr + c * dim * std::mem::size_of::<half::f16>()) as *const half::f16, dim); self.engine.cpu_backend.compute_f16(qv, cv, metric_type).unwrap_or(f64::NAN) }).collect::<Vec<_>>()).collect::<Vec<_>>() }
+                #[cfg(feature = "rayon")]
+                {
+                    use rayon::prelude::*;
+                    (0..n_queries)
+                        .into_par_iter()
+                        .map(|q| {
+                            (0..n_candidates)
+                                .map(|c| unsafe {
+                                    let qv = std::slice::from_raw_parts(
+                                        (query_addr + q * dim * std::mem::size_of::<half::f16>())
+                                            as *const half::f16,
+                                        dim,
+                                    );
+                                    let cv = std::slice::from_raw_parts(
+                                        (candidates_addr
+                                            + c * dim * std::mem::size_of::<half::f16>())
+                                            as *const half::f16,
+                                        dim,
+                                    );
+                                    self.engine
+                                        .cpu_backend
+                                        .compute_f16(qv, cv, metric_type)
+                                        .unwrap_or(f64::NAN)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>()
+                }
+                #[cfg(not(feature = "rayon"))]
+                {
+                    (0..n_queries)
+                        .map(|q| {
+                            (0..n_candidates)
+                                .map(|c| unsafe {
+                                    let qv = std::slice::from_raw_parts(
+                                        (query_addr + q * dim * std::mem::size_of::<half::f16>())
+                                            as *const half::f16,
+                                        dim,
+                                    );
+                                    let cv = std::slice::from_raw_parts(
+                                        (candidates_addr
+                                            + c * dim * std::mem::size_of::<half::f16>())
+                                            as *const half::f16,
+                                        dim,
+                                    );
+                                    self.engine
+                                        .cpu_backend
+                                        .compute_f16(qv, cv, metric_type)
+                                        .unwrap_or(f64::NAN)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>()
+                }
             });
             let flat: Vec<f64> = all_scores.into_iter().flatten().collect();
-            let arr2d = ndarray::Array2::from_shape_vec((n_queries, n_candidates), flat).map_err(|e| PyValueError::new_err(format!("Array creation error: {}", e)))?;
+            let arr2d = ndarray::Array2::from_shape_vec((n_queries, n_candidates), flat)
+                .map_err(|e| PyValueError::new_err(format!("Array creation error: {}", e)))?;
             Ok(arr2d.into_pyarray(py).unbind().into_any())
-        } else { Err(PyTypeError::new_err(format!("Query must be 1D or 2D array, got {}D", query_ndim))) }
+        } else {
+            Err(PyTypeError::new_err(format!(
+                "Query must be 1D or 2D array, got {}D",
+                query_ndim
+            )))
+        }
     }
 
     /// i16 batch computation - supports both 1D and 2D query arrays
-    fn batch_compute_i16(&self, py: Python, query: &Bound<'_, PyAny>, candidates: &Bound<'_, PyAny>, metric_type: MetricType) -> PyResult<PyObject> {
+    fn batch_compute_i16(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<PyObject> {
         use numpy::PyArrayMethods;
         let query_arr: PyReadonlyArrayDyn<i16> = query.extract()?;
         let candidates_arr: PyReadonlyArrayDyn<i16> = candidates.extract()?;
         let query_shape = query_arr.shape().to_vec();
         let readonly_candidates = candidates_arr.readonly();
         let cand_shape = readonly_candidates.as_array().shape().to_vec();
-        if cand_shape.len() != 2 { return Err(PyTypeError::new_err("Candidates must be a 2D array")); }
+        if cand_shape.len() != 2 {
+            return Err(PyTypeError::new_err("Candidates must be a 2D array"));
+        }
         let (n_candidates, dim, query_ndim) = (cand_shape[0], cand_shape[1], query_shape.len());
         if query_ndim == 1 {
             let query_slice = query_arr.as_slice()?;
-            if query_slice.len() != dim { return Err(PyValueError::new_err(format!("Query dimension {} does not match candidates dimension {}", query_slice.len(), dim))); }
+            if query_slice.len() != dim {
+                return Err(PyValueError::new_err(format!(
+                    "Query dimension {} does not match candidates dimension {}",
+                    query_slice.len(),
+                    dim
+                )));
+            }
             let candidates_slice = candidates_arr.as_slice()?;
-            let (query_addr, candidates_addr) = (query_slice.as_ptr() as usize, candidates_slice.as_ptr() as usize);
-            let scores = py.allow_threads(|| {
-                #[cfg(feature = "rayon")] { use rayon::prelude::*; (0..n_candidates).into_par_iter().map(|i| unsafe { let q = std::slice::from_raw_parts(query_addr as *const i16, dim); let c = std::slice::from_raw_parts((candidates_addr + i * dim * std::mem::size_of::<i16>()) as *const i16, dim); self.engine.cpu_backend.compute_i16(q, c, metric_type) }).collect::<Result<Vec<_>, _>>() }
-                #[cfg(not(feature = "rayon"))] { (0..n_candidates).map(|i| unsafe { let q = std::slice::from_raw_parts(query_addr as *const i16, dim); let c = std::slice::from_raw_parts((candidates_addr + i * dim * std::mem::size_of::<i16>()) as *const i16, dim); self.engine.cpu_backend.compute_i16(q, c, metric_type) }).collect::<Result<Vec<_>, _>>() }
-            }).map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
+            let (query_addr, candidates_addr) = (
+                query_slice.as_ptr() as usize,
+                candidates_slice.as_ptr() as usize,
+            );
+            let scores = py
+                .allow_threads(|| {
+                    #[cfg(feature = "rayon")]
+                    {
+                        use rayon::prelude::*;
+                        (0..n_candidates)
+                            .into_par_iter()
+                            .map(|i| unsafe {
+                                let q = std::slice::from_raw_parts(query_addr as *const i16, dim);
+                                let c = std::slice::from_raw_parts(
+                                    (candidates_addr + i * dim * std::mem::size_of::<i16>())
+                                        as *const i16,
+                                    dim,
+                                );
+                                self.engine.cpu_backend.compute_i16(q, c, metric_type)
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    }
+                    #[cfg(not(feature = "rayon"))]
+                    {
+                        (0..n_candidates)
+                            .map(|i| unsafe {
+                                let q = std::slice::from_raw_parts(query_addr as *const i16, dim);
+                                let c = std::slice::from_raw_parts(
+                                    (candidates_addr + i * dim * std::mem::size_of::<i16>())
+                                        as *const i16,
+                                    dim,
+                                );
+                                self.engine.cpu_backend.compute_i16(q, c, metric_type)
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    }
+                })
+                .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
             Ok(PyArray1::from_vec(py, scores).unbind().into_any())
         } else if query_ndim == 2 {
             let (n_queries, query_dim) = (query_shape[0], query_shape[1]);
-            if query_dim != dim { return Err(PyValueError::new_err(format!("Query dimension {} does not match candidates dimension {}", query_dim, dim))); }
+            if query_dim != dim {
+                return Err(PyValueError::new_err(format!(
+                    "Query dimension {} does not match candidates dimension {}",
+                    query_dim, dim
+                )));
+            }
             let query_slice = query_arr.as_slice()?;
             let candidates_slice = candidates_arr.as_slice()?;
-            let (query_addr, candidates_addr) = (query_slice.as_ptr() as usize, candidates_slice.as_ptr() as usize);
+            let (query_addr, candidates_addr) = (
+                query_slice.as_ptr() as usize,
+                candidates_slice.as_ptr() as usize,
+            );
             let all_scores = py.allow_threads(|| {
-                #[cfg(feature = "rayon")] { use rayon::prelude::*; (0..n_queries).into_par_iter().map(|q| (0..n_candidates).map(|c| unsafe { let qv = std::slice::from_raw_parts((query_addr + q * dim * std::mem::size_of::<i16>()) as *const i16, dim); let cv = std::slice::from_raw_parts((candidates_addr + c * dim * std::mem::size_of::<i16>()) as *const i16, dim); self.engine.cpu_backend.compute_i16(qv, cv, metric_type).unwrap_or(f64::NAN) }).collect::<Vec<_>>()).collect::<Vec<_>>() }
-                #[cfg(not(feature = "rayon"))] { (0..n_queries).map(|q| (0..n_candidates).map(|c| unsafe { let qv = std::slice::from_raw_parts((query_addr + q * dim * std::mem::size_of::<i16>()) as *const i16, dim); let cv = std::slice::from_raw_parts((candidates_addr + c * dim * std::mem::size_of::<i16>()) as *const i16, dim); self.engine.cpu_backend.compute_i16(qv, cv, metric_type).unwrap_or(f64::NAN) }).collect::<Vec<_>>()).collect::<Vec<_>>() }
+                #[cfg(feature = "rayon")]
+                {
+                    use rayon::prelude::*;
+                    (0..n_queries)
+                        .into_par_iter()
+                        .map(|q| {
+                            (0..n_candidates)
+                                .map(|c| unsafe {
+                                    let qv = std::slice::from_raw_parts(
+                                        (query_addr + q * dim * std::mem::size_of::<i16>())
+                                            as *const i16,
+                                        dim,
+                                    );
+                                    let cv = std::slice::from_raw_parts(
+                                        (candidates_addr + c * dim * std::mem::size_of::<i16>())
+                                            as *const i16,
+                                        dim,
+                                    );
+                                    self.engine
+                                        .cpu_backend
+                                        .compute_i16(qv, cv, metric_type)
+                                        .unwrap_or(f64::NAN)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>()
+                }
+                #[cfg(not(feature = "rayon"))]
+                {
+                    (0..n_queries)
+                        .map(|q| {
+                            (0..n_candidates)
+                                .map(|c| unsafe {
+                                    let qv = std::slice::from_raw_parts(
+                                        (query_addr + q * dim * std::mem::size_of::<i16>())
+                                            as *const i16,
+                                        dim,
+                                    );
+                                    let cv = std::slice::from_raw_parts(
+                                        (candidates_addr + c * dim * std::mem::size_of::<i16>())
+                                            as *const i16,
+                                        dim,
+                                    );
+                                    self.engine
+                                        .cpu_backend
+                                        .compute_i16(qv, cv, metric_type)
+                                        .unwrap_or(f64::NAN)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>()
+                }
             });
             let flat: Vec<f64> = all_scores.into_iter().flatten().collect();
-            let arr2d = ndarray::Array2::from_shape_vec((n_queries, n_candidates), flat).map_err(|e| PyValueError::new_err(format!("Array creation error: {}", e)))?;
+            let arr2d = ndarray::Array2::from_shape_vec((n_queries, n_candidates), flat)
+                .map_err(|e| PyValueError::new_err(format!("Array creation error: {}", e)))?;
             Ok(arr2d.into_pyarray(py).unbind().into_any())
-        } else { Err(PyTypeError::new_err(format!("Query must be 1D or 2D array, got {}D", query_ndim))) }
+        } else {
+            Err(PyTypeError::new_err(format!(
+                "Query must be 1D or 2D array, got {}D",
+                query_ndim
+            )))
+        }
     }
 
     /// i32 batch computation - supports both 1D and 2D query arrays
-    fn batch_compute_i32(&self, py: Python, query: &Bound<'_, PyAny>, candidates: &Bound<'_, PyAny>, metric_type: MetricType) -> PyResult<PyObject> {
+    fn batch_compute_i32(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<PyObject> {
         use numpy::PyArrayMethods;
         let query_arr: PyReadonlyArrayDyn<i32> = query.extract()?;
         let candidates_arr: PyReadonlyArrayDyn<i32> = candidates.extract()?;
         let query_shape = query_arr.shape().to_vec();
         let readonly_candidates = candidates_arr.readonly();
         let cand_shape = readonly_candidates.as_array().shape().to_vec();
-        if cand_shape.len() != 2 { return Err(PyTypeError::new_err("Candidates must be a 2D array")); }
+        if cand_shape.len() != 2 {
+            return Err(PyTypeError::new_err("Candidates must be a 2D array"));
+        }
         let (n_candidates, dim, query_ndim) = (cand_shape[0], cand_shape[1], query_shape.len());
         if query_ndim == 1 {
             let query_slice = query_arr.as_slice()?;
-            if query_slice.len() != dim { return Err(PyValueError::new_err(format!("Query dimension {} does not match candidates dimension {}", query_slice.len(), dim))); }
+            if query_slice.len() != dim {
+                return Err(PyValueError::new_err(format!(
+                    "Query dimension {} does not match candidates dimension {}",
+                    query_slice.len(),
+                    dim
+                )));
+            }
             let candidates_slice = candidates_arr.as_slice()?;
-            let (query_addr, candidates_addr) = (query_slice.as_ptr() as usize, candidates_slice.as_ptr() as usize);
-            let scores = py.allow_threads(|| {
-                #[cfg(feature = "rayon")] { use rayon::prelude::*; (0..n_candidates).into_par_iter().map(|i| unsafe { let q = std::slice::from_raw_parts(query_addr as *const i32, dim); let c = std::slice::from_raw_parts((candidates_addr + i * dim * std::mem::size_of::<i32>()) as *const i32, dim); self.engine.cpu_backend.compute_i32(q, c, metric_type) }).collect::<Result<Vec<_>, _>>() }
-                #[cfg(not(feature = "rayon"))] { (0..n_candidates).map(|i| unsafe { let q = std::slice::from_raw_parts(query_addr as *const i32, dim); let c = std::slice::from_raw_parts((candidates_addr + i * dim * std::mem::size_of::<i32>()) as *const i32, dim); self.engine.cpu_backend.compute_i32(q, c, metric_type) }).collect::<Result<Vec<_>, _>>() }
-            }).map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
+            let (query_addr, candidates_addr) = (
+                query_slice.as_ptr() as usize,
+                candidates_slice.as_ptr() as usize,
+            );
+            let scores = py
+                .allow_threads(|| {
+                    #[cfg(feature = "rayon")]
+                    {
+                        use rayon::prelude::*;
+                        (0..n_candidates)
+                            .into_par_iter()
+                            .map(|i| unsafe {
+                                let q = std::slice::from_raw_parts(query_addr as *const i32, dim);
+                                let c = std::slice::from_raw_parts(
+                                    (candidates_addr + i * dim * std::mem::size_of::<i32>())
+                                        as *const i32,
+                                    dim,
+                                );
+                                self.engine.cpu_backend.compute_i32(q, c, metric_type)
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    }
+                    #[cfg(not(feature = "rayon"))]
+                    {
+                        (0..n_candidates)
+                            .map(|i| unsafe {
+                                let q = std::slice::from_raw_parts(query_addr as *const i32, dim);
+                                let c = std::slice::from_raw_parts(
+                                    (candidates_addr + i * dim * std::mem::size_of::<i32>())
+                                        as *const i32,
+                                    dim,
+                                );
+                                self.engine.cpu_backend.compute_i32(q, c, metric_type)
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    }
+                })
+                .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
             Ok(PyArray1::from_vec(py, scores).unbind().into_any())
         } else if query_ndim == 2 {
             let (n_queries, query_dim) = (query_shape[0], query_shape[1]);
-            if query_dim != dim { return Err(PyValueError::new_err(format!("Query dimension {} does not match candidates dimension {}", query_dim, dim))); }
+            if query_dim != dim {
+                return Err(PyValueError::new_err(format!(
+                    "Query dimension {} does not match candidates dimension {}",
+                    query_dim, dim
+                )));
+            }
             let query_slice = query_arr.as_slice()?;
             let candidates_slice = candidates_arr.as_slice()?;
-            let (query_addr, candidates_addr) = (query_slice.as_ptr() as usize, candidates_slice.as_ptr() as usize);
+            let (query_addr, candidates_addr) = (
+                query_slice.as_ptr() as usize,
+                candidates_slice.as_ptr() as usize,
+            );
             let all_scores = py.allow_threads(|| {
-                #[cfg(feature = "rayon")] { use rayon::prelude::*; (0..n_queries).into_par_iter().map(|q| (0..n_candidates).map(|c| unsafe { let qv = std::slice::from_raw_parts((query_addr + q * dim * std::mem::size_of::<i32>()) as *const i32, dim); let cv = std::slice::from_raw_parts((candidates_addr + c * dim * std::mem::size_of::<i32>()) as *const i32, dim); self.engine.cpu_backend.compute_i32(qv, cv, metric_type).unwrap_or(f64::NAN) }).collect::<Vec<_>>()).collect::<Vec<_>>() }
-                #[cfg(not(feature = "rayon"))] { (0..n_queries).map(|q| (0..n_candidates).map(|c| unsafe { let qv = std::slice::from_raw_parts((query_addr + q * dim * std::mem::size_of::<i32>()) as *const i32, dim); let cv = std::slice::from_raw_parts((candidates_addr + c * dim * std::mem::size_of::<i32>()) as *const i32, dim); self.engine.cpu_backend.compute_i32(qv, cv, metric_type).unwrap_or(f64::NAN) }).collect::<Vec<_>>()).collect::<Vec<_>>() }
+                #[cfg(feature = "rayon")]
+                {
+                    use rayon::prelude::*;
+                    (0..n_queries)
+                        .into_par_iter()
+                        .map(|q| {
+                            (0..n_candidates)
+                                .map(|c| unsafe {
+                                    let qv = std::slice::from_raw_parts(
+                                        (query_addr + q * dim * std::mem::size_of::<i32>())
+                                            as *const i32,
+                                        dim,
+                                    );
+                                    let cv = std::slice::from_raw_parts(
+                                        (candidates_addr + c * dim * std::mem::size_of::<i32>())
+                                            as *const i32,
+                                        dim,
+                                    );
+                                    self.engine
+                                        .cpu_backend
+                                        .compute_i32(qv, cv, metric_type)
+                                        .unwrap_or(f64::NAN)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>()
+                }
+                #[cfg(not(feature = "rayon"))]
+                {
+                    (0..n_queries)
+                        .map(|q| {
+                            (0..n_candidates)
+                                .map(|c| unsafe {
+                                    let qv = std::slice::from_raw_parts(
+                                        (query_addr + q * dim * std::mem::size_of::<i32>())
+                                            as *const i32,
+                                        dim,
+                                    );
+                                    let cv = std::slice::from_raw_parts(
+                                        (candidates_addr + c * dim * std::mem::size_of::<i32>())
+                                            as *const i32,
+                                        dim,
+                                    );
+                                    self.engine
+                                        .cpu_backend
+                                        .compute_i32(qv, cv, metric_type)
+                                        .unwrap_or(f64::NAN)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>()
+                }
             });
             let flat: Vec<f64> = all_scores.into_iter().flatten().collect();
-            let arr2d = ndarray::Array2::from_shape_vec((n_queries, n_candidates), flat).map_err(|e| PyValueError::new_err(format!("Array creation error: {}", e)))?;
+            let arr2d = ndarray::Array2::from_shape_vec((n_queries, n_candidates), flat)
+                .map_err(|e| PyValueError::new_err(format!("Array creation error: {}", e)))?;
             Ok(arr2d.into_pyarray(py).unbind().into_any())
-        } else { Err(PyTypeError::new_err(format!("Query must be 1D or 2D array, got {}D", query_ndim))) }
+        } else {
+            Err(PyTypeError::new_err(format!(
+                "Query must be 1D or 2D array, got {}D",
+                query_ndim
+            )))
+        }
     }
 
     /// i64 batch computation - supports both 1D and 2D query arrays
-    fn batch_compute_i64(&self, py: Python, query: &Bound<'_, PyAny>, candidates: &Bound<'_, PyAny>, metric_type: MetricType) -> PyResult<PyObject> {
+    fn batch_compute_i64(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<PyObject> {
         use numpy::PyArrayMethods;
         let query_arr: PyReadonlyArrayDyn<i64> = query.extract()?;
         let candidates_arr: PyReadonlyArrayDyn<i64> = candidates.extract()?;
         let query_shape = query_arr.shape().to_vec();
         let readonly_candidates = candidates_arr.readonly();
         let cand_shape = readonly_candidates.as_array().shape().to_vec();
-        if cand_shape.len() != 2 { return Err(PyTypeError::new_err("Candidates must be a 2D array")); }
+        if cand_shape.len() != 2 {
+            return Err(PyTypeError::new_err("Candidates must be a 2D array"));
+        }
         let (n_candidates, dim, query_ndim) = (cand_shape[0], cand_shape[1], query_shape.len());
         if query_ndim == 1 {
             let query_slice = query_arr.as_slice()?;
-            if query_slice.len() != dim { return Err(PyValueError::new_err(format!("Query dimension {} does not match candidates dimension {}", query_slice.len(), dim))); }
+            if query_slice.len() != dim {
+                return Err(PyValueError::new_err(format!(
+                    "Query dimension {} does not match candidates dimension {}",
+                    query_slice.len(),
+                    dim
+                )));
+            }
             let candidates_slice = candidates_arr.as_slice()?;
-            let (query_addr, candidates_addr) = (query_slice.as_ptr() as usize, candidates_slice.as_ptr() as usize);
-            let scores = py.allow_threads(|| {
-                #[cfg(feature = "rayon")] { use rayon::prelude::*; (0..n_candidates).into_par_iter().map(|i| unsafe { let q = std::slice::from_raw_parts(query_addr as *const i64, dim); let c = std::slice::from_raw_parts((candidates_addr + i * dim * std::mem::size_of::<i64>()) as *const i64, dim); self.engine.cpu_backend.compute_i64(q, c, metric_type) }).collect::<Result<Vec<_>, _>>() }
-                #[cfg(not(feature = "rayon"))] { (0..n_candidates).map(|i| unsafe { let q = std::slice::from_raw_parts(query_addr as *const i64, dim); let c = std::slice::from_raw_parts((candidates_addr + i * dim * std::mem::size_of::<i64>()) as *const i64, dim); self.engine.cpu_backend.compute_i64(q, c, metric_type) }).collect::<Result<Vec<_>, _>>() }
-            }).map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
+            let (query_addr, candidates_addr) = (
+                query_slice.as_ptr() as usize,
+                candidates_slice.as_ptr() as usize,
+            );
+            let scores = py
+                .allow_threads(|| {
+                    #[cfg(feature = "rayon")]
+                    {
+                        use rayon::prelude::*;
+                        (0..n_candidates)
+                            .into_par_iter()
+                            .map(|i| unsafe {
+                                let q = std::slice::from_raw_parts(query_addr as *const i64, dim);
+                                let c = std::slice::from_raw_parts(
+                                    (candidates_addr + i * dim * std::mem::size_of::<i64>())
+                                        as *const i64,
+                                    dim,
+                                );
+                                self.engine.cpu_backend.compute_i64(q, c, metric_type)
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    }
+                    #[cfg(not(feature = "rayon"))]
+                    {
+                        (0..n_candidates)
+                            .map(|i| unsafe {
+                                let q = std::slice::from_raw_parts(query_addr as *const i64, dim);
+                                let c = std::slice::from_raw_parts(
+                                    (candidates_addr + i * dim * std::mem::size_of::<i64>())
+                                        as *const i64,
+                                    dim,
+                                );
+                                self.engine.cpu_backend.compute_i64(q, c, metric_type)
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    }
+                })
+                .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
             Ok(PyArray1::from_vec(py, scores).unbind().into_any())
         } else if query_ndim == 2 {
             let (n_queries, query_dim) = (query_shape[0], query_shape[1]);
-            if query_dim != dim { return Err(PyValueError::new_err(format!("Query dimension {} does not match candidates dimension {}", query_dim, dim))); }
+            if query_dim != dim {
+                return Err(PyValueError::new_err(format!(
+                    "Query dimension {} does not match candidates dimension {}",
+                    query_dim, dim
+                )));
+            }
             let query_slice = query_arr.as_slice()?;
             let candidates_slice = candidates_arr.as_slice()?;
-            let (query_addr, candidates_addr) = (query_slice.as_ptr() as usize, candidates_slice.as_ptr() as usize);
+            let (query_addr, candidates_addr) = (
+                query_slice.as_ptr() as usize,
+                candidates_slice.as_ptr() as usize,
+            );
             let all_scores = py.allow_threads(|| {
-                #[cfg(feature = "rayon")] { use rayon::prelude::*; (0..n_queries).into_par_iter().map(|q| (0..n_candidates).map(|c| unsafe { let qv = std::slice::from_raw_parts((query_addr + q * dim * std::mem::size_of::<i64>()) as *const i64, dim); let cv = std::slice::from_raw_parts((candidates_addr + c * dim * std::mem::size_of::<i64>()) as *const i64, dim); self.engine.cpu_backend.compute_i64(qv, cv, metric_type).unwrap_or(f64::NAN) }).collect::<Vec<_>>()).collect::<Vec<_>>() }
-                #[cfg(not(feature = "rayon"))] { (0..n_queries).map(|q| (0..n_candidates).map(|c| unsafe { let qv = std::slice::from_raw_parts((query_addr + q * dim * std::mem::size_of::<i64>()) as *const i64, dim); let cv = std::slice::from_raw_parts((candidates_addr + c * dim * std::mem::size_of::<i64>()) as *const i64, dim); self.engine.cpu_backend.compute_i64(qv, cv, metric_type).unwrap_or(f64::NAN) }).collect::<Vec<_>>()).collect::<Vec<_>>() }
+                #[cfg(feature = "rayon")]
+                {
+                    use rayon::prelude::*;
+                    (0..n_queries)
+                        .into_par_iter()
+                        .map(|q| {
+                            (0..n_candidates)
+                                .map(|c| unsafe {
+                                    let qv = std::slice::from_raw_parts(
+                                        (query_addr + q * dim * std::mem::size_of::<i64>())
+                                            as *const i64,
+                                        dim,
+                                    );
+                                    let cv = std::slice::from_raw_parts(
+                                        (candidates_addr + c * dim * std::mem::size_of::<i64>())
+                                            as *const i64,
+                                        dim,
+                                    );
+                                    self.engine
+                                        .cpu_backend
+                                        .compute_i64(qv, cv, metric_type)
+                                        .unwrap_or(f64::NAN)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>()
+                }
+                #[cfg(not(feature = "rayon"))]
+                {
+                    (0..n_queries)
+                        .map(|q| {
+                            (0..n_candidates)
+                                .map(|c| unsafe {
+                                    let qv = std::slice::from_raw_parts(
+                                        (query_addr + q * dim * std::mem::size_of::<i64>())
+                                            as *const i64,
+                                        dim,
+                                    );
+                                    let cv = std::slice::from_raw_parts(
+                                        (candidates_addr + c * dim * std::mem::size_of::<i64>())
+                                            as *const i64,
+                                        dim,
+                                    );
+                                    self.engine
+                                        .cpu_backend
+                                        .compute_i64(qv, cv, metric_type)
+                                        .unwrap_or(f64::NAN)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>()
+                }
             });
             let flat: Vec<f64> = all_scores.into_iter().flatten().collect();
-            let arr2d = ndarray::Array2::from_shape_vec((n_queries, n_candidates), flat).map_err(|e| PyValueError::new_err(format!("Array creation error: {}", e)))?;
+            let arr2d = ndarray::Array2::from_shape_vec((n_queries, n_candidates), flat)
+                .map_err(|e| PyValueError::new_err(format!("Array creation error: {}", e)))?;
             Ok(arr2d.into_pyarray(py).unbind().into_any())
-        } else { Err(PyTypeError::new_err(format!("Query must be 1D or 2D array, got {}D", query_ndim))) }
+        } else {
+            Err(PyTypeError::new_err(format!(
+                "Query must be 1D or 2D array, got {}D",
+                query_ndim
+            )))
+        }
     }
 
     /// u16 batch computation - supports both 1D and 2D query arrays
-    fn batch_compute_u16(&self, py: Python, query: &Bound<'_, PyAny>, candidates: &Bound<'_, PyAny>, metric_type: MetricType) -> PyResult<PyObject> {
+    fn batch_compute_u16(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<PyObject> {
         use numpy::PyArrayMethods;
         let query_arr: PyReadonlyArrayDyn<u16> = query.extract()?;
         let candidates_arr: PyReadonlyArrayDyn<u16> = candidates.extract()?;
         let query_shape = query_arr.shape().to_vec();
         let readonly_candidates = candidates_arr.readonly();
         let cand_shape = readonly_candidates.as_array().shape().to_vec();
-        if cand_shape.len() != 2 { return Err(PyTypeError::new_err("Candidates must be a 2D array")); }
+        if cand_shape.len() != 2 {
+            return Err(PyTypeError::new_err("Candidates must be a 2D array"));
+        }
         let (n_candidates, dim, query_ndim) = (cand_shape[0], cand_shape[1], query_shape.len());
         if query_ndim == 1 {
             let query_slice = query_arr.as_slice()?;
-            if query_slice.len() != dim { return Err(PyValueError::new_err(format!("Query dimension {} does not match candidates dimension {}", query_slice.len(), dim))); }
+            if query_slice.len() != dim {
+                return Err(PyValueError::new_err(format!(
+                    "Query dimension {} does not match candidates dimension {}",
+                    query_slice.len(),
+                    dim
+                )));
+            }
             let candidates_slice = candidates_arr.as_slice()?;
-            let (query_addr, candidates_addr) = (query_slice.as_ptr() as usize, candidates_slice.as_ptr() as usize);
-            let scores = py.allow_threads(|| {
-                #[cfg(feature = "rayon")] { use rayon::prelude::*; (0..n_candidates).into_par_iter().map(|i| unsafe { let q = std::slice::from_raw_parts(query_addr as *const u16, dim); let c = std::slice::from_raw_parts((candidates_addr + i * dim * std::mem::size_of::<u16>()) as *const u16, dim); self.engine.cpu_backend.compute_u16(q, c, metric_type) }).collect::<Result<Vec<_>, _>>() }
-                #[cfg(not(feature = "rayon"))] { (0..n_candidates).map(|i| unsafe { let q = std::slice::from_raw_parts(query_addr as *const u16, dim); let c = std::slice::from_raw_parts((candidates_addr + i * dim * std::mem::size_of::<u16>()) as *const u16, dim); self.engine.cpu_backend.compute_u16(q, c, metric_type) }).collect::<Result<Vec<_>, _>>() }
-            }).map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
+            let (query_addr, candidates_addr) = (
+                query_slice.as_ptr() as usize,
+                candidates_slice.as_ptr() as usize,
+            );
+            let scores = py
+                .allow_threads(|| {
+                    #[cfg(feature = "rayon")]
+                    {
+                        use rayon::prelude::*;
+                        (0..n_candidates)
+                            .into_par_iter()
+                            .map(|i| unsafe {
+                                let q = std::slice::from_raw_parts(query_addr as *const u16, dim);
+                                let c = std::slice::from_raw_parts(
+                                    (candidates_addr + i * dim * std::mem::size_of::<u16>())
+                                        as *const u16,
+                                    dim,
+                                );
+                                self.engine.cpu_backend.compute_u16(q, c, metric_type)
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    }
+                    #[cfg(not(feature = "rayon"))]
+                    {
+                        (0..n_candidates)
+                            .map(|i| unsafe {
+                                let q = std::slice::from_raw_parts(query_addr as *const u16, dim);
+                                let c = std::slice::from_raw_parts(
+                                    (candidates_addr + i * dim * std::mem::size_of::<u16>())
+                                        as *const u16,
+                                    dim,
+                                );
+                                self.engine.cpu_backend.compute_u16(q, c, metric_type)
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    }
+                })
+                .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
             Ok(PyArray1::from_vec(py, scores).unbind().into_any())
         } else if query_ndim == 2 {
             let (n_queries, query_dim) = (query_shape[0], query_shape[1]);
-            if query_dim != dim { return Err(PyValueError::new_err(format!("Query dimension {} does not match candidates dimension {}", query_dim, dim))); }
+            if query_dim != dim {
+                return Err(PyValueError::new_err(format!(
+                    "Query dimension {} does not match candidates dimension {}",
+                    query_dim, dim
+                )));
+            }
             let query_slice = query_arr.as_slice()?;
             let candidates_slice = candidates_arr.as_slice()?;
-            let (query_addr, candidates_addr) = (query_slice.as_ptr() as usize, candidates_slice.as_ptr() as usize);
+            let (query_addr, candidates_addr) = (
+                query_slice.as_ptr() as usize,
+                candidates_slice.as_ptr() as usize,
+            );
             let all_scores = py.allow_threads(|| {
-                #[cfg(feature = "rayon")] { use rayon::prelude::*; (0..n_queries).into_par_iter().map(|q| (0..n_candidates).map(|c| unsafe { let qv = std::slice::from_raw_parts((query_addr + q * dim * std::mem::size_of::<u16>()) as *const u16, dim); let cv = std::slice::from_raw_parts((candidates_addr + c * dim * std::mem::size_of::<u16>()) as *const u16, dim); self.engine.cpu_backend.compute_u16(qv, cv, metric_type).unwrap_or(f64::NAN) }).collect::<Vec<_>>()).collect::<Vec<_>>() }
-                #[cfg(not(feature = "rayon"))] { (0..n_queries).map(|q| (0..n_candidates).map(|c| unsafe { let qv = std::slice::from_raw_parts((query_addr + q * dim * std::mem::size_of::<u16>()) as *const u16, dim); let cv = std::slice::from_raw_parts((candidates_addr + c * dim * std::mem::size_of::<u16>()) as *const u16, dim); self.engine.cpu_backend.compute_u16(qv, cv, metric_type).unwrap_or(f64::NAN) }).collect::<Vec<_>>()).collect::<Vec<_>>() }
+                #[cfg(feature = "rayon")]
+                {
+                    use rayon::prelude::*;
+                    (0..n_queries)
+                        .into_par_iter()
+                        .map(|q| {
+                            (0..n_candidates)
+                                .map(|c| unsafe {
+                                    let qv = std::slice::from_raw_parts(
+                                        (query_addr + q * dim * std::mem::size_of::<u16>())
+                                            as *const u16,
+                                        dim,
+                                    );
+                                    let cv = std::slice::from_raw_parts(
+                                        (candidates_addr + c * dim * std::mem::size_of::<u16>())
+                                            as *const u16,
+                                        dim,
+                                    );
+                                    self.engine
+                                        .cpu_backend
+                                        .compute_u16(qv, cv, metric_type)
+                                        .unwrap_or(f64::NAN)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>()
+                }
+                #[cfg(not(feature = "rayon"))]
+                {
+                    (0..n_queries)
+                        .map(|q| {
+                            (0..n_candidates)
+                                .map(|c| unsafe {
+                                    let qv = std::slice::from_raw_parts(
+                                        (query_addr + q * dim * std::mem::size_of::<u16>())
+                                            as *const u16,
+                                        dim,
+                                    );
+                                    let cv = std::slice::from_raw_parts(
+                                        (candidates_addr + c * dim * std::mem::size_of::<u16>())
+                                            as *const u16,
+                                        dim,
+                                    );
+                                    self.engine
+                                        .cpu_backend
+                                        .compute_u16(qv, cv, metric_type)
+                                        .unwrap_or(f64::NAN)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>()
+                }
             });
             let flat: Vec<f64> = all_scores.into_iter().flatten().collect();
-            let arr2d = ndarray::Array2::from_shape_vec((n_queries, n_candidates), flat).map_err(|e| PyValueError::new_err(format!("Array creation error: {}", e)))?;
+            let arr2d = ndarray::Array2::from_shape_vec((n_queries, n_candidates), flat)
+                .map_err(|e| PyValueError::new_err(format!("Array creation error: {}", e)))?;
             Ok(arr2d.into_pyarray(py).unbind().into_any())
-        } else { Err(PyTypeError::new_err(format!("Query must be 1D or 2D array, got {}D", query_ndim))) }
+        } else {
+            Err(PyTypeError::new_err(format!(
+                "Query must be 1D or 2D array, got {}D",
+                query_ndim
+            )))
+        }
     }
 
     /// u32 batch computation - supports both 1D and 2D query arrays
-    fn batch_compute_u32(&self, py: Python, query: &Bound<'_, PyAny>, candidates: &Bound<'_, PyAny>, metric_type: MetricType) -> PyResult<PyObject> {
+    fn batch_compute_u32(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<PyObject> {
         use numpy::PyArrayMethods;
         let query_arr: PyReadonlyArrayDyn<u32> = query.extract()?;
         let candidates_arr: PyReadonlyArrayDyn<u32> = candidates.extract()?;
         let query_shape = query_arr.shape().to_vec();
         let readonly_candidates = candidates_arr.readonly();
         let cand_shape = readonly_candidates.as_array().shape().to_vec();
-        if cand_shape.len() != 2 { return Err(PyTypeError::new_err("Candidates must be a 2D array")); }
+        if cand_shape.len() != 2 {
+            return Err(PyTypeError::new_err("Candidates must be a 2D array"));
+        }
         let (n_candidates, dim, query_ndim) = (cand_shape[0], cand_shape[1], query_shape.len());
         if query_ndim == 1 {
             let query_slice = query_arr.as_slice()?;
-            if query_slice.len() != dim { return Err(PyValueError::new_err(format!("Query dimension {} does not match candidates dimension {}", query_slice.len(), dim))); }
+            if query_slice.len() != dim {
+                return Err(PyValueError::new_err(format!(
+                    "Query dimension {} does not match candidates dimension {}",
+                    query_slice.len(),
+                    dim
+                )));
+            }
             let candidates_slice = candidates_arr.as_slice()?;
-            let (query_addr, candidates_addr) = (query_slice.as_ptr() as usize, candidates_slice.as_ptr() as usize);
-            let scores = py.allow_threads(|| {
-                #[cfg(feature = "rayon")] { use rayon::prelude::*; (0..n_candidates).into_par_iter().map(|i| unsafe { let q = std::slice::from_raw_parts(query_addr as *const u32, dim); let c = std::slice::from_raw_parts((candidates_addr + i * dim * std::mem::size_of::<u32>()) as *const u32, dim); self.engine.cpu_backend.compute_u32(q, c, metric_type) }).collect::<Result<Vec<_>, _>>() }
-                #[cfg(not(feature = "rayon"))] { (0..n_candidates).map(|i| unsafe { let q = std::slice::from_raw_parts(query_addr as *const u32, dim); let c = std::slice::from_raw_parts((candidates_addr + i * dim * std::mem::size_of::<u32>()) as *const u32, dim); self.engine.cpu_backend.compute_u32(q, c, metric_type) }).collect::<Result<Vec<_>, _>>() }
-            }).map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
+            let (query_addr, candidates_addr) = (
+                query_slice.as_ptr() as usize,
+                candidates_slice.as_ptr() as usize,
+            );
+            let scores = py
+                .allow_threads(|| {
+                    #[cfg(feature = "rayon")]
+                    {
+                        use rayon::prelude::*;
+                        (0..n_candidates)
+                            .into_par_iter()
+                            .map(|i| unsafe {
+                                let q = std::slice::from_raw_parts(query_addr as *const u32, dim);
+                                let c = std::slice::from_raw_parts(
+                                    (candidates_addr + i * dim * std::mem::size_of::<u32>())
+                                        as *const u32,
+                                    dim,
+                                );
+                                self.engine.cpu_backend.compute_u32(q, c, metric_type)
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    }
+                    #[cfg(not(feature = "rayon"))]
+                    {
+                        (0..n_candidates)
+                            .map(|i| unsafe {
+                                let q = std::slice::from_raw_parts(query_addr as *const u32, dim);
+                                let c = std::slice::from_raw_parts(
+                                    (candidates_addr + i * dim * std::mem::size_of::<u32>())
+                                        as *const u32,
+                                    dim,
+                                );
+                                self.engine.cpu_backend.compute_u32(q, c, metric_type)
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    }
+                })
+                .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
             Ok(PyArray1::from_vec(py, scores).unbind().into_any())
         } else if query_ndim == 2 {
             let (n_queries, query_dim) = (query_shape[0], query_shape[1]);
-            if query_dim != dim { return Err(PyValueError::new_err(format!("Query dimension {} does not match candidates dimension {}", query_dim, dim))); }
+            if query_dim != dim {
+                return Err(PyValueError::new_err(format!(
+                    "Query dimension {} does not match candidates dimension {}",
+                    query_dim, dim
+                )));
+            }
             let query_slice = query_arr.as_slice()?;
             let candidates_slice = candidates_arr.as_slice()?;
-            let (query_addr, candidates_addr) = (query_slice.as_ptr() as usize, candidates_slice.as_ptr() as usize);
+            let (query_addr, candidates_addr) = (
+                query_slice.as_ptr() as usize,
+                candidates_slice.as_ptr() as usize,
+            );
             let all_scores = py.allow_threads(|| {
-                #[cfg(feature = "rayon")] { use rayon::prelude::*; (0..n_queries).into_par_iter().map(|q| (0..n_candidates).map(|c| unsafe { let qv = std::slice::from_raw_parts((query_addr + q * dim * std::mem::size_of::<u32>()) as *const u32, dim); let cv = std::slice::from_raw_parts((candidates_addr + c * dim * std::mem::size_of::<u32>()) as *const u32, dim); self.engine.cpu_backend.compute_u32(qv, cv, metric_type).unwrap_or(f64::NAN) }).collect::<Vec<_>>()).collect::<Vec<_>>() }
-                #[cfg(not(feature = "rayon"))] { (0..n_queries).map(|q| (0..n_candidates).map(|c| unsafe { let qv = std::slice::from_raw_parts((query_addr + q * dim * std::mem::size_of::<u32>()) as *const u32, dim); let cv = std::slice::from_raw_parts((candidates_addr + c * dim * std::mem::size_of::<u32>()) as *const u32, dim); self.engine.cpu_backend.compute_u32(qv, cv, metric_type).unwrap_or(f64::NAN) }).collect::<Vec<_>>()).collect::<Vec<_>>() }
+                #[cfg(feature = "rayon")]
+                {
+                    use rayon::prelude::*;
+                    (0..n_queries)
+                        .into_par_iter()
+                        .map(|q| {
+                            (0..n_candidates)
+                                .map(|c| unsafe {
+                                    let qv = std::slice::from_raw_parts(
+                                        (query_addr + q * dim * std::mem::size_of::<u32>())
+                                            as *const u32,
+                                        dim,
+                                    );
+                                    let cv = std::slice::from_raw_parts(
+                                        (candidates_addr + c * dim * std::mem::size_of::<u32>())
+                                            as *const u32,
+                                        dim,
+                                    );
+                                    self.engine
+                                        .cpu_backend
+                                        .compute_u32(qv, cv, metric_type)
+                                        .unwrap_or(f64::NAN)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>()
+                }
+                #[cfg(not(feature = "rayon"))]
+                {
+                    (0..n_queries)
+                        .map(|q| {
+                            (0..n_candidates)
+                                .map(|c| unsafe {
+                                    let qv = std::slice::from_raw_parts(
+                                        (query_addr + q * dim * std::mem::size_of::<u32>())
+                                            as *const u32,
+                                        dim,
+                                    );
+                                    let cv = std::slice::from_raw_parts(
+                                        (candidates_addr + c * dim * std::mem::size_of::<u32>())
+                                            as *const u32,
+                                        dim,
+                                    );
+                                    self.engine
+                                        .cpu_backend
+                                        .compute_u32(qv, cv, metric_type)
+                                        .unwrap_or(f64::NAN)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>()
+                }
             });
             let flat: Vec<f64> = all_scores.into_iter().flatten().collect();
-            let arr2d = ndarray::Array2::from_shape_vec((n_queries, n_candidates), flat).map_err(|e| PyValueError::new_err(format!("Array creation error: {}", e)))?;
+            let arr2d = ndarray::Array2::from_shape_vec((n_queries, n_candidates), flat)
+                .map_err(|e| PyValueError::new_err(format!("Array creation error: {}", e)))?;
             Ok(arr2d.into_pyarray(py).unbind().into_any())
-        } else { Err(PyTypeError::new_err(format!("Query must be 1D or 2D array, got {}D", query_ndim))) }
+        } else {
+            Err(PyTypeError::new_err(format!(
+                "Query must be 1D or 2D array, got {}D",
+                query_ndim
+            )))
+        }
     }
 
     /// u64 batch computation - supports both 1D and 2D query arrays
-    fn batch_compute_u64(&self, py: Python, query: &Bound<'_, PyAny>, candidates: &Bound<'_, PyAny>, metric_type: MetricType) -> PyResult<PyObject> {
+    fn batch_compute_u64(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        candidates: &Bound<'_, PyAny>,
+        metric_type: MetricType,
+    ) -> PyResult<PyObject> {
         use numpy::PyArrayMethods;
         let query_arr: PyReadonlyArrayDyn<u64> = query.extract()?;
         let candidates_arr: PyReadonlyArrayDyn<u64> = candidates.extract()?;
         let query_shape = query_arr.shape().to_vec();
         let readonly_candidates = candidates_arr.readonly();
         let cand_shape = readonly_candidates.as_array().shape().to_vec();
-        if cand_shape.len() != 2 { return Err(PyTypeError::new_err("Candidates must be a 2D array")); }
+        if cand_shape.len() != 2 {
+            return Err(PyTypeError::new_err("Candidates must be a 2D array"));
+        }
         let (n_candidates, dim, query_ndim) = (cand_shape[0], cand_shape[1], query_shape.len());
         if query_ndim == 1 {
             let query_slice = query_arr.as_slice()?;
-            if query_slice.len() != dim { return Err(PyValueError::new_err(format!("Query dimension {} does not match candidates dimension {}", query_slice.len(), dim))); }
+            if query_slice.len() != dim {
+                return Err(PyValueError::new_err(format!(
+                    "Query dimension {} does not match candidates dimension {}",
+                    query_slice.len(),
+                    dim
+                )));
+            }
             let candidates_slice = candidates_arr.as_slice()?;
-            let (query_addr, candidates_addr) = (query_slice.as_ptr() as usize, candidates_slice.as_ptr() as usize);
-            let scores = py.allow_threads(|| {
-                #[cfg(feature = "rayon")] { use rayon::prelude::*; (0..n_candidates).into_par_iter().map(|i| unsafe { let q = std::slice::from_raw_parts(query_addr as *const u64, dim); let c = std::slice::from_raw_parts((candidates_addr + i * dim * std::mem::size_of::<u64>()) as *const u64, dim); self.engine.cpu_backend.compute_u64(q, c, metric_type) }).collect::<Result<Vec<_>, _>>() }
-                #[cfg(not(feature = "rayon"))] { (0..n_candidates).map(|i| unsafe { let q = std::slice::from_raw_parts(query_addr as *const u64, dim); let c = std::slice::from_raw_parts((candidates_addr + i * dim * std::mem::size_of::<u64>()) as *const u64, dim); self.engine.cpu_backend.compute_u64(q, c, metric_type) }).collect::<Result<Vec<_>, _>>() }
-            }).map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
+            let (query_addr, candidates_addr) = (
+                query_slice.as_ptr() as usize,
+                candidates_slice.as_ptr() as usize,
+            );
+            let scores = py
+                .allow_threads(|| {
+                    #[cfg(feature = "rayon")]
+                    {
+                        use rayon::prelude::*;
+                        (0..n_candidates)
+                            .into_par_iter()
+                            .map(|i| unsafe {
+                                let q = std::slice::from_raw_parts(query_addr as *const u64, dim);
+                                let c = std::slice::from_raw_parts(
+                                    (candidates_addr + i * dim * std::mem::size_of::<u64>())
+                                        as *const u64,
+                                    dim,
+                                );
+                                self.engine.cpu_backend.compute_u64(q, c, metric_type)
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    }
+                    #[cfg(not(feature = "rayon"))]
+                    {
+                        (0..n_candidates)
+                            .map(|i| unsafe {
+                                let q = std::slice::from_raw_parts(query_addr as *const u64, dim);
+                                let c = std::slice::from_raw_parts(
+                                    (candidates_addr + i * dim * std::mem::size_of::<u64>())
+                                        as *const u64,
+                                    dim,
+                                );
+                                self.engine.cpu_backend.compute_u64(q, c, metric_type)
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    }
+                })
+                .map_err(|e| PyValueError::new_err(format!("Compute error: {}", e)))?;
             Ok(PyArray1::from_vec(py, scores).unbind().into_any())
         } else if query_ndim == 2 {
             let (n_queries, query_dim) = (query_shape[0], query_shape[1]);
-            if query_dim != dim { return Err(PyValueError::new_err(format!("Query dimension {} does not match candidates dimension {}", query_dim, dim))); }
+            if query_dim != dim {
+                return Err(PyValueError::new_err(format!(
+                    "Query dimension {} does not match candidates dimension {}",
+                    query_dim, dim
+                )));
+            }
             let query_slice = query_arr.as_slice()?;
             let candidates_slice = candidates_arr.as_slice()?;
-            let (query_addr, candidates_addr) = (query_slice.as_ptr() as usize, candidates_slice.as_ptr() as usize);
+            let (query_addr, candidates_addr) = (
+                query_slice.as_ptr() as usize,
+                candidates_slice.as_ptr() as usize,
+            );
             let all_scores = py.allow_threads(|| {
-                #[cfg(feature = "rayon")] { use rayon::prelude::*; (0..n_queries).into_par_iter().map(|q| (0..n_candidates).map(|c| unsafe { let qv = std::slice::from_raw_parts((query_addr + q * dim * std::mem::size_of::<u64>()) as *const u64, dim); let cv = std::slice::from_raw_parts((candidates_addr + c * dim * std::mem::size_of::<u64>()) as *const u64, dim); self.engine.cpu_backend.compute_u64(qv, cv, metric_type).unwrap_or(f64::NAN) }).collect::<Vec<_>>()).collect::<Vec<_>>() }
-                #[cfg(not(feature = "rayon"))] { (0..n_queries).map(|q| (0..n_candidates).map(|c| unsafe { let qv = std::slice::from_raw_parts((query_addr + q * dim * std::mem::size_of::<u64>()) as *const u64, dim); let cv = std::slice::from_raw_parts((candidates_addr + c * dim * std::mem::size_of::<u64>()) as *const u64, dim); self.engine.cpu_backend.compute_u64(qv, cv, metric_type).unwrap_or(f64::NAN) }).collect::<Vec<_>>()).collect::<Vec<_>>() }
+                #[cfg(feature = "rayon")]
+                {
+                    use rayon::prelude::*;
+                    (0..n_queries)
+                        .into_par_iter()
+                        .map(|q| {
+                            (0..n_candidates)
+                                .map(|c| unsafe {
+                                    let qv = std::slice::from_raw_parts(
+                                        (query_addr + q * dim * std::mem::size_of::<u64>())
+                                            as *const u64,
+                                        dim,
+                                    );
+                                    let cv = std::slice::from_raw_parts(
+                                        (candidates_addr + c * dim * std::mem::size_of::<u64>())
+                                            as *const u64,
+                                        dim,
+                                    );
+                                    self.engine
+                                        .cpu_backend
+                                        .compute_u64(qv, cv, metric_type)
+                                        .unwrap_or(f64::NAN)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>()
+                }
+                #[cfg(not(feature = "rayon"))]
+                {
+                    (0..n_queries)
+                        .map(|q| {
+                            (0..n_candidates)
+                                .map(|c| unsafe {
+                                    let qv = std::slice::from_raw_parts(
+                                        (query_addr + q * dim * std::mem::size_of::<u64>())
+                                            as *const u64,
+                                        dim,
+                                    );
+                                    let cv = std::slice::from_raw_parts(
+                                        (candidates_addr + c * dim * std::mem::size_of::<u64>())
+                                            as *const u64,
+                                        dim,
+                                    );
+                                    self.engine
+                                        .cpu_backend
+                                        .compute_u64(qv, cv, metric_type)
+                                        .unwrap_or(f64::NAN)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>()
+                }
             });
             let flat: Vec<f64> = all_scores.into_iter().flatten().collect();
-            let arr2d = ndarray::Array2::from_shape_vec((n_queries, n_candidates), flat).map_err(|e| PyValueError::new_err(format!("Array creation error: {}", e)))?;
+            let arr2d = ndarray::Array2::from_shape_vec((n_queries, n_candidates), flat)
+                .map_err(|e| PyValueError::new_err(format!("Array creation error: {}", e)))?;
             Ok(arr2d.into_pyarray(py).unbind().into_any())
-        } else { Err(PyTypeError::new_err(format!("Query must be 1D or 2D array, got {}D", query_ndim))) }
+        } else {
+            Err(PyTypeError::new_err(format!(
+                "Query must be 1D or 2D array, got {}D",
+                query_ndim
+            )))
+        }
     }
 
     // ========================================================================
@@ -2380,7 +3197,8 @@ impl PyVectorEngine {
                         .into_par_iter()
                         .map(|i| unsafe {
                             let candidate = std::slice::from_raw_parts(
-                                (candidates_addr + i * dim * std::mem::size_of::<f32>()) as *const f32,
+                                (candidates_addr + i * dim * std::mem::size_of::<f32>())
+                                    as *const f32,
                                 dim,
                             );
                             self.engine
@@ -2396,7 +3214,8 @@ impl PyVectorEngine {
                     (0..n_candidates)
                         .map(|i| unsafe {
                             let candidate = std::slice::from_raw_parts(
-                                (candidates_addr + i * dim * std::mem::size_of::<f32>()) as *const f32,
+                                (candidates_addr + i * dim * std::mem::size_of::<f32>())
+                                    as *const f32,
                                 dim,
                             );
                             self.engine
@@ -2505,7 +3324,8 @@ impl PyVectorEngine {
                         .into_par_iter()
                         .map(|i| unsafe {
                             let candidate = std::slice::from_raw_parts(
-                                (candidates_addr + i * dim * std::mem::size_of::<f64>()) as *const f64,
+                                (candidates_addr + i * dim * std::mem::size_of::<f64>())
+                                    as *const f64,
                                 dim,
                             );
                             self.engine
@@ -2521,7 +3341,8 @@ impl PyVectorEngine {
                     (0..n_candidates)
                         .map(|i| unsafe {
                             let candidate = std::slice::from_raw_parts(
-                                (candidates_addr + i * dim * std::mem::size_of::<f64>()) as *const f64,
+                                (candidates_addr + i * dim * std::mem::size_of::<f64>())
+                                    as *const f64,
                                 dim,
                             );
                             self.engine
@@ -2605,62 +3426,59 @@ impl PyVectorEngine {
         let curr_scores_vec: Vec<f64> = current_scores.to_vec();
 
         // Release GIL for parallel computation AND merge
-        let (new_indices, new_scores) = py
-            .allow_threads(|| {
-                // Step 1: Compute all scores
-                let scores: Vec<f64>;
+        let (new_indices, new_scores) = py.allow_threads(|| {
+            // Step 1: Compute all scores
+            let scores: Vec<f64>;
 
-                #[cfg(feature = "rayon")]
-                {
-                    use rayon::prelude::*;
+            #[cfg(feature = "rayon")]
+            {
+                use rayon::prelude::*;
 
-                    scores = (0..n_candidates)
-                        .into_par_iter()
-                        .map(|i| unsafe {
-                            let query = std::slice::from_raw_parts(query_addr as *const f32, dim);
-                            let candidate = std::slice::from_raw_parts(
-                                (candidates_addr + i * dim * std::mem::size_of::<f32>())
-                                    as *const f32,
-                                dim,
-                            );
-                            self.engine
-                                .cpu_backend
-                                .compute_f32(query, candidate, metric_type)
-                                .map(|v| v as f64)
-                                .unwrap_or(f64::NAN)
-                        })
-                        .collect();
-                }
+                scores = (0..n_candidates)
+                    .into_par_iter()
+                    .map(|i| unsafe {
+                        let query = std::slice::from_raw_parts(query_addr as *const f32, dim);
+                        let candidate = std::slice::from_raw_parts(
+                            (candidates_addr + i * dim * std::mem::size_of::<f32>()) as *const f32,
+                            dim,
+                        );
+                        self.engine
+                            .cpu_backend
+                            .compute_f32(query, candidate, metric_type)
+                            .map(|v| v as f64)
+                            .unwrap_or(f64::NAN)
+                    })
+                    .collect();
+            }
 
-                #[cfg(not(feature = "rayon"))]
-                {
-                    scores = (0..n_candidates)
-                        .map(|i| unsafe {
-                            let query = std::slice::from_raw_parts(query_addr as *const f32, dim);
-                            let candidate = std::slice::from_raw_parts(
-                                (candidates_addr + i * dim * std::mem::size_of::<f32>())
-                                    as *const f32,
-                                dim,
-                            );
-                            self.engine
-                                .cpu_backend
-                                .compute_f32(query, candidate, metric_type)
-                                .map(|v| v as f64)
-                                .unwrap_or(f64::NAN)
-                        })
-                        .collect();
-                }
+            #[cfg(not(feature = "rayon"))]
+            {
+                scores = (0..n_candidates)
+                    .map(|i| unsafe {
+                        let query = std::slice::from_raw_parts(query_addr as *const f32, dim);
+                        let candidate = std::slice::from_raw_parts(
+                            (candidates_addr + i * dim * std::mem::size_of::<f32>()) as *const f32,
+                            dim,
+                        );
+                        self.engine
+                            .cpu_backend
+                            .compute_f32(query, candidate, metric_type)
+                            .map(|v| v as f64)
+                            .unwrap_or(f64::NAN)
+                    })
+                    .collect();
+            }
 
-                // Step 2: Merge with current top-k (all in Rust, no FFI overhead)
-                Self::merge_top_k_impl(
-                    &scores,
-                    global_offset,
-                    &curr_idx_vec,
-                    &curr_scores_vec,
-                    k,
-                    is_similarity,
-                )
-            });
+            // Step 2: Merge with current top-k (all in Rust, no FFI overhead)
+            Self::merge_top_k_impl(
+                &scores,
+                global_offset,
+                &curr_idx_vec,
+                &curr_scores_vec,
+                k,
+                is_similarity,
+            )
+        });
 
         Ok((
             PyArray1::from_vec(py, new_indices).into(),
@@ -2717,15 +3535,51 @@ impl PyVectorEngine {
         let curr_scores_vec: Vec<f64> = current_scores.to_vec();
 
         // Release GIL for parallel computation AND merge
-        let (new_indices, new_scores) = py
-            .allow_threads(|| {
-                // Step 1: Compute all scores
-                let scores: Vec<f64>;
+        let (new_indices, new_scores) = py.allow_threads(|| {
+            // Step 1: Compute all scores
+            let scores: Vec<f64>;
 
-                const PARALLEL_THRESHOLD: usize = 500;
+            const PARALLEL_THRESHOLD: usize = 500;
 
-                if n_candidates < PARALLEL_THRESHOLD {
-                    // Serial for small batches
+            if n_candidates < PARALLEL_THRESHOLD {
+                // Serial for small batches
+                scores = (0..n_candidates)
+                    .map(|i| unsafe {
+                        let query = std::slice::from_raw_parts(query_addr as *const f64, dim);
+                        let candidate = std::slice::from_raw_parts(
+                            (candidates_addr + i * dim * std::mem::size_of::<f64>()) as *const f64,
+                            dim,
+                        );
+                        self.engine
+                            .cpu_backend
+                            .compute_f64(query, candidate, metric_type)
+                            .unwrap_or(f64::NAN)
+                    })
+                    .collect();
+            } else {
+                #[cfg(feature = "rayon")]
+                {
+                    use rayon::prelude::*;
+
+                    scores = (0..n_candidates)
+                        .into_par_iter()
+                        .map(|i| unsafe {
+                            let query = std::slice::from_raw_parts(query_addr as *const f64, dim);
+                            let candidate = std::slice::from_raw_parts(
+                                (candidates_addr + i * dim * std::mem::size_of::<f64>())
+                                    as *const f64,
+                                dim,
+                            );
+                            self.engine
+                                .cpu_backend
+                                .compute_f64(query, candidate, metric_type)
+                                .unwrap_or(f64::NAN)
+                        })
+                        .collect();
+                }
+
+                #[cfg(not(feature = "rayon"))]
+                {
                     scores = (0..n_candidates)
                         .map(|i| unsafe {
                             let query = std::slice::from_raw_parts(query_addr as *const f64, dim);
@@ -2740,59 +3594,19 @@ impl PyVectorEngine {
                                 .unwrap_or(f64::NAN)
                         })
                         .collect();
-                } else {
-                    #[cfg(feature = "rayon")]
-                    {
-                        use rayon::prelude::*;
-
-                        scores = (0..n_candidates)
-                            .into_par_iter()
-                            .map(|i| unsafe {
-                                let query =
-                                    std::slice::from_raw_parts(query_addr as *const f64, dim);
-                                let candidate = std::slice::from_raw_parts(
-                                    (candidates_addr + i * dim * std::mem::size_of::<f64>())
-                                        as *const f64,
-                                    dim,
-                                );
-                                self.engine
-                                    .cpu_backend
-                                    .compute_f64(query, candidate, metric_type)
-                                    .unwrap_or(f64::NAN)
-                            })
-                            .collect();
-                    }
-
-                    #[cfg(not(feature = "rayon"))]
-                    {
-                        scores = (0..n_candidates)
-                            .map(|i| unsafe {
-                                let query =
-                                    std::slice::from_raw_parts(query_addr as *const f64, dim);
-                                let candidate = std::slice::from_raw_parts(
-                                    (candidates_addr + i * dim * std::mem::size_of::<f64>())
-                                        as *const f64,
-                                    dim,
-                                );
-                                self.engine
-                                    .cpu_backend
-                                    .compute_f64(query, candidate, metric_type)
-                                    .unwrap_or(f64::NAN)
-                            })
-                            .collect();
-                    }
                 }
+            }
 
-                // Step 2: Merge with current top-k (all in Rust, no FFI overhead)
-                Self::merge_top_k_impl(
-                    &scores,
-                    global_offset,
-                    &curr_idx_vec,
-                    &curr_scores_vec,
-                    k,
-                    is_similarity,
-                )
-            });
+            // Step 2: Merge with current top-k (all in Rust, no FFI overhead)
+            Self::merge_top_k_impl(
+                &scores,
+                global_offset,
+                &curr_idx_vec,
+                &curr_scores_vec,
+                k,
+                is_similarity,
+            )
+        });
 
         Ok((
             PyArray1::from_vec(py, new_indices).into(),
@@ -2839,7 +3653,8 @@ impl PyVectorEngine {
 
         let result = py
             .allow_threads(|| {
-                self.engine.cdist_f64(a_slice, b_slice, m, n, d_a, metric_type)
+                self.engine
+                    .cdist_f64(a_slice, b_slice, m, n, d_a, metric_type)
             })
             .map_err(|e| PyValueError::new_err(format!("cdist error: {}", e)))?;
 
@@ -2883,7 +3698,8 @@ impl PyVectorEngine {
 
         let result = py
             .allow_threads(|| {
-                self.engine.cdist_f32(a_slice, b_slice, m, n, d_a, metric_type)
+                self.engine
+                    .cdist_f32(a_slice, b_slice, m, n, d_a, metric_type)
             })
             .map_err(|e| PyValueError::new_err(format!("cdist error: {}", e)))?;
 
@@ -2924,7 +3740,8 @@ impl PyVectorEngine {
 
         let result = py
             .allow_threads(|| {
-                self.engine.cdist_i8(a_slice, b_slice, m, n, d_a, metric_type)
+                self.engine
+                    .cdist_i8(a_slice, b_slice, m, n, d_a, metric_type)
             })
             .map_err(|e| PyValueError::new_err(format!("cdist error: {}", e)))?;
 
@@ -2973,7 +3790,8 @@ impl PyVectorEngine {
 
         let result = py
             .allow_threads(|| {
-                self.engine.cdist_u8(a_slice, b_slice, m, n, d_a, metric_type)
+                self.engine
+                    .cdist_u8(a_slice, b_slice, m, n, d_a, metric_type)
             })
             .map_err(|e| PyValueError::new_err(format!("cdist error: {}", e)))?;
 
@@ -3015,9 +3833,7 @@ impl PyVectorEngine {
         let b_slice = b_arr.as_slice()?;
 
         let result = py
-            .allow_threads(|| {
-                self.engine.matmul_f64(a_slice, b_slice, m, n, k_a)
-            })
+            .allow_threads(|| self.engine.matmul_f64(a_slice, b_slice, m, n, k_a))
             .map_err(|e| PyValueError::new_err(format!("matmul error: {}", e)))?;
 
         let arr2d = ndarray::Array2::from_shape_vec((m, n), result)
@@ -3058,9 +3874,7 @@ impl PyVectorEngine {
         let b_slice = b_arr.as_slice()?;
 
         let result = py
-            .allow_threads(|| {
-                self.engine.matmul_f32(a_slice, b_slice, m, n, k_a)
-            })
+            .allow_threads(|| self.engine.matmul_f32(a_slice, b_slice, m, n, k_a))
             .map_err(|e| PyValueError::new_err(format!("matmul error: {}", e)))?;
 
         let arr2d = ndarray::Array2::from_shape_vec((m, n), result)
@@ -3309,7 +4123,12 @@ impl PyVectorEngine {
         let scores_slice = scores_readonly.as_slice()?;
 
         let (new_indices, new_scores) = Self::merge_top_k_impl(
-            scores_slice, global_offset, current_indices, current_scores, k, is_similarity,
+            scores_slice,
+            global_offset,
+            current_indices,
+            current_scores,
+            k,
+            is_similarity,
         );
 
         Ok((
@@ -3337,7 +4156,12 @@ impl PyVectorEngine {
         let scores_slice = scores_readonly.as_slice()?;
 
         let (new_indices, new_scores) = Self::merge_top_k_impl(
-            scores_slice, global_offset, current_indices, current_scores, k, is_similarity,
+            scores_slice,
+            global_offset,
+            current_indices,
+            current_scores,
+            k,
+            is_similarity,
         );
 
         Ok((
@@ -3365,7 +4189,12 @@ impl PyVectorEngine {
         let scores_slice = scores_readonly.as_slice()?;
 
         let (new_indices, new_scores) = Self::merge_top_k_impl(
-            scores_slice, global_offset, current_indices, current_scores, k, is_similarity,
+            scores_slice,
+            global_offset,
+            current_indices,
+            current_scores,
+            k,
+            is_similarity,
         );
 
         Ok((
@@ -3393,7 +4222,12 @@ impl PyVectorEngine {
         let scores_slice = scores_readonly.as_slice()?;
 
         let (new_indices, new_scores) = Self::merge_top_k_impl(
-            scores_slice, global_offset, current_indices, current_scores, k, is_similarity,
+            scores_slice,
+            global_offset,
+            current_indices,
+            current_scores,
+            k,
+            is_similarity,
         );
 
         Ok((
@@ -3421,7 +4255,12 @@ impl PyVectorEngine {
         let scores_slice = scores_readonly.as_slice()?;
 
         let (new_indices, new_scores) = Self::merge_top_k_impl(
-            scores_slice, global_offset, current_indices, current_scores, k, is_similarity,
+            scores_slice,
+            global_offset,
+            current_indices,
+            current_scores,
+            k,
+            is_similarity,
         );
 
         Ok((
@@ -3449,7 +4288,12 @@ impl PyVectorEngine {
         let scores_slice = scores_readonly.as_slice()?;
 
         let (new_indices, new_scores) = Self::merge_top_k_impl(
-            scores_slice, global_offset, current_indices, current_scores, k, is_similarity,
+            scores_slice,
+            global_offset,
+            current_indices,
+            current_scores,
+            k,
+            is_similarity,
         );
 
         Ok((
@@ -3477,7 +4321,12 @@ impl PyVectorEngine {
         let scores_slice = scores_readonly.as_slice()?;
 
         let (new_indices, new_scores) = Self::merge_top_k_impl(
-            scores_slice, global_offset, current_indices, current_scores, k, is_similarity,
+            scores_slice,
+            global_offset,
+            current_indices,
+            current_scores,
+            k,
+            is_similarity,
         );
 
         Ok((
@@ -3505,7 +4354,12 @@ impl PyVectorEngine {
         let scores_slice = scores_readonly.as_slice()?;
 
         let (new_indices, new_scores) = Self::merge_top_k_impl(
-            scores_slice, global_offset, current_indices, current_scores, k, is_similarity,
+            scores_slice,
+            global_offset,
+            current_indices,
+            current_scores,
+            k,
+            is_similarity,
         );
 
         Ok((
@@ -3533,7 +4387,12 @@ impl PyVectorEngine {
         let scores_slice = scores_readonly.as_slice()?;
 
         let (new_indices, new_scores) = Self::merge_top_k_impl(
-            scores_slice, global_offset, current_indices, current_scores, k, is_similarity,
+            scores_slice,
+            global_offset,
+            current_indices,
+            current_scores,
+            k,
+            is_similarity,
         );
 
         Ok((
@@ -3783,19 +4642,20 @@ impl PyStreamingVectorEngine {
 
         // Get queries dtype and shape - convert to f32 if necessary
         let queries_dtype = queries.getattr("dtype")?.str()?.to_string();
-        
+
         // Convert non-f32 types to f32
         let queries_bound: std::borrow::Cow<'_, Bound<'_, PyAny>>;
         let queries_ref: &Bound<'_, PyAny>;
-        
+
         match queries_dtype.as_str() {
             "float32" => {
                 queries_ref = queries;
             }
-            "float64" | "float16" | "int8" | "int16" | "int32" | "int64" | "uint8" | "uint16" | "uint32" | "uint64" => {
+            "float64" | "float16" | "int8" | "int16" | "int32" | "int64" | "uint8" | "uint16"
+            | "uint32" | "uint64" => {
                 let numpy = py.import("numpy")?;
                 queries_bound = std::borrow::Cow::Owned(
-                    queries.call_method1("astype", (numpy.getattr("float32")?,))?
+                    queries.call_method1("astype", (numpy.getattr("float32")?,))?,
                 );
                 queries_ref = queries_bound.as_ref();
             }
@@ -3806,7 +4666,7 @@ impl PyStreamingVectorEngine {
                 )));
             }
         }
-        
+
         let queries_arr: PyReadonlyArrayDyn<f32> = queries_ref.extract()?;
 
         let readonly_queries = queries_arr.readonly();
@@ -3858,111 +4718,106 @@ impl PyStreamingVectorEngine {
         let queries_vec: Vec<f32> = queries_slice.to_vec();
 
         // Release GIL for file I/O and computation
-        let (all_indices, all_scores) = py.allow_threads(|| {
-            // Open file and mmap ONCE
-            let file = std::fs::File::open(&data_path)
-                .map_err(|e| format!("Failed to open data file: {}", e))?;
-            let mmap = unsafe {
-                MmapOptions::new()
-                    .map(&file)
-                    .map_err(|e| format!("Failed to mmap: {}", e))?
-            };
+        let (all_indices, all_scores) = py
+            .allow_threads(|| {
+                // Open file and mmap ONCE
+                let file = std::fs::File::open(&data_path)
+                    .map_err(|e| format!("Failed to open data file: {}", e))?;
+                let mmap = unsafe {
+                    MmapOptions::new()
+                        .map(&file)
+                        .map_err(|e| format!("Failed to mmap: {}", e))?
+                };
 
-            // Advise kernel for sequential access
-            #[cfg(unix)]
-            {
-                unsafe {
-                    libc::madvise(
-                        mmap.as_ptr() as *mut libc::c_void,
-                        mmap.len(),
-                        libc::MADV_SEQUENTIAL,
-                    );
+                // Advise kernel for sequential access
+                #[cfg(unix)]
+                {
+                    unsafe {
+                        libc::madvise(
+                            mmap.as_ptr() as *mut libc::c_void,
+                            mmap.len(),
+                            libc::MADV_SEQUENTIAL,
+                        );
+                    }
                 }
-            }
 
-            let row_bytes = dim * std::mem::size_of::<f32>();
-            let mmap_ptr = mmap.as_ptr() as usize;
-            let mmap_len = mmap.len();
+                let row_bytes = dim * std::mem::size_of::<f32>();
+                let mmap_ptr = mmap.as_ptr() as usize;
+                let mmap_len = mmap.len();
 
-            // Process all queries
-            let mut all_indices: Vec<Vec<u64>> = Vec::with_capacity(n_queries);
-            let mut all_scores: Vec<Vec<f64>> = Vec::with_capacity(n_queries);
+                // Process all queries
+                let mut all_indices: Vec<Vec<u64>> = Vec::with_capacity(n_queries);
+                let mut all_scores: Vec<Vec<f64>> = Vec::with_capacity(n_queries);
 
-            for q_idx in 0..n_queries {
-                let query_start = q_idx * dim;
-                let query_vec: Vec<f32> = queries_vec[query_start..query_start + dim].to_vec();
+                for q_idx in 0..n_queries {
+                    let query_start = q_idx * dim;
+                    let query_vec: Vec<f32> = queries_vec[query_start..query_start + dim].to_vec();
 
-                // Single-pass parallel processing for this query
-                #[cfg(feature = "rayon")]
-                let scores: Vec<f64> = {
-                    use rayon::prelude::*;
-                    
-                    (0..total_rows)
-                        .into_par_iter()
-                        .map(|row_idx| {
-                            let offset = row_idx * row_bytes;
+                    // Single-pass parallel processing for this query
+                    #[cfg(feature = "rayon")]
+                    let scores: Vec<f64> = {
+                        use rayon::prelude::*;
 
-                            if offset + row_bytes > mmap_len {
-                                return f64::NAN;
-                            }
+                        (0..total_rows)
+                            .into_par_iter()
+                            .map(|row_idx| {
+                                let offset = row_idx * row_bytes;
 
-                            let candidate = unsafe {
-                                std::slice::from_raw_parts(
-                                    (mmap_ptr + offset) as *const f32,
-                                    dim,
-                                )
-                            };
+                                if offset + row_bytes > mmap_len {
+                                    return f64::NAN;
+                                }
 
-                            self.engine
-                                .cpu_backend
-                                .compute_f32(&query_vec, candidate, metric_type)
-                                .unwrap_or(f32::NAN) as f64
-                        })
-                        .collect()
-                };
+                                let candidate = unsafe {
+                                    std::slice::from_raw_parts(
+                                        (mmap_ptr + offset) as *const f32,
+                                        dim,
+                                    )
+                                };
 
-                #[cfg(not(feature = "rayon"))]
-                let scores: Vec<f64> = {
-                    (0..total_rows)
-                        .map(|row_idx| {
-                            let offset = row_idx * row_bytes;
+                                self.engine
+                                    .cpu_backend
+                                    .compute_f32(&query_vec, candidate, metric_type)
+                                    .unwrap_or(f32::NAN) as f64
+                            })
+                            .collect()
+                    };
 
-                            if offset + row_bytes > mmap_len {
-                                return f64::NAN;
-                            }
+                    #[cfg(not(feature = "rayon"))]
+                    let scores: Vec<f64> = {
+                        (0..total_rows)
+                            .map(|row_idx| {
+                                let offset = row_idx * row_bytes;
 
-                            let candidate = unsafe {
-                                std::slice::from_raw_parts(
-                                    (mmap_ptr + offset) as *const f32,
-                                    dim,
-                                )
-                            };
+                                if offset + row_bytes > mmap_len {
+                                    return f64::NAN;
+                                }
 
-                            self.engine
-                                .cpu_backend
-                                .compute_f32(&query_vec, candidate, metric_type)
-                                .unwrap_or(f32::NAN) as f64
-                        })
-                        .collect()
-                };
+                                let candidate = unsafe {
+                                    std::slice::from_raw_parts(
+                                        (mmap_ptr + offset) as *const f32,
+                                        dim,
+                                    )
+                                };
 
-                // Merge to get top-k for this query
-                let (indices, query_scores) = Self::merge_top_k_impl(
-                    &scores,
-                    0,
-                    &[],
-                    &[],
-                    k,
-                    is_similarity,
-                );
+                                self.engine
+                                    .cpu_backend
+                                    .compute_f32(&query_vec, candidate, metric_type)
+                                    .unwrap_or(f32::NAN) as f64
+                            })
+                            .collect()
+                    };
 
-                all_indices.push(indices);
-                all_scores.push(query_scores);
-            }
+                    // Merge to get top-k for this query
+                    let (indices, query_scores) =
+                        Self::merge_top_k_impl(&scores, 0, &[], &[], k, is_similarity);
 
-            Ok::<_, String>((all_indices, all_scores))
-        })
-        .map_err(|e| PyValueError::new_err(e))?;
+                    all_indices.push(indices);
+                    all_scores.push(query_scores);
+                }
+
+                Ok::<_, String>((all_indices, all_scores))
+            })
+            .map_err(|e| PyValueError::new_err(e))?;
 
         // Convert to flat 1D numpy arrays (will be reshaped in Python if needed)
         // Format: [q0_idx0, q0_idx1, ..., q0_idxK, q1_idx0, q1_idx1, ..., qN_idxK]
@@ -4046,185 +4901,180 @@ impl PyStreamingVectorEngine {
         let is_similarity = metric_type.is_similarity();
 
         // Release GIL for file I/O and computation
-        let (indices, scores) = py.allow_threads(|| {
-            // Memory map the data file
-            let file = std::fs::File::open(&data_path)
-                .map_err(|e| format!("Failed to open data file: {}", e))?;
-            let mmap = unsafe {
-                MmapOptions::new()
-                    .map(&file)
-                    .map_err(|e| format!("Failed to mmap: {}", e))?
-            };
+        let (indices, scores) = py
+            .allow_threads(|| {
+                // Memory map the data file
+                let file = std::fs::File::open(&data_path)
+                    .map_err(|e| format!("Failed to open data file: {}", e))?;
+                let mmap = unsafe {
+                    MmapOptions::new()
+                        .map(&file)
+                        .map_err(|e| format!("Failed to mmap: {}", e))?
+                };
 
-            // Advise kernel for sequential access (improves read-ahead)
-            #[cfg(unix)]
-            {
-                unsafe {
-                    libc::madvise(
-                        mmap.as_ptr() as *mut libc::c_void,
-                        mmap.len(),
-                        libc::MADV_SEQUENTIAL,
-                    );
+                // Advise kernel for sequential access (improves read-ahead)
+                #[cfg(unix)]
+                {
+                    unsafe {
+                        libc::madvise(
+                            mmap.as_ptr() as *mut libc::c_void,
+                            mmap.len(),
+                            libc::MADV_SEQUENTIAL,
+                        );
+                    }
                 }
-            }
 
-            let row_bytes = dim * std::mem::size_of::<f32>();
-            let mmap_ptr = mmap.as_ptr() as usize;
-            let mmap_len = mmap.len();
+                let row_bytes = dim * std::mem::size_of::<f32>();
+                let mmap_ptr = mmap.as_ptr() as usize;
+                let mmap_len = mmap.len();
 
-            // Optimization: if data is small enough, process all at once to avoid batch overhead
-            // This eliminates multiple merge_top_k calls
-            const SINGLE_PASS_THRESHOLD: usize = 200000;  // ~100MB for dim=128
+                // Optimization: if data is small enough, process all at once to avoid batch overhead
+                // This eliminates multiple merge_top_k calls
+                const SINGLE_PASS_THRESHOLD: usize = 200000; // ~100MB for dim=128
 
-            if total_rows <= SINGLE_PASS_THRESHOLD {
-                // Single-pass parallel processing for better cache utilization
-                #[cfg(feature = "rayon")]
-                let all_scores: Vec<f64> = {
-                    use rayon::prelude::*;
-                    
-                    (0..total_rows)
-                        .into_par_iter()
-                        .map(|row_idx| {
-                            let offset = row_idx * row_bytes;
+                if total_rows <= SINGLE_PASS_THRESHOLD {
+                    // Single-pass parallel processing for better cache utilization
+                    #[cfg(feature = "rayon")]
+                    let all_scores: Vec<f64> = {
+                        use rayon::prelude::*;
 
-                            if offset + row_bytes > mmap_len {
-                                return f64::NAN;
-                            }
+                        (0..total_rows)
+                            .into_par_iter()
+                            .map(|row_idx| {
+                                let offset = row_idx * row_bytes;
 
-                            let candidate = unsafe {
-                                std::slice::from_raw_parts(
-                                    (mmap_ptr + offset) as *const f32,
-                                    dim,
-                                )
-                            };
+                                if offset + row_bytes > mmap_len {
+                                    return f64::NAN;
+                                }
 
-                            self.engine
-                                .cpu_backend
-                                .compute_f32(&query_vec, candidate, metric_type)
-                                .unwrap_or(f32::NAN) as f64
-                        })
-                        .collect()
-                };
+                                let candidate = unsafe {
+                                    std::slice::from_raw_parts(
+                                        (mmap_ptr + offset) as *const f32,
+                                        dim,
+                                    )
+                                };
 
-                #[cfg(not(feature = "rayon"))]
-                let all_scores: Vec<f64> = {
-                    (0..total_rows)
-                        .map(|row_idx| {
-                            let offset = row_idx * row_bytes;
+                                self.engine
+                                    .cpu_backend
+                                    .compute_f32(&query_vec, candidate, metric_type)
+                                    .unwrap_or(f32::NAN) as f64
+                            })
+                            .collect()
+                    };
 
-                            if offset + row_bytes > mmap_len {
-                                return f64::NAN;
-                            }
+                    #[cfg(not(feature = "rayon"))]
+                    let all_scores: Vec<f64> = {
+                        (0..total_rows)
+                            .map(|row_idx| {
+                                let offset = row_idx * row_bytes;
 
-                            let candidate = unsafe {
-                                std::slice::from_raw_parts(
-                                    (mmap_ptr + offset) as *const f32,
-                                    dim,
-                                )
-                            };
+                                if offset + row_bytes > mmap_len {
+                                    return f64::NAN;
+                                }
 
-                            self.engine
-                                .cpu_backend
-                                .compute_f32(&query_vec, candidate, metric_type)
-                                .unwrap_or(f32::NAN) as f64
-                        })
-                        .collect()
-                };
+                                let candidate = unsafe {
+                                    std::slice::from_raw_parts(
+                                        (mmap_ptr + offset) as *const f32,
+                                        dim,
+                                    )
+                                };
 
-                // Single merge call for all scores
-                let (indices, scores) = Self::merge_top_k_impl(
-                    &all_scores,
-                    0,
-                    &[],
-                    &[],
-                    k,
-                    is_similarity,
-                );
+                                self.engine
+                                    .cpu_backend
+                                    .compute_f32(&query_vec, candidate, metric_type)
+                                    .unwrap_or(f32::NAN) as f64
+                            })
+                            .collect()
+                    };
 
-                return Ok((indices, scores));
-            }
+                    // Single merge call for all scores
+                    let (indices, scores) =
+                        Self::merge_top_k_impl(&all_scores, 0, &[], &[], k, is_similarity);
 
-            // For very large datasets, use batched processing
-            let mut current_indices: Vec<u64> = Vec::new();
-            let mut current_scores: Vec<f64> = Vec::new();
+                    return Ok((indices, scores));
+                }
 
-            for batch_start in (0..total_rows).step_by(batch_size) {
-                let batch_end = (batch_start + batch_size).min(total_rows);
-                let batch_count = batch_end - batch_start;
+                // For very large datasets, use batched processing
+                let mut current_indices: Vec<u64> = Vec::new();
+                let mut current_scores: Vec<f64> = Vec::new();
 
-                // Always use parallel for streaming (data is large)
-                #[cfg(feature = "rayon")]
-                let batch_scores: Vec<f64> = {
-                    use rayon::prelude::*;
-                    
-                    (0..batch_count)
-                        .into_par_iter()
-                        .map(|i| {
-                            let row_idx = batch_start + i;
-                            let offset = row_idx * row_bytes;
+                for batch_start in (0..total_rows).step_by(batch_size) {
+                    let batch_end = (batch_start + batch_size).min(total_rows);
+                    let batch_count = batch_end - batch_start;
 
-                            if offset + row_bytes > mmap_len {
-                                return f64::NAN;
-                            }
+                    // Always use parallel for streaming (data is large)
+                    #[cfg(feature = "rayon")]
+                    let batch_scores: Vec<f64> = {
+                        use rayon::prelude::*;
 
-                            let candidate = unsafe {
-                                std::slice::from_raw_parts(
-                                    (mmap_ptr + offset) as *const f32,
-                                    dim,
-                                )
-                            };
+                        (0..batch_count)
+                            .into_par_iter()
+                            .map(|i| {
+                                let row_idx = batch_start + i;
+                                let offset = row_idx * row_bytes;
 
-                            self.engine
-                                .cpu_backend
-                                .compute_f32(&query_vec, candidate, metric_type)
-                                .unwrap_or(f32::NAN) as f64
-                        })
-                        .collect()
-                };
+                                if offset + row_bytes > mmap_len {
+                                    return f64::NAN;
+                                }
 
-                #[cfg(not(feature = "rayon"))]
-                let batch_scores: Vec<f64> = {
-                    (0..batch_count)
-                        .map(|i| {
-                            let row_idx = batch_start + i;
-                            let offset = row_idx * row_bytes;
+                                let candidate = unsafe {
+                                    std::slice::from_raw_parts(
+                                        (mmap_ptr + offset) as *const f32,
+                                        dim,
+                                    )
+                                };
 
-                            if offset + row_bytes > mmap_len {
-                                return f64::NAN;
-                            }
+                                self.engine
+                                    .cpu_backend
+                                    .compute_f32(&query_vec, candidate, metric_type)
+                                    .unwrap_or(f32::NAN) as f64
+                            })
+                            .collect()
+                    };
 
-                            let candidate = unsafe {
-                                std::slice::from_raw_parts(
-                                    (mmap_ptr + offset) as *const f32,
-                                    dim,
-                                )
-                            };
+                    #[cfg(not(feature = "rayon"))]
+                    let batch_scores: Vec<f64> = {
+                        (0..batch_count)
+                            .map(|i| {
+                                let row_idx = batch_start + i;
+                                let offset = row_idx * row_bytes;
 
-                            self.engine
-                                .cpu_backend
-                                .compute_f32(&query_vec, candidate, metric_type)
-                                .unwrap_or(f32::NAN) as f64
-                        })
-                        .collect()
-                };
+                                if offset + row_bytes > mmap_len {
+                                    return f64::NAN;
+                                }
 
-                // Merge with current top-k
-                let (new_indices, new_scores) = Self::merge_top_k_impl(
-                    &batch_scores,
-                    batch_start as u64,
-                    &current_indices,
-                    &current_scores,
-                    k,
-                    is_similarity,
-                );
+                                let candidate = unsafe {
+                                    std::slice::from_raw_parts(
+                                        (mmap_ptr + offset) as *const f32,
+                                        dim,
+                                    )
+                                };
 
-                current_indices = new_indices;
-                current_scores = new_scores;
-            }
+                                self.engine
+                                    .cpu_backend
+                                    .compute_f32(&query_vec, candidate, metric_type)
+                                    .unwrap_or(f32::NAN) as f64
+                            })
+                            .collect()
+                    };
 
-            Ok::<_, String>((current_indices, current_scores))
-        })
-        .map_err(|e| PyValueError::new_err(e))?;
+                    // Merge with current top-k
+                    let (new_indices, new_scores) = Self::merge_top_k_impl(
+                        &batch_scores,
+                        batch_start as u64,
+                        &current_indices,
+                        &current_scores,
+                        k,
+                        is_similarity,
+                    );
+
+                    current_indices = new_indices;
+                    current_scores = new_scores;
+                }
+
+                Ok::<_, String>((current_indices, current_scores))
+            })
+            .map_err(|e| PyValueError::new_err(e))?;
 
         Ok((
             PyArray1::from_vec(py, indices).into(),
@@ -4284,182 +5134,177 @@ impl PyStreamingVectorEngine {
         let is_similarity = metric_type.is_similarity();
 
         // Release GIL
-        let (indices, scores) = py.allow_threads(|| {
-            let file = std::fs::File::open(&data_path)
-                .map_err(|e| format!("Failed to open data file: {}", e))?;
-            let mmap = unsafe {
-                MmapOptions::new()
-                    .map(&file)
-                    .map_err(|e| format!("Failed to mmap: {}", e))?
-            };
+        let (indices, scores) = py
+            .allow_threads(|| {
+                let file = std::fs::File::open(&data_path)
+                    .map_err(|e| format!("Failed to open data file: {}", e))?;
+                let mmap = unsafe {
+                    MmapOptions::new()
+                        .map(&file)
+                        .map_err(|e| format!("Failed to mmap: {}", e))?
+                };
 
-            // Advise kernel for sequential access (improves read-ahead)
-            #[cfg(unix)]
-            {
-                unsafe {
-                    libc::madvise(
-                        mmap.as_ptr() as *mut libc::c_void,
-                        mmap.len(),
-                        libc::MADV_SEQUENTIAL,
-                    );
+                // Advise kernel for sequential access (improves read-ahead)
+                #[cfg(unix)]
+                {
+                    unsafe {
+                        libc::madvise(
+                            mmap.as_ptr() as *mut libc::c_void,
+                            mmap.len(),
+                            libc::MADV_SEQUENTIAL,
+                        );
+                    }
                 }
-            }
 
-            let row_bytes = dim * std::mem::size_of::<f64>();
-            let mmap_ptr = mmap.as_ptr() as usize;
-            let mmap_len = mmap.len();
+                let row_bytes = dim * std::mem::size_of::<f64>();
+                let mmap_ptr = mmap.as_ptr() as usize;
+                let mmap_len = mmap.len();
 
-            // Optimization: if data is small enough, process all at once to avoid batch overhead
-            const SINGLE_PASS_THRESHOLD: usize = 200000;
+                // Optimization: if data is small enough, process all at once to avoid batch overhead
+                const SINGLE_PASS_THRESHOLD: usize = 200000;
 
-            if total_rows <= SINGLE_PASS_THRESHOLD {
-                // Single-pass parallel processing
-                #[cfg(feature = "rayon")]
-                let all_scores: Vec<f64> = {
-                    use rayon::prelude::*;
-                    
-                    (0..total_rows)
-                        .into_par_iter()
-                        .map(|row_idx| {
-                            let offset = row_idx * row_bytes;
+                if total_rows <= SINGLE_PASS_THRESHOLD {
+                    // Single-pass parallel processing
+                    #[cfg(feature = "rayon")]
+                    let all_scores: Vec<f64> = {
+                        use rayon::prelude::*;
 
-                            if offset + row_bytes > mmap_len {
-                                return f64::NAN;
-                            }
+                        (0..total_rows)
+                            .into_par_iter()
+                            .map(|row_idx| {
+                                let offset = row_idx * row_bytes;
 
-                            let candidate = unsafe {
-                                std::slice::from_raw_parts(
-                                    (mmap_ptr + offset) as *const f64,
-                                    dim,
-                                )
-                            };
+                                if offset + row_bytes > mmap_len {
+                                    return f64::NAN;
+                                }
 
-                            self.engine
-                                .cpu_backend
-                                .compute_f64(&query_vec, candidate, metric_type)
-                                .unwrap_or(f64::NAN)
-                        })
-                        .collect()
-                };
+                                let candidate = unsafe {
+                                    std::slice::from_raw_parts(
+                                        (mmap_ptr + offset) as *const f64,
+                                        dim,
+                                    )
+                                };
 
-                #[cfg(not(feature = "rayon"))]
-                let all_scores: Vec<f64> = {
-                    (0..total_rows)
-                        .map(|row_idx| {
-                            let offset = row_idx * row_bytes;
+                                self.engine
+                                    .cpu_backend
+                                    .compute_f64(&query_vec, candidate, metric_type)
+                                    .unwrap_or(f64::NAN)
+                            })
+                            .collect()
+                    };
 
-                            if offset + row_bytes > mmap_len {
-                                return f64::NAN;
-                            }
+                    #[cfg(not(feature = "rayon"))]
+                    let all_scores: Vec<f64> = {
+                        (0..total_rows)
+                            .map(|row_idx| {
+                                let offset = row_idx * row_bytes;
 
-                            let candidate = unsafe {
-                                std::slice::from_raw_parts(
-                                    (mmap_ptr + offset) as *const f64,
-                                    dim,
-                                )
-                            };
+                                if offset + row_bytes > mmap_len {
+                                    return f64::NAN;
+                                }
 
-                            self.engine
-                                .cpu_backend
-                                .compute_f64(&query_vec, candidate, metric_type)
-                                .unwrap_or(f64::NAN)
-                        })
-                        .collect()
-                };
+                                let candidate = unsafe {
+                                    std::slice::from_raw_parts(
+                                        (mmap_ptr + offset) as *const f64,
+                                        dim,
+                                    )
+                                };
 
-                // Single merge call for all scores
-                let (indices, scores) = Self::merge_top_k_impl(
-                    &all_scores,
-                    0,
-                    &[],
-                    &[],
-                    k,
-                    is_similarity,
-                );
+                                self.engine
+                                    .cpu_backend
+                                    .compute_f64(&query_vec, candidate, metric_type)
+                                    .unwrap_or(f64::NAN)
+                            })
+                            .collect()
+                    };
 
-                return Ok((indices, scores));
-            }
+                    // Single merge call for all scores
+                    let (indices, scores) =
+                        Self::merge_top_k_impl(&all_scores, 0, &[], &[], k, is_similarity);
 
-            // For very large datasets, use batched processing
-            let mut current_indices: Vec<u64> = Vec::new();
-            let mut current_scores: Vec<f64> = Vec::new();
+                    return Ok((indices, scores));
+                }
 
-            for batch_start in (0..total_rows).step_by(batch_size) {
-                let batch_end = (batch_start + batch_size).min(total_rows);
-                let batch_count = batch_end - batch_start;
+                // For very large datasets, use batched processing
+                let mut current_indices: Vec<u64> = Vec::new();
+                let mut current_scores: Vec<f64> = Vec::new();
 
-                // Always use parallel for streaming (data is large)
-                #[cfg(feature = "rayon")]
-                let batch_scores: Vec<f64> = {
-                    use rayon::prelude::*;
-                    
-                    (0..batch_count)
-                        .into_par_iter()
-                        .map(|i| {
-                            let row_idx = batch_start + i;
-                            let offset = row_idx * row_bytes;
+                for batch_start in (0..total_rows).step_by(batch_size) {
+                    let batch_end = (batch_start + batch_size).min(total_rows);
+                    let batch_count = batch_end - batch_start;
 
-                            if offset + row_bytes > mmap_len {
-                                return f64::NAN;
-                            }
+                    // Always use parallel for streaming (data is large)
+                    #[cfg(feature = "rayon")]
+                    let batch_scores: Vec<f64> = {
+                        use rayon::prelude::*;
 
-                            let candidate = unsafe {
-                                std::slice::from_raw_parts(
-                                    (mmap_ptr + offset) as *const f64,
-                                    dim,
-                                )
-                            };
+                        (0..batch_count)
+                            .into_par_iter()
+                            .map(|i| {
+                                let row_idx = batch_start + i;
+                                let offset = row_idx * row_bytes;
 
-                            self.engine
-                                .cpu_backend
-                                .compute_f64(&query_vec, candidate, metric_type)
-                                .unwrap_or(f64::NAN)
-                        })
-                        .collect()
-                };
+                                if offset + row_bytes > mmap_len {
+                                    return f64::NAN;
+                                }
 
-                #[cfg(not(feature = "rayon"))]
-                let batch_scores: Vec<f64> = {
-                    (0..batch_count)
-                        .map(|i| {
-                            let row_idx = batch_start + i;
-                            let offset = row_idx * row_bytes;
+                                let candidate = unsafe {
+                                    std::slice::from_raw_parts(
+                                        (mmap_ptr + offset) as *const f64,
+                                        dim,
+                                    )
+                                };
 
-                            if offset + row_bytes > mmap_len {
-                                return f64::NAN;
-                            }
+                                self.engine
+                                    .cpu_backend
+                                    .compute_f64(&query_vec, candidate, metric_type)
+                                    .unwrap_or(f64::NAN)
+                            })
+                            .collect()
+                    };
 
-                            let candidate = unsafe {
-                                std::slice::from_raw_parts(
-                                    (mmap_ptr + offset) as *const f64,
-                                    dim,
-                                )
-                            };
+                    #[cfg(not(feature = "rayon"))]
+                    let batch_scores: Vec<f64> = {
+                        (0..batch_count)
+                            .map(|i| {
+                                let row_idx = batch_start + i;
+                                let offset = row_idx * row_bytes;
 
-                            self.engine
-                                .cpu_backend
-                                .compute_f64(&query_vec, candidate, metric_type)
-                                .unwrap_or(f64::NAN)
-                        })
-                        .collect()
-                };
+                                if offset + row_bytes > mmap_len {
+                                    return f64::NAN;
+                                }
 
-                let (new_indices, new_scores) = Self::merge_top_k_impl(
-                    &batch_scores,
-                    batch_start as u64,
-                    &current_indices,
-                    &current_scores,
-                    k,
-                    is_similarity,
-                );
+                                let candidate = unsafe {
+                                    std::slice::from_raw_parts(
+                                        (mmap_ptr + offset) as *const f64,
+                                        dim,
+                                    )
+                                };
 
-                current_indices = new_indices;
-                current_scores = new_scores;
-            }
+                                self.engine
+                                    .cpu_backend
+                                    .compute_f64(&query_vec, candidate, metric_type)
+                                    .unwrap_or(f64::NAN)
+                            })
+                            .collect()
+                    };
 
-            Ok::<_, String>((current_indices, current_scores))
-        })
-        .map_err(|e| PyValueError::new_err(e))?;
+                    let (new_indices, new_scores) = Self::merge_top_k_impl(
+                        &batch_scores,
+                        batch_start as u64,
+                        &current_indices,
+                        &current_scores,
+                        k,
+                        is_similarity,
+                    );
+
+                    current_indices = new_indices;
+                    current_scores = new_scores;
+                }
+
+                Ok::<_, String>((current_indices, current_scores))
+            })
+            .map_err(|e| PyValueError::new_err(e))?;
 
         Ok((
             PyArray1::from_vec(py, indices).into(),
@@ -4481,10 +5326,17 @@ impl PyStreamingVectorEngine {
         let query_arr: PyReadonlyArrayDyn<f32> = query.extract()?;
         let query_shape = query_arr.shape().to_vec();
         let query_ndim = query_shape.len();
-        
+
         // Determine dimension based on query shape
-        let dim = if query_ndim == 1 { query_shape[0] } else if query_ndim == 2 { query_shape[1] } else {
-            return Err(PyTypeError::new_err(format!("Query must be 1D or 2D array, got {}D", query_ndim)));
+        let dim = if query_ndim == 1 {
+            query_shape[0]
+        } else if query_ndim == 2 {
+            query_shape[1]
+        } else {
+            return Err(PyTypeError::new_err(format!(
+                "Query must be 1D or 2D array, got {}D",
+                query_ndim
+            )));
         };
 
         // Load metadata
@@ -4504,9 +5356,16 @@ impl PyStreamingVectorEngine {
             )));
         }
 
-        let array_dim = if array_meta.shape.len() > 1 { array_meta.shape[1] as usize } else { 1 };
+        let array_dim = if array_meta.shape.len() > 1 {
+            array_meta.shape[1] as usize
+        } else {
+            1
+        };
         if array_dim != dim {
-            return Err(PyValueError::new_err(format!("Dimension mismatch: query dim {} vs array dim {}", dim, array_dim)));
+            return Err(PyValueError::new_err(format!(
+                "Dimension mismatch: query dim {} vs array dim {}",
+                dim, array_dim
+            )));
         }
 
         let total_rows = array_meta.shape[0] as usize;
@@ -4515,60 +5374,221 @@ impl PyStreamingVectorEngine {
 
         if query_ndim == 1 {
             let query_vec: Vec<f32> = query_slice.to_vec();
-            let scores = py.allow_threads(|| {
-                let file = std::fs::File::open(&data_path).map_err(|e| format!("Failed to open data file: {}", e))?;
-                let mmap = unsafe { MmapOptions::new().map(&file).map_err(|e| format!("Failed to mmap: {}", e))? };
-                #[cfg(unix)] { unsafe { libc::madvise(mmap.as_ptr() as *mut libc::c_void, mmap.len(), libc::MADV_SEQUENTIAL); } }
-                let (row_bytes, mmap_ptr, mmap_len) = (dim * std::mem::size_of::<f32>(), mmap.as_ptr() as usize, mmap.len());
-                #[cfg(feature = "rayon")]
-                let all_scores: Vec<f64> = { use rayon::prelude::*; (0..total_rows).into_par_iter().map(|row_idx| { let offset = row_idx * row_bytes; if offset + row_bytes > mmap_len { return f64::NAN; } let candidate = unsafe { std::slice::from_raw_parts((mmap_ptr + offset) as *const f32, dim) }; self.engine.cpu_backend.compute_f32(&query_vec, candidate, metric_type).unwrap_or(f32::NAN) as f64 }).collect() };
-                #[cfg(not(feature = "rayon"))]
-                let all_scores: Vec<f64> = { (0..total_rows).map(|row_idx| { let offset = row_idx * row_bytes; if offset + row_bytes > mmap_len { return f64::NAN; } let candidate = unsafe { std::slice::from_raw_parts((mmap_ptr + offset) as *const f32, dim) }; self.engine.cpu_backend.compute_f32(&query_vec, candidate, metric_type).unwrap_or(f32::NAN) as f64 }).collect() };
-                Ok::<_, String>(all_scores)
-            }).map_err(|e| PyValueError::new_err(e))?;
+            let scores = py
+                .allow_threads(|| {
+                    let file = std::fs::File::open(&data_path)
+                        .map_err(|e| format!("Failed to open data file: {}", e))?;
+                    let mmap = unsafe {
+                        MmapOptions::new()
+                            .map(&file)
+                            .map_err(|e| format!("Failed to mmap: {}", e))?
+                    };
+                    #[cfg(unix)]
+                    {
+                        unsafe {
+                            libc::madvise(
+                                mmap.as_ptr() as *mut libc::c_void,
+                                mmap.len(),
+                                libc::MADV_SEQUENTIAL,
+                            );
+                        }
+                    }
+                    let (row_bytes, mmap_ptr, mmap_len) = (
+                        dim * std::mem::size_of::<f32>(),
+                        mmap.as_ptr() as usize,
+                        mmap.len(),
+                    );
+                    #[cfg(feature = "rayon")]
+                    let all_scores: Vec<f64> = {
+                        use rayon::prelude::*;
+                        (0..total_rows)
+                            .into_par_iter()
+                            .map(|row_idx| {
+                                let offset = row_idx * row_bytes;
+                                if offset + row_bytes > mmap_len {
+                                    return f64::NAN;
+                                }
+                                let candidate = unsafe {
+                                    std::slice::from_raw_parts(
+                                        (mmap_ptr + offset) as *const f32,
+                                        dim,
+                                    )
+                                };
+                                self.engine
+                                    .cpu_backend
+                                    .compute_f32(&query_vec, candidate, metric_type)
+                                    .unwrap_or(f32::NAN) as f64
+                            })
+                            .collect()
+                    };
+                    #[cfg(not(feature = "rayon"))]
+                    let all_scores: Vec<f64> = {
+                        (0..total_rows)
+                            .map(|row_idx| {
+                                let offset = row_idx * row_bytes;
+                                if offset + row_bytes > mmap_len {
+                                    return f64::NAN;
+                                }
+                                let candidate = unsafe {
+                                    std::slice::from_raw_parts(
+                                        (mmap_ptr + offset) as *const f32,
+                                        dim,
+                                    )
+                                };
+                                self.engine
+                                    .cpu_backend
+                                    .compute_f32(&query_vec, candidate, metric_type)
+                                    .unwrap_or(f32::NAN) as f64
+                            })
+                            .collect()
+                    };
+                    Ok::<_, String>(all_scores)
+                })
+                .map_err(|e| PyValueError::new_err(e))?;
             Ok(PyArray1::from_vec(py, scores).unbind().into_any())
         } else {
             // 2D query: process each query vector
             let n_queries = query_shape[0];
             let query_data: Vec<f32> = query_slice.to_vec();
-            let all_results = py.allow_threads(|| {
-                let file = std::fs::File::open(&data_path).map_err(|e| format!("Failed to open data file: {}", e))?;
-                let mmap = unsafe { MmapOptions::new().map(&file).map_err(|e| format!("Failed to mmap: {}", e))? };
-                #[cfg(unix)] { unsafe { libc::madvise(mmap.as_ptr() as *mut libc::c_void, mmap.len(), libc::MADV_SEQUENTIAL); } }
-                let (row_bytes, mmap_ptr, mmap_len) = (dim * std::mem::size_of::<f32>(), mmap.as_ptr() as usize, mmap.len());
-                #[cfg(feature = "rayon")]
-                let results: Vec<Vec<f64>> = { use rayon::prelude::*; (0..n_queries).into_par_iter().map(|q| { let query_vec = &query_data[q * dim..(q + 1) * dim]; (0..total_rows).map(|row_idx| { let offset = row_idx * row_bytes; if offset + row_bytes > mmap_len { return f64::NAN; } let candidate = unsafe { std::slice::from_raw_parts((mmap_ptr + offset) as *const f32, dim) }; self.engine.cpu_backend.compute_f32(query_vec, candidate, metric_type).unwrap_or(f32::NAN) as f64 }).collect() }).collect() };
-                #[cfg(not(feature = "rayon"))]
-                let results: Vec<Vec<f64>> = { (0..n_queries).map(|q| { let query_vec = &query_data[q * dim..(q + 1) * dim]; (0..total_rows).map(|row_idx| { let offset = row_idx * row_bytes; if offset + row_bytes > mmap_len { return f64::NAN; } let candidate = unsafe { std::slice::from_raw_parts((mmap_ptr + offset) as *const f32, dim) }; self.engine.cpu_backend.compute_f32(query_vec, candidate, metric_type).unwrap_or(f32::NAN) as f64 }).collect() }).collect() };
-                Ok::<_, String>(results)
-            }).map_err(|e| PyValueError::new_err(e))?;
+            let all_results = py
+                .allow_threads(|| {
+                    let file = std::fs::File::open(&data_path)
+                        .map_err(|e| format!("Failed to open data file: {}", e))?;
+                    let mmap = unsafe {
+                        MmapOptions::new()
+                            .map(&file)
+                            .map_err(|e| format!("Failed to mmap: {}", e))?
+                    };
+                    #[cfg(unix)]
+                    {
+                        unsafe {
+                            libc::madvise(
+                                mmap.as_ptr() as *mut libc::c_void,
+                                mmap.len(),
+                                libc::MADV_SEQUENTIAL,
+                            );
+                        }
+                    }
+                    let (row_bytes, mmap_ptr, mmap_len) = (
+                        dim * std::mem::size_of::<f32>(),
+                        mmap.as_ptr() as usize,
+                        mmap.len(),
+                    );
+                    #[cfg(feature = "rayon")]
+                    let results: Vec<Vec<f64>> = {
+                        use rayon::prelude::*;
+                        (0..n_queries)
+                            .into_par_iter()
+                            .map(|q| {
+                                let query_vec = &query_data[q * dim..(q + 1) * dim];
+                                (0..total_rows)
+                                    .map(|row_idx| {
+                                        let offset = row_idx * row_bytes;
+                                        if offset + row_bytes > mmap_len {
+                                            return f64::NAN;
+                                        }
+                                        let candidate = unsafe {
+                                            std::slice::from_raw_parts(
+                                                (mmap_ptr + offset) as *const f32,
+                                                dim,
+                                            )
+                                        };
+                                        self.engine
+                                            .cpu_backend
+                                            .compute_f32(query_vec, candidate, metric_type)
+                                            .unwrap_or(f32::NAN)
+                                            as f64
+                                    })
+                                    .collect()
+                            })
+                            .collect()
+                    };
+                    #[cfg(not(feature = "rayon"))]
+                    let results: Vec<Vec<f64>> = {
+                        (0..n_queries)
+                            .map(|q| {
+                                let query_vec = &query_data[q * dim..(q + 1) * dim];
+                                (0..total_rows)
+                                    .map(|row_idx| {
+                                        let offset = row_idx * row_bytes;
+                                        if offset + row_bytes > mmap_len {
+                                            return f64::NAN;
+                                        }
+                                        let candidate = unsafe {
+                                            std::slice::from_raw_parts(
+                                                (mmap_ptr + offset) as *const f32,
+                                                dim,
+                                            )
+                                        };
+                                        self.engine
+                                            .cpu_backend
+                                            .compute_f32(query_vec, candidate, metric_type)
+                                            .unwrap_or(f32::NAN)
+                                            as f64
+                                    })
+                                    .collect()
+                            })
+                            .collect()
+                    };
+                    Ok::<_, String>(results)
+                })
+                .map_err(|e| PyValueError::new_err(e))?;
             let flat: Vec<f64> = all_results.into_iter().flatten().collect();
-            let arr2d = ndarray::Array2::from_shape_vec((n_queries, total_rows), flat).map_err(|e| PyValueError::new_err(format!("Array creation error: {}", e)))?;
+            let arr2d = ndarray::Array2::from_shape_vec((n_queries, total_rows), flat)
+                .map_err(|e| PyValueError::new_err(format!("Array creation error: {}", e)))?;
             Ok(arr2d.into_pyarray(py).unbind().into_any())
         }
     }
 
     /// Streaming batch compute from file (f64) - supports both 1D and 2D query arrays
-    fn streaming_batch_compute_f64(&self, py: Python, query: &Bound<'_, PyAny>, npk_dir: &str, array_name: &str, metric_type: MetricType, _batch_size: usize) -> PyResult<PyObject> {
+    fn streaming_batch_compute_f64(
+        &self,
+        py: Python,
+        query: &Bound<'_, PyAny>,
+        npk_dir: &str,
+        array_name: &str,
+        metric_type: MetricType,
+        _batch_size: usize,
+    ) -> PyResult<PyObject> {
         let query_arr: PyReadonlyArrayDyn<f64> = query.extract()?;
         let query_shape = query_arr.shape().to_vec();
         let query_ndim = query_shape.len();
-        let dim = if query_ndim == 1 { query_shape[0] } else if query_ndim == 2 { query_shape[1] } else {
-            return Err(PyTypeError::new_err(format!("Query must be 1D or 2D array, got {}D", query_ndim)));
+        let dim = if query_ndim == 1 {
+            query_shape[0]
+        } else if query_ndim == 2 {
+            query_shape[1]
+        } else {
+            return Err(PyTypeError::new_err(format!(
+                "Query must be 1D or 2D array, got {}D",
+                query_ndim
+            )));
         };
 
         let base_dir = Path::new(npk_dir);
         let metadata_path = base_dir.join("metadata.npkm");
-        let metadata_store = BinaryMetadataStore::load(&metadata_path).map_err(|e| PyValueError::new_err(format!("Failed to load metadata: {}", e)))?;
-        let array_meta = metadata_store.get_array(array_name).ok_or_else(|| PyValueError::new_err(format!("Array '{}' not found in NumPack", array_name)))?;
+        let metadata_store = BinaryMetadataStore::load(&metadata_path)
+            .map_err(|e| PyValueError::new_err(format!("Failed to load metadata: {}", e)))?;
+        let array_meta = metadata_store.get_array(array_name).ok_or_else(|| {
+            PyValueError::new_err(format!("Array '{}' not found in NumPack", array_name))
+        })?;
 
         if array_meta.dtype != BinaryDataType::Float64 {
-            return Err(PyTypeError::new_err(format!("Array dtype mismatch: query is float64 but array is {:?}", array_meta.dtype)));
+            return Err(PyTypeError::new_err(format!(
+                "Array dtype mismatch: query is float64 but array is {:?}",
+                array_meta.dtype
+            )));
         }
 
-        let array_dim = if array_meta.shape.len() > 1 { array_meta.shape[1] as usize } else { 1 };
+        let array_dim = if array_meta.shape.len() > 1 {
+            array_meta.shape[1] as usize
+        } else {
+            1
+        };
         if array_dim != dim {
-            return Err(PyValueError::new_err(format!("Dimension mismatch: query dim {} vs array dim {}", dim, array_dim)));
+            return Err(PyValueError::new_err(format!(
+                "Dimension mismatch: query dim {} vs array dim {}",
+                dim, array_dim
+            )));
         }
 
         let total_rows = array_meta.shape[0] as usize;
@@ -4577,34 +5597,165 @@ impl PyStreamingVectorEngine {
 
         if query_ndim == 1 {
             let query_vec: Vec<f64> = query_slice.to_vec();
-            let scores = py.allow_threads(|| {
-                let file = std::fs::File::open(&data_path).map_err(|e| format!("Failed to open data file: {}", e))?;
-                let mmap = unsafe { MmapOptions::new().map(&file).map_err(|e| format!("Failed to mmap: {}", e))? };
-                #[cfg(unix)] { unsafe { libc::madvise(mmap.as_ptr() as *mut libc::c_void, mmap.len(), libc::MADV_SEQUENTIAL); } }
-                let (row_bytes, mmap_ptr, mmap_len) = (dim * std::mem::size_of::<f64>(), mmap.as_ptr() as usize, mmap.len());
-                #[cfg(feature = "rayon")]
-                let all_scores: Vec<f64> = { use rayon::prelude::*; (0..total_rows).into_par_iter().map(|row_idx| { let offset = row_idx * row_bytes; if offset + row_bytes > mmap_len { return f64::NAN; } let candidate = unsafe { std::slice::from_raw_parts((mmap_ptr + offset) as *const f64, dim) }; self.engine.cpu_backend.compute_f64(&query_vec, candidate, metric_type).unwrap_or(f64::NAN) }).collect() };
-                #[cfg(not(feature = "rayon"))]
-                let all_scores: Vec<f64> = { (0..total_rows).map(|row_idx| { let offset = row_idx * row_bytes; if offset + row_bytes > mmap_len { return f64::NAN; } let candidate = unsafe { std::slice::from_raw_parts((mmap_ptr + offset) as *const f64, dim) }; self.engine.cpu_backend.compute_f64(&query_vec, candidate, metric_type).unwrap_or(f64::NAN) }).collect() };
-                Ok::<_, String>(all_scores)
-            }).map_err(|e| PyValueError::new_err(e))?;
+            let scores = py
+                .allow_threads(|| {
+                    let file = std::fs::File::open(&data_path)
+                        .map_err(|e| format!("Failed to open data file: {}", e))?;
+                    let mmap = unsafe {
+                        MmapOptions::new()
+                            .map(&file)
+                            .map_err(|e| format!("Failed to mmap: {}", e))?
+                    };
+                    #[cfg(unix)]
+                    {
+                        unsafe {
+                            libc::madvise(
+                                mmap.as_ptr() as *mut libc::c_void,
+                                mmap.len(),
+                                libc::MADV_SEQUENTIAL,
+                            );
+                        }
+                    }
+                    let (row_bytes, mmap_ptr, mmap_len) = (
+                        dim * std::mem::size_of::<f64>(),
+                        mmap.as_ptr() as usize,
+                        mmap.len(),
+                    );
+                    #[cfg(feature = "rayon")]
+                    let all_scores: Vec<f64> = {
+                        use rayon::prelude::*;
+                        (0..total_rows)
+                            .into_par_iter()
+                            .map(|row_idx| {
+                                let offset = row_idx * row_bytes;
+                                if offset + row_bytes > mmap_len {
+                                    return f64::NAN;
+                                }
+                                let candidate = unsafe {
+                                    std::slice::from_raw_parts(
+                                        (mmap_ptr + offset) as *const f64,
+                                        dim,
+                                    )
+                                };
+                                self.engine
+                                    .cpu_backend
+                                    .compute_f64(&query_vec, candidate, metric_type)
+                                    .unwrap_or(f64::NAN)
+                            })
+                            .collect()
+                    };
+                    #[cfg(not(feature = "rayon"))]
+                    let all_scores: Vec<f64> = {
+                        (0..total_rows)
+                            .map(|row_idx| {
+                                let offset = row_idx * row_bytes;
+                                if offset + row_bytes > mmap_len {
+                                    return f64::NAN;
+                                }
+                                let candidate = unsafe {
+                                    std::slice::from_raw_parts(
+                                        (mmap_ptr + offset) as *const f64,
+                                        dim,
+                                    )
+                                };
+                                self.engine
+                                    .cpu_backend
+                                    .compute_f64(&query_vec, candidate, metric_type)
+                                    .unwrap_or(f64::NAN)
+                            })
+                            .collect()
+                    };
+                    Ok::<_, String>(all_scores)
+                })
+                .map_err(|e| PyValueError::new_err(e))?;
             Ok(PyArray1::from_vec(py, scores).unbind().into_any())
         } else {
             let n_queries = query_shape[0];
             let query_data: Vec<f64> = query_slice.to_vec();
-            let all_results = py.allow_threads(|| {
-                let file = std::fs::File::open(&data_path).map_err(|e| format!("Failed to open data file: {}", e))?;
-                let mmap = unsafe { MmapOptions::new().map(&file).map_err(|e| format!("Failed to mmap: {}", e))? };
-                #[cfg(unix)] { unsafe { libc::madvise(mmap.as_ptr() as *mut libc::c_void, mmap.len(), libc::MADV_SEQUENTIAL); } }
-                let (row_bytes, mmap_ptr, mmap_len) = (dim * std::mem::size_of::<f64>(), mmap.as_ptr() as usize, mmap.len());
-                #[cfg(feature = "rayon")]
-                let results: Vec<Vec<f64>> = { use rayon::prelude::*; (0..n_queries).into_par_iter().map(|q| { let query_vec = &query_data[q * dim..(q + 1) * dim]; (0..total_rows).map(|row_idx| { let offset = row_idx * row_bytes; if offset + row_bytes > mmap_len { return f64::NAN; } let candidate = unsafe { std::slice::from_raw_parts((mmap_ptr + offset) as *const f64, dim) }; self.engine.cpu_backend.compute_f64(query_vec, candidate, metric_type).unwrap_or(f64::NAN) }).collect() }).collect() };
-                #[cfg(not(feature = "rayon"))]
-                let results: Vec<Vec<f64>> = { (0..n_queries).map(|q| { let query_vec = &query_data[q * dim..(q + 1) * dim]; (0..total_rows).map(|row_idx| { let offset = row_idx * row_bytes; if offset + row_bytes > mmap_len { return f64::NAN; } let candidate = unsafe { std::slice::from_raw_parts((mmap_ptr + offset) as *const f64, dim) }; self.engine.cpu_backend.compute_f64(query_vec, candidate, metric_type).unwrap_or(f64::NAN) }).collect() }).collect() };
-                Ok::<_, String>(results)
-            }).map_err(|e| PyValueError::new_err(e))?;
+            let all_results = py
+                .allow_threads(|| {
+                    let file = std::fs::File::open(&data_path)
+                        .map_err(|e| format!("Failed to open data file: {}", e))?;
+                    let mmap = unsafe {
+                        MmapOptions::new()
+                            .map(&file)
+                            .map_err(|e| format!("Failed to mmap: {}", e))?
+                    };
+                    #[cfg(unix)]
+                    {
+                        unsafe {
+                            libc::madvise(
+                                mmap.as_ptr() as *mut libc::c_void,
+                                mmap.len(),
+                                libc::MADV_SEQUENTIAL,
+                            );
+                        }
+                    }
+                    let (row_bytes, mmap_ptr, mmap_len) = (
+                        dim * std::mem::size_of::<f64>(),
+                        mmap.as_ptr() as usize,
+                        mmap.len(),
+                    );
+                    #[cfg(feature = "rayon")]
+                    let results: Vec<Vec<f64>> = {
+                        use rayon::prelude::*;
+                        (0..n_queries)
+                            .into_par_iter()
+                            .map(|q| {
+                                let query_vec = &query_data[q * dim..(q + 1) * dim];
+                                (0..total_rows)
+                                    .map(|row_idx| {
+                                        let offset = row_idx * row_bytes;
+                                        if offset + row_bytes > mmap_len {
+                                            return f64::NAN;
+                                        }
+                                        let candidate = unsafe {
+                                            std::slice::from_raw_parts(
+                                                (mmap_ptr + offset) as *const f64,
+                                                dim,
+                                            )
+                                        };
+                                        self.engine
+                                            .cpu_backend
+                                            .compute_f64(query_vec, candidate, metric_type)
+                                            .unwrap_or(f64::NAN)
+                                    })
+                                    .collect()
+                            })
+                            .collect()
+                    };
+                    #[cfg(not(feature = "rayon"))]
+                    let results: Vec<Vec<f64>> = {
+                        (0..n_queries)
+                            .map(|q| {
+                                let query_vec = &query_data[q * dim..(q + 1) * dim];
+                                (0..total_rows)
+                                    .map(|row_idx| {
+                                        let offset = row_idx * row_bytes;
+                                        if offset + row_bytes > mmap_len {
+                                            return f64::NAN;
+                                        }
+                                        let candidate = unsafe {
+                                            std::slice::from_raw_parts(
+                                                (mmap_ptr + offset) as *const f64,
+                                                dim,
+                                            )
+                                        };
+                                        self.engine
+                                            .cpu_backend
+                                            .compute_f64(query_vec, candidate, metric_type)
+                                            .unwrap_or(f64::NAN)
+                                    })
+                                    .collect()
+                            })
+                            .collect()
+                    };
+                    Ok::<_, String>(results)
+                })
+                .map_err(|e| PyValueError::new_err(e))?;
             let flat: Vec<f64> = all_results.into_iter().flatten().collect();
-            let arr2d = ndarray::Array2::from_shape_vec((n_queries, total_rows), flat).map_err(|e| PyValueError::new_err(format!("Array creation error: {}", e)))?;
+            let arr2d = ndarray::Array2::from_shape_vec((n_queries, total_rows), flat)
+                .map_err(|e| PyValueError::new_err(format!("Array creation error: {}", e)))?;
             Ok(arr2d.into_pyarray(py).unbind().into_any())
         }
     }
@@ -4692,17 +5843,17 @@ impl PyStreamingVectorEngine {
 pub fn register_vector_engine_module(parent_module: &Bound<'_, PyModule>) -> PyResult<()> {
     // Create vector_engine submodule
     let vector_engine_module = PyModule::new(parent_module.py(), "vector_engine")?;
-    
+
     // Register classes in submodule
     vector_engine_module.add_class::<PyVectorEngine>()?;
     vector_engine_module.add_class::<PyStreamingVectorEngine>()?;
-    
+
     // Also register classes directly in parent module for backward compatibility
     parent_module.add_class::<PyVectorEngine>()?;
     parent_module.add_class::<PyStreamingVectorEngine>()?;
-    
+
     // Add submodule to parent
     parent_module.add_submodule(&vector_engine_module)?;
-    
+
     Ok(())
 }

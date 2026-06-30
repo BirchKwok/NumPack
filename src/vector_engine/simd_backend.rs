@@ -376,7 +376,7 @@ impl SimdBackend {
     }
 
     // ============== int16 support ==============
-    
+
     /// 计算两个 i16 向量的度量 (通过转换为 f64 计算)
     pub fn compute_i16(&self, a: &[i16], b: &[i16], metric: MetricType) -> Result<f64> {
         if a.len() != b.len() {
@@ -417,7 +417,7 @@ impl SimdBackend {
     }
 
     // ============== int32 support ==============
-    
+
     /// 计算两个 i32 向量的度量 (通过转换为 f64 计算)
     pub fn compute_i32(&self, a: &[i32], b: &[i32], metric: MetricType) -> Result<f64> {
         if a.len() != b.len() {
@@ -457,7 +457,7 @@ impl SimdBackend {
     }
 
     // ============== int64 support ==============
-    
+
     /// 计算两个 i64 向量的度量 (通过转换为 f64 计算)
     pub fn compute_i64(&self, a: &[i64], b: &[i64], metric: MetricType) -> Result<f64> {
         if a.len() != b.len() {
@@ -497,7 +497,7 @@ impl SimdBackend {
     }
 
     // ============== uint16 support ==============
-    
+
     /// 计算两个 u16 向量的度量 (通过转换为 f64 计算)
     pub fn compute_u16(&self, a: &[u16], b: &[u16], metric: MetricType) -> Result<f64> {
         if a.len() != b.len() {
@@ -537,7 +537,7 @@ impl SimdBackend {
     }
 
     // ============== uint32 support ==============
-    
+
     /// 计算两个 u32 向量的度量 (通过转换为 f64 计算)
     pub fn compute_u32(&self, a: &[u32], b: &[u32], metric: MetricType) -> Result<f64> {
         if a.len() != b.len() {
@@ -577,7 +577,7 @@ impl SimdBackend {
     }
 
     // ============== uint64 support ==============
-    
+
     /// 计算两个 u64 向量的度量 (通过转换为 f64 计算)
     pub fn compute_u64(&self, a: &[u64], b: &[u64], metric: MetricType) -> Result<f64> {
         if a.len() != b.len() {
@@ -617,7 +617,7 @@ impl SimdBackend {
     }
 
     // ============== float16 support ==============
-    
+
     /// 计算两个 f16 向量的度量 (通过转换为 f32 计算)
     pub fn compute_f16(&self, a: &[half::f16], b: &[half::f16], metric: MetricType) -> Result<f64> {
         if a.len() != b.len() {
@@ -663,13 +663,13 @@ impl SimdBackend {
 
 impl SimdBackend {
     /// Compute pairwise distances/similarities between two matrices (cdist)
-    /// 
+    ///
     /// This is optimized for computing all pairwise metrics between rows of matrix A
     /// and rows of matrix B, returning a result matrix of shape [M, N].
-    /// 
+    ///
     /// Uses parallel computation over the 2D output grid for better performance
     /// compared to row-by-row computation.
-    /// 
+    ///
     /// # Arguments
     /// * `a` - First matrix as contiguous slice, shape [M, D]
     /// * `b` - Second matrix as contiguous slice, shape [N, D]  
@@ -677,7 +677,7 @@ impl SimdBackend {
     /// * `n` - Number of rows in B
     /// * `d` - Dimension (number of columns)
     /// * `metric` - The distance/similarity metric to compute
-    /// 
+    ///
     /// # Returns
     /// Result matrix as flat Vec<f64> in row-major order, shape [M, N]
     pub fn cdist_f64(
@@ -716,19 +716,16 @@ impl SimdBackend {
 
             // Pre-allocate output buffer
             let mut result = vec![0.0f64; m * n];
-            
+
             // Parallel iteration over output matrix elements
             // Using chunks to improve cache locality
-            result
-                .par_chunks_mut(n)
-                .enumerate()
-                .for_each(|(i, row)| {
-                    let a_row = &a[i * d..(i + 1) * d];
-                    for (j, out) in row.iter_mut().enumerate() {
-                        let b_row = &b[j * d..(j + 1) * d];
-                        *out = self.compute_f64(a_row, b_row, metric).unwrap_or(f64::NAN);
-                    }
-                });
+            result.par_chunks_mut(n).enumerate().for_each(|(i, row)| {
+                let a_row = &a[i * d..(i + 1) * d];
+                for (j, out) in row.iter_mut().enumerate() {
+                    let b_row = &b[j * d..(j + 1) * d];
+                    *out = self.compute_f64(a_row, b_row, metric).unwrap_or(f64::NAN);
+                }
+            });
 
             Ok(result)
         }
@@ -750,30 +747,45 @@ impl SimdBackend {
     /// matrixmultiply-accelerated dot product cdist for f64
     /// Uses SIMD-optimized GEMM
     #[inline]
-    fn cdist_f64_dot_blas(&self, a: &[f64], b: &[f64], m: usize, n: usize, d: usize) -> Result<Vec<f64>> {
+    fn cdist_f64_dot_blas(
+        &self,
+        a: &[f64],
+        b: &[f64],
+        m: usize,
+        n: usize,
+        d: usize,
+    ) -> Result<Vec<f64>> {
         use matrixmultiply::dgemm;
-        
+
         // Allocate output buffer
         let mut result = vec![0.0f64; m * n];
-        
+
         // dgemm computes C = alpha * A * B + beta * C
         // We want C = A @ B.T
         unsafe {
             dgemm(
-                m, d, n,           // dimensions: m, k, n
-                1.0,               // alpha
-                a.as_ptr(), d as isize, 1,  // A: ptr, row_stride, col_stride
-                b.as_ptr(), 1, d as isize,  // B.T: ptr, row_stride, col_stride
-                0.0,               // beta
-                result.as_mut_ptr(), n as isize, 1,  // C: ptr, row_stride, col_stride
+                m,
+                d,
+                n,   // dimensions: m, k, n
+                1.0, // alpha
+                a.as_ptr(),
+                d as isize,
+                1, // A: ptr, row_stride, col_stride
+                b.as_ptr(),
+                1,
+                d as isize, // B.T: ptr, row_stride, col_stride
+                0.0,        // beta
+                result.as_mut_ptr(),
+                n as isize,
+                1, // C: ptr, row_stride, col_stride
             );
         }
-        
+
         Ok(result)
     }
 
     /// Compute pairwise distances/similarities between two f32 matrices (cdist)
-    /// 
+    ///
     /// Optimized implementation with:
     /// - Direct SimSIMD calls without wrapper overhead
     /// - Metric-specific fast paths to avoid match in hot loop
@@ -804,18 +816,10 @@ impl SimdBackend {
 
         // Use metric-specific optimized paths to avoid match overhead in hot loop
         match metric {
-            MetricType::DotProduct | MetricType::InnerProduct => {
-                self.cdist_f32_dot(a, b, m, n, d)
-            }
-            MetricType::Cosine => {
-                self.cdist_f32_cosine(a, b, m, n, d)
-            }
-            MetricType::L2Squared => {
-                self.cdist_f32_l2sq(a, b, m, n, d)
-            }
-            MetricType::L2Distance => {
-                self.cdist_f32_l2(a, b, m, n, d)
-            }
+            MetricType::DotProduct | MetricType::InnerProduct => self.cdist_f32_dot(a, b, m, n, d),
+            MetricType::Cosine => self.cdist_f32_cosine(a, b, m, n, d),
+            MetricType::L2Squared => self.cdist_f32_l2sq(a, b, m, n, d),
+            MetricType::L2Distance => self.cdist_f32_l2(a, b, m, n, d),
             _ => {
                 // Fallback for other metrics
                 self.cdist_f32_generic(a, b, m, n, d, metric)
@@ -826,31 +830,35 @@ impl SimdBackend {
     /// Optimized dot product cdist - uses parallel SimSIMD for best performance
     /// This computes C = A @ B.T using SIMD-accelerated dot products
     #[inline]
-    fn cdist_f32_dot(&self, a: &[f32], b: &[f32], m: usize, n: usize, d: usize) -> Result<Vec<f32>> {
+    fn cdist_f32_dot(
+        &self,
+        a: &[f32],
+        b: &[f32],
+        m: usize,
+        n: usize,
+        d: usize,
+    ) -> Result<Vec<f32>> {
         #[cfg(feature = "rayon")]
         {
             use rayon::prelude::*;
-            
+
             // Pre-allocate output buffer
             let mut result = vec![0.0f32; m * n];
-            
+
             // Parallel iteration over output rows
-            result
-                .par_chunks_mut(n)
-                .enumerate()
-                .for_each(|(i, row)| {
-                    let a_row = &a[i * d..(i + 1) * d];
-                    for (j, out) in row.iter_mut().enumerate() {
-                        let b_row = &b[j * d..(j + 1) * d];
-                        *out = simsimd::SpatialSimilarity::dot(a_row, b_row)
-                            .map(|v| v as f32)
-                            .unwrap_or(0.0);
-                    }
-                });
-            
+            result.par_chunks_mut(n).enumerate().for_each(|(i, row)| {
+                let a_row = &a[i * d..(i + 1) * d];
+                for (j, out) in row.iter_mut().enumerate() {
+                    let b_row = &b[j * d..(j + 1) * d];
+                    *out = simsimd::SpatialSimilarity::dot(a_row, b_row)
+                        .map(|v| v as f32)
+                        .unwrap_or(0.0);
+                }
+            });
+
             Ok(result)
         }
-        
+
         #[cfg(not(feature = "rayon"))]
         {
             let mut result = Vec::with_capacity(m * n);
@@ -861,7 +869,7 @@ impl SimdBackend {
                     result.push(
                         simsimd::SpatialSimilarity::dot(a_row, b_row)
                             .map(|v| v as f32)
-                            .unwrap_or(0.0)
+                            .unwrap_or(0.0),
                     );
                 }
             }
@@ -872,13 +880,20 @@ impl SimdBackend {
     /// Optimized cosine cdist - precompute norms + use dot product for similarity
     /// cosine(a, b) = dot(a, b) / (norm(a) * norm(b))
     #[inline]
-    fn cdist_f32_cosine(&self, a: &[f32], b: &[f32], m: usize, n: usize, d: usize) -> Result<Vec<f32>> {
+    fn cdist_f32_cosine(
+        &self,
+        a: &[f32],
+        b: &[f32],
+        m: usize,
+        n: usize,
+        d: usize,
+    ) -> Result<Vec<f32>> {
         // On non-Windows with rayon: use BLAS-accelerated ndarray
         #[cfg(all(feature = "rayon", not(target_os = "windows")))]
         {
-            use rayon::prelude::*;
             use ndarray::ArrayView2;
-            
+            use rayon::prelude::*;
+
             // Step 1: Precompute norms in parallel (O(m+n) instead of O(m*n))
             let a_norms: Vec<f32> = (0..m)
                 .into_par_iter()
@@ -887,7 +902,7 @@ impl SimdBackend {
                     row.iter().map(|x| x * x).sum::<f32>().sqrt()
                 })
                 .collect();
-            
+
             let b_norms: Vec<f32> = (0..n)
                 .into_par_iter()
                 .map(|j| {
@@ -895,31 +910,28 @@ impl SimdBackend {
                     row.iter().map(|x| x * x).sum::<f32>().sqrt()
                 })
                 .collect();
-            
+
             // Step 2: Compute dot products using BLAS
             let a_view = ArrayView2::from_shape((m, d), a)
                 .map_err(|e| SimdError::Other(format!("Failed to create array view A: {}", e)))?;
             let b_view = ArrayView2::from_shape((n, d), b)
                 .map_err(|e| SimdError::Other(format!("Failed to create array view B: {}", e)))?;
-            
+
             #[allow(deprecated)]
             let dots = a_view.dot(&b_view.t());
             #[allow(deprecated)]
             let mut result = dots.into_raw_vec();
-            
+
             // Step 3: Normalize by precomputed norms in parallel
-            result
-                .par_chunks_mut(n)
-                .enumerate()
-                .for_each(|(i, row)| {
-                    let a_norm = a_norms[i];
-                    for (j, val) in row.iter_mut().enumerate() {
-                        let b_norm = b_norms[j];
-                        let denom = a_norm * b_norm;
-                        *val = if denom > 1e-10 { *val / denom } else { 0.0 };
-                    }
-                });
-            
+            result.par_chunks_mut(n).enumerate().for_each(|(i, row)| {
+                let a_norm = a_norms[i];
+                for (j, val) in row.iter_mut().enumerate() {
+                    let b_norm = b_norms[j];
+                    let denom = a_norm * b_norm;
+                    *val = if denom > 1e-10 { *val / denom } else { 0.0 };
+                }
+            });
+
             Ok(result)
         }
 
@@ -928,20 +940,17 @@ impl SimdBackend {
         {
             use rayon::prelude::*;
             let mut result = vec![0.0f32; m * n];
-            
-            result
-                .par_chunks_mut(n)
-                .enumerate()
-                .for_each(|(i, row)| {
-                    let a_row = &a[i * d..(i + 1) * d];
-                    for (j, val) in row.iter_mut().enumerate() {
-                        let b_row = &b[j * d..(j + 1) * d];
-                        *val = simsimd::SpatialSimilarity::cosine(a_row, b_row)
-                            .map(|dist| (1.0 - dist) as f32)
-                            .unwrap_or(f32::NAN);
-                    }
-                });
-            
+
+            result.par_chunks_mut(n).enumerate().for_each(|(i, row)| {
+                let a_row = &a[i * d..(i + 1) * d];
+                for (j, val) in row.iter_mut().enumerate() {
+                    let b_row = &b[j * d..(j + 1) * d];
+                    *val = simsimd::SpatialSimilarity::cosine(a_row, b_row)
+                        .map(|dist| (1.0 - dist) as f32)
+                        .unwrap_or(f32::NAN);
+                }
+            });
+
             Ok(result)
         }
 
@@ -955,7 +964,7 @@ impl SimdBackend {
                     result.push(
                         simsimd::SpatialSimilarity::cosine(a_row, b_row)
                             .map(|dist| (1.0 - dist) as f32)
-                            .unwrap_or(f32::NAN)
+                            .unwrap_or(f32::NAN),
                     );
                 }
             }
@@ -965,24 +974,28 @@ impl SimdBackend {
 
     /// Optimized L2 squared cdist
     #[inline]
-    fn cdist_f32_l2sq(&self, a: &[f32], b: &[f32], m: usize, n: usize, d: usize) -> Result<Vec<f32>> {
+    fn cdist_f32_l2sq(
+        &self,
+        a: &[f32],
+        b: &[f32],
+        m: usize,
+        n: usize,
+        d: usize,
+    ) -> Result<Vec<f32>> {
         #[cfg(feature = "rayon")]
         {
             use rayon::prelude::*;
             let mut result = vec![0.0f32; m * n];
-            
-            result
-                .par_chunks_mut(n)
-                .enumerate()
-                .for_each(|(i, row)| {
-                    let a_row = &a[i * d..(i + 1) * d];
-                    for (j, out) in row.iter_mut().enumerate() {
-                        let b_row = &b[j * d..(j + 1) * d];
-                        *out = simsimd::SpatialSimilarity::sqeuclidean(a_row, b_row)
-                            .map(|v| v as f32)
-                            .unwrap_or(f32::NAN);
-                    }
-                });
+
+            result.par_chunks_mut(n).enumerate().for_each(|(i, row)| {
+                let a_row = &a[i * d..(i + 1) * d];
+                for (j, out) in row.iter_mut().enumerate() {
+                    let b_row = &b[j * d..(j + 1) * d];
+                    *out = simsimd::SpatialSimilarity::sqeuclidean(a_row, b_row)
+                        .map(|v| v as f32)
+                        .unwrap_or(f32::NAN);
+                }
+            });
             Ok(result)
         }
 
@@ -996,7 +1009,7 @@ impl SimdBackend {
                     result.push(
                         simsimd::SpatialSimilarity::sqeuclidean(a_row, b_row)
                             .map(|v| v as f32)
-                            .unwrap_or(f32::NAN)
+                            .unwrap_or(f32::NAN),
                     );
                 }
             }
@@ -1011,19 +1024,16 @@ impl SimdBackend {
         {
             use rayon::prelude::*;
             let mut result = vec![0.0f32; m * n];
-            
-            result
-                .par_chunks_mut(n)
-                .enumerate()
-                .for_each(|(i, row)| {
-                    let a_row = &a[i * d..(i + 1) * d];
-                    for (j, out) in row.iter_mut().enumerate() {
-                        let b_row = &b[j * d..(j + 1) * d];
-                        *out = simsimd::SpatialSimilarity::sqeuclidean(a_row, b_row)
-                            .map(|v| (v as f32).sqrt())
-                            .unwrap_or(f32::NAN);
-                    }
-                });
+
+            result.par_chunks_mut(n).enumerate().for_each(|(i, row)| {
+                let a_row = &a[i * d..(i + 1) * d];
+                for (j, out) in row.iter_mut().enumerate() {
+                    let b_row = &b[j * d..(j + 1) * d];
+                    *out = simsimd::SpatialSimilarity::sqeuclidean(a_row, b_row)
+                        .map(|v| (v as f32).sqrt())
+                        .unwrap_or(f32::NAN);
+                }
+            });
             Ok(result)
         }
 
@@ -1037,7 +1047,7 @@ impl SimdBackend {
                     result.push(
                         simsimd::SpatialSimilarity::sqeuclidean(a_row, b_row)
                             .map(|v| (v as f32).sqrt())
-                            .unwrap_or(f32::NAN)
+                            .unwrap_or(f32::NAN),
                     );
                 }
             }
@@ -1046,22 +1056,27 @@ impl SimdBackend {
     }
 
     /// Generic cdist fallback for less common metrics
-    fn cdist_f32_generic(&self, a: &[f32], b: &[f32], m: usize, n: usize, d: usize, metric: MetricType) -> Result<Vec<f32>> {
+    fn cdist_f32_generic(
+        &self,
+        a: &[f32],
+        b: &[f32],
+        m: usize,
+        n: usize,
+        d: usize,
+        metric: MetricType,
+    ) -> Result<Vec<f32>> {
         #[cfg(feature = "rayon")]
         {
             use rayon::prelude::*;
             let mut result = vec![0.0f32; m * n];
-            
-            result
-                .par_chunks_mut(n)
-                .enumerate()
-                .for_each(|(i, row)| {
-                    let a_row = &a[i * d..(i + 1) * d];
-                    for (j, out) in row.iter_mut().enumerate() {
-                        let b_row = &b[j * d..(j + 1) * d];
-                        *out = self.compute_f32(a_row, b_row, metric).unwrap_or(f32::NAN);
-                    }
-                });
+
+            result.par_chunks_mut(n).enumerate().for_each(|(i, row)| {
+                let a_row = &a[i * d..(i + 1) * d];
+                for (j, out) in row.iter_mut().enumerate() {
+                    let b_row = &b[j * d..(j + 1) * d];
+                    *out = self.compute_f32(a_row, b_row, metric).unwrap_or(f32::NAN);
+                }
+            });
             Ok(result)
         }
 
@@ -1080,22 +1095,22 @@ impl SimdBackend {
     }
 
     /// Matrix multiplication using SimSIMD dot products: C = A @ B.T
-    /// 
+    ///
     /// Computes the matrix product where each element C[i,j] = dot(A[i,:], B[j,:])
     /// This is equivalent to A @ B.T in NumPy.
-    /// 
+    ///
     /// Optimized with:
     /// - Parallel computation over output rows
     /// - Cache-friendly row-major access pattern
     /// - SimSIMD SIMD-accelerated dot products
-    /// 
+    ///
     /// # Arguments
     /// * `a` - First matrix as contiguous slice, shape [M, K]
     /// * `b` - Second matrix as contiguous slice, shape [N, K] (will compute A @ B.T)
     /// * `m` - Number of rows in A
     /// * `n` - Number of rows in B (columns in result)
     /// * `k` - Shared dimension (columns in A, columns in B)
-    /// 
+    ///
     /// # Returns
     /// Result matrix as flat Vec<f64> in row-major order, shape [M, N]
     pub fn matmul_f64(
@@ -1140,16 +1155,13 @@ impl SimdBackend {
         {
             use rayon::prelude::*;
             let mut result = vec![0.0f64; m * n];
-            result
-                .par_chunks_mut(n)
-                .enumerate()
-                .for_each(|(i, row)| {
-                    let a_row = &a[i * d..(i + 1) * d];
-                    for (j, out) in row.iter_mut().enumerate() {
-                        let b_row = &b[j * d..(j + 1) * d];
-                        *out = self.compute_i8(a_row, b_row, metric).unwrap_or(f64::NAN);
-                    }
-                });
+            result.par_chunks_mut(n).enumerate().for_each(|(i, row)| {
+                let a_row = &a[i * d..(i + 1) * d];
+                for (j, out) in row.iter_mut().enumerate() {
+                    let b_row = &b[j * d..(j + 1) * d];
+                    *out = self.compute_i8(a_row, b_row, metric).unwrap_or(f64::NAN);
+                }
+            });
             Ok(result)
         }
 
@@ -1185,16 +1197,13 @@ impl SimdBackend {
         {
             use rayon::prelude::*;
             let mut result = vec![0.0f64; m * n];
-            result
-                .par_chunks_mut(n)
-                .enumerate()
-                .for_each(|(i, row)| {
-                    let a_row = &a[i * d..(i + 1) * d];
-                    for (j, out) in row.iter_mut().enumerate() {
-                        let b_row = &b[j * d..(j + 1) * d];
-                        *out = self.compute_u8(a_row, b_row, metric).unwrap_or(f64::NAN);
-                    }
-                });
+            result.par_chunks_mut(n).enumerate().for_each(|(i, row)| {
+                let a_row = &a[i * d..(i + 1) * d];
+                for (j, out) in row.iter_mut().enumerate() {
+                    let b_row = &b[j * d..(j + 1) * d];
+                    *out = self.compute_u8(a_row, b_row, metric).unwrap_or(f64::NAN);
+                }
+            });
             Ok(result)
         }
 

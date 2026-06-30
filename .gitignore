@@ -23,6 +23,7 @@ __pycache__/
 .cursor/
 .claude/*
 dist/*
+benchmarks/results/
 
 .venv/
 

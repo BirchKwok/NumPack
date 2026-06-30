@@ -275,10 +275,10 @@ impl NumPack {
                     m
                 } else {
                     let new_mmap = create_optimized_mmap(&data_path)?;
-                    MMAP_CACHE.write().unwrap().insert(
-                        array_path.clone(),
-                        (Arc::clone(&new_mmap), mtime),
-                    );
+                    MMAP_CACHE
+                        .write()
+                        .unwrap()
+                        .insert(array_path.clone(), (Arc::clone(&new_mmap), mtime));
                     new_mmap
                 }
             };
@@ -954,9 +954,7 @@ fn get_array_dtype(array: &Bound<'_, PyAny>) -> PyResult<DataType> {
 
 /// 创建优化的内存映射
 #[cfg(target_family = "unix")]
-fn create_optimized_mmap(
-    path: &PathBuf,
-) -> Result<Arc<Mmap>, PyErr> {
+fn create_optimized_mmap(path: &PathBuf) -> Result<Arc<Mmap>, PyErr> {
     let file = std::fs::File::open(path)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
 
@@ -1013,9 +1011,7 @@ fn create_optimized_mmap(
 
 /// Windows平台的内存映射实现
 #[cfg(target_family = "windows")]
-fn create_optimized_mmap(
-    path: &PathBuf,
-) -> Result<Arc<Mmap>, PyErr> {
+fn create_optimized_mmap(path: &PathBuf) -> Result<Arc<Mmap>, PyErr> {
     let file = std::fs::File::open(path)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
 

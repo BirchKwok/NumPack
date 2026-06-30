@@ -11,10 +11,7 @@ use std::arch::x86_64::*;
 impl NumPackSIMD {
     /// AVX512行拷贝实现 - 针对大数据集的高性能优化
     /// 注意：AVX512在stable Rust中是不稳定特性，暂时禁用
-    #[cfg(all(
-        any(target_arch = "x86", target_arch = "x86_64"),
-    feature = "avx512"
-    ))]
+    #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), feature = "avx512"))]
     pub fn avx512_copy_rows(
         &self,
         src: &[u8],
@@ -85,7 +82,7 @@ impl NumPackSIMD {
     /// AVX512行拷贝实现的回退版本 - 当AVX512不可用时使用AVX2
     #[cfg(all(
         any(target_arch = "x86", target_arch = "x86_64"),
-    not(feature = "avx512")
+        not(feature = "avx512")
     ))]
     pub fn avx512_copy_rows(
         &self,
